@@ -19,7 +19,7 @@ public class EnemyController : CharacterController2D
     private EnemyShieldSystem shieldSystem;
     private EnemySpawnController spawnController;
     private EnemyTeleporter teleporter;
-    private WeaponBase.DamageInfo damageInfo;
+    private WeaponBaseSO.DamageInfo damageInfo;
     private AiBrain brain;
     private Action waveDeathHandler;
     private float initialGravity = 0f;
@@ -74,7 +74,7 @@ public class EnemyController : CharacterController2D
         Gravity = initialGravity;
         CanTouchDamageActive(true);
     }
-    public void ApplyAttackAnimation(AnimationSet set)
+    public void ApplyAttackAnimation(AnimationSetSO set)
     {
         animatorOverride["Attack0_Windup"] = set.windup;
         animatorOverride["Attack0_Execute"] = set.execute;
@@ -110,7 +110,7 @@ public class EnemyController : CharacterController2D
             shieldSystem.IsSpawnLocked = true;
 
         //animator.speed = 0f;
-        animator.SetTrigger("spawn");
+        animator.SetTrigger("Spawn");
         Velocity = Vector2.zero;
 
         // 중력 끄기
@@ -123,7 +123,7 @@ public class EnemyController : CharacterController2D
     public void ExitFreeze()
     {
         animator.speed = 1f;
-        animator.SetTrigger("idle");
+        animator.SetTrigger("Idle");
         // Spawn Animation이 끝나고나면 무적 해제, AiBrain 동작, 몸통 데미지 활성화
         brain.ResumeBrain();
 

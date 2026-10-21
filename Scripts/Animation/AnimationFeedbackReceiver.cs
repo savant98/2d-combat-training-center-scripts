@@ -6,7 +6,7 @@ public class AnimationFeedbackReceiver : MonoBehaviour
     private class AnimationFeedbackEntry
     {
         public string key;
-        public FeedbackData feedback;
+        public FeedbackDataSO feedback;
         public Transform point;
     }
 

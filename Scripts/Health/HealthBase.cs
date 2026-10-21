@@ -2,7 +2,7 @@ using System;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Splines;
-using static WeaponBase;
+using static WeaponBaseSO;
 
 public abstract class HealthBase : MonoBehaviour
 {

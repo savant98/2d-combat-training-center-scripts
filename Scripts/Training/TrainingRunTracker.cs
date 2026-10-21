@@ -84,7 +84,7 @@ public class TrainingRunTracker : MonoBehaviour
             WaveManager.ActiveInstance.OnAllWavesCleared -= HandleClear;
     }
 
-    private void HandlePlayerDamaged(WeaponBase.DamageInfo damageInfo)
+    private void HandlePlayerDamaged(WeaponBaseSO.DamageInfo damageInfo)
     {
         if (ended) return;
         hitCount++;

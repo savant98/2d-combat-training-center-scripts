@@ -11,7 +11,7 @@ flowchart TD
     Input["InputManager<br/>입력 상태 관리"] --> Player["PlayerController<br/>입력 이벤트 전달"]
     Player --> Abilities["AbilityManager + PlayerAbility<br/>행동 실행·상태 판정"]
     Abilities <--> State["PlayerStateMachine<br/>행동 허용 규칙"]
-    Abilities --> Weapon["PlayerWeaponAbility → WeaponBase<br/>무기·공격 단계"]
+    Abilities --> Weapon["PlayerWeaponAbility → WeaponBaseSO<br/>무기·공격 단계"]
     Abilities --> Velocity["PlayerController / EnemyController<br/>Velocity"]
 
     Brain["AiBrain<br/>실행할 패턴 선택"] --> Director["AiPatternDirector<br/>프로필·규칙 적용"]
@@ -42,7 +42,7 @@ flowchart TD
 flowchart TD
     Request["GameManager / RoomTrigger<br/>방 전환 요청"] --> Transition["RoomTransitionManager<br/>입력 차단·전환 연출"]
     Transition --> Room["RoomManager / Room<br/>현재 방 전환·활성화"]
-    Room --> Wave["WaveManager + WaveData<br/>웨이브 생성·종료 조건"]
+    Room --> Wave["WaveManager + WaveDataSO<br/>웨이브 생성·종료 조건"]
     Wave --> Pool["EnemyPool / WorldEntityPool<br/>적·월드 오브젝트 재사용"]
     Wave -->|훈련 시작| Tracker["TrainingRunTracker<br/>진행 시간·피격 수 추적"]
     Wave -->|전체 웨이브 클리어| Tracker
@@ -60,17 +60,17 @@ flowchart TD
 | 관심 영역 | 시작할 코드 | 살펴볼 내용 |
 | --- | --- | --- |
 | 캐릭터 이동 | [CharacterController2D](Scripts/Controllers/CharacterController2D.cs), [RaycastMotor2D](Scripts/Controllers/RaycastMotor2D.cs) | 속도·외력·고정 시간 간격의 이동, 충돌 결과 처리 |
-| 입력과 행동 | [PlayerController](Scripts/Controllers/PlayerController.cs), [AbilityManager](Scripts/CharacterAbility/PlayerAbility/AbilityManager.cs), [PlayerStateMachine](Scripts/CharacterAbility/PlayerAbility/PlayerStateMachine.cs) | 입력 이벤트, 행동 우선순위, 상태별 실행 제한 |
-| 무기와 전투 | [PlayerWeaponAbility](Scripts/CharacterAbility/PlayerAbility/PlayerWeaponAbility.cs), [WeaponBase](Scripts/Weapon/WeaponBase.cs), [Weapons](Scripts/Weapon/Weapons) | 무기 선택, 공격 단계, 콤보·카운터·투사체 |
-| 적 행동 | [AiBrain](Scripts/CharacterAbility/EnemyAbility/AiBrain.cs), [AiPatternDirector](Scripts/CharacterAbility/EnemyAbility/AiPatternDirector.cs), [AiAbility](Scripts/CharacterAbility/EnemyAbility/AiAbility.cs) | 행동 선택과 패턴 실행의 분리, 프로필·규칙·단계별 처리 |
-| 웨이브 | [WaveManager](Scripts/Managers/WaveManager.cs), [WaveData](Scripts/Wave/WaveData.cs), [Wave](Scripts/Wave) | 스폰 데이터, 클리어 조건, 풀링 |
-| 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs), [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs), [DataManager](Scripts/Managers/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |
-| 방 전환 | [RoomTransitionManager](Scripts/Managers/RoomTransitionManager.cs), [Rooms](Scripts/Rooms) | 전환 요청, 컨텍스트와 연출 분리 |
+| 입력과 행동 | [PlayerController](Scripts/Controllers/PlayerController.cs), [AbilityManager](Scripts/Abilities/Player/AbilityManager.cs), [PlayerStateMachine](Scripts/Abilities/Player/PlayerStateMachine.cs) | 입력 이벤트, 행동 우선순위, 상태별 실행 제한 |
+| 무기와 전투 | [PlayerWeaponAbility](Scripts/Abilities/Player/PlayerWeaponAbility.cs), [WeaponBaseSO](Scripts/Weapons/Definitions/WeaponBaseSO.cs), [Weapons](Scripts/Weapons/Definitions) | 무기 선택, 공격 단계, 콤보·카운터·투사체 |
+| 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs), [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs), [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택과 패턴 실행의 분리, 프로필·규칙·단계별 처리 |
+| 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs), [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs), [Wave](Scripts/Waves) | 스폰 데이터, 클리어 조건, 풀링 |
+| 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs), [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs), [DataManager](Scripts/Persistence/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |
+| 방 전환 | [RoomTransitionManager](Scripts/Rooms/RoomTransitionManager.cs), [Rooms](Scripts/Rooms) | 전환 요청, 컨텍스트와 연출 분리 |
 | 표현 | [Feedbacks](Scripts/Feedbacks), [Animation](Scripts/Animation), [UI](Scripts/UI) | 사운드·카메라·화면 효과와 상태 표시 |
 
 ## 구성과 의존성
 
-`Scripts/`는 게임 코드의 폴더 구성을 유지합니다. `InputActions/PlayerInputActions.cs`는 프로젝트 입력 설정에서 Unity Input System이 생성한 코드입니다.
+`Scripts/`는 게임 코드의 폴더 구성을 유지합니다. `Input/Generated/PlayerInputActions.cs`는 프로젝트 입력 설정에서 Unity Input System이 생성한 코드입니다.
 
 기준 환경은 **Unity 6000.2.9f1**이며, Input System, Cinemachine, Universal Render Pipeline, DOTween, TextMesh Pro 등 Unity 프로젝트의 의존성을 참조합니다. 이 저장소는 코드 열람용으로, 실행에 필요한 씬·프리팹·ScriptableObject 인스턴스·외부 플러그인과 에셋은 포함하지 않습니다.
 

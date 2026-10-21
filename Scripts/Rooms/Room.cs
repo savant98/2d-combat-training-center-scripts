@@ -15,7 +15,7 @@ public class Room : MonoBehaviour
     [SerializeField] private CinemachineCamera virtualCamera;   // 해당 방이 담당하는 카메라
 
     [Header("Effects")]
-    [SerializeField] private FeedbackData spawnPortalFeedback;
+    [SerializeField] private FeedbackDataSO spawnPortalFeedback;
 
     public WaveManager WaveManager => waveManager;
     public Vector3 SpawnPoint => currentSpawnPoint;

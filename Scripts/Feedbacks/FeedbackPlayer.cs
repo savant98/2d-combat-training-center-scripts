@@ -170,7 +170,7 @@ public class FeedbackPlayer : MonoBehaviour
     // ─────────────────────────────────
     // 외부에서 호출하는 API
     // ─────────────────────────────────
-    public void Play(FeedbackData data, Transform spawnPoint)
+    public void Play(FeedbackDataSO data, Transform spawnPoint)
     {
         if (data == null || spawnPoint == null) return;
 
@@ -179,7 +179,7 @@ public class FeedbackPlayer : MonoBehaviour
     }
 
     // Offset 적용
-    public void Play(FeedbackData data, Vector3 worldPos)
+    public void Play(FeedbackDataSO data, Vector3 worldPos)
     {
         if (data == null) return;
 
@@ -188,13 +188,13 @@ public class FeedbackPlayer : MonoBehaviour
     }
 
     // Offset 미적용시
-    public void PlayExact(FeedbackData data, Vector3 worldPos, Quaternion rot)
+    public void PlayExact(FeedbackDataSO data, Vector3 worldPos, Quaternion rot)
     {
         if (data == null) return;
 
         PlayInternal(data, worldPos, rot);
     }
-    private void PlayInternal(FeedbackData data, Vector3 pos, Quaternion rot)
+    private void PlayInternal(FeedbackDataSO data, Vector3 pos, Quaternion rot)
     {
         // Particle
         foreach (var prefab in data.particlePrefabs)

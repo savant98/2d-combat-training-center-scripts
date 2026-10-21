@@ -4,14 +4,14 @@ using System;
 public class PlayerHealth : HealthBase
 {
     [Header("Health Data")]
-    [SerializeField] private PlayerHealthData healthData;
+    [SerializeField] private PlayerHealthDataSO healthData;
 
     [Header("Hit Sprite Effect ")]
     [SerializeField] private HitAbility hitAbility;
     [SerializeField] private SpriteRenderer hitSprite;
 
     public event Action OnPlayerDeath;
-    public event Action<WeaponBase.DamageInfo> OnDamaged;
+    public event Action<WeaponBaseSO.DamageInfo> OnDamaged;
 
     private Material hitMaterial;
     private Coroutine coroutine;
@@ -27,7 +27,7 @@ public class PlayerHealth : HealthBase
 
         maxHP = healthData.maxhp;
     }
-    public override void TakeDamage(WeaponBase.DamageInfo damageInfo, Vector3 hitPosition)
+    public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
         if (TryCounter(hitPosition))
             return;
