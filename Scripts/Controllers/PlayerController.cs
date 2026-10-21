@@ -57,11 +57,11 @@ public class PlayerController : CharacterController2D
         health.ResetHealth();
         abilityManager.AttackAbility.ResetSkillGauge();
     }
-    public void ApplyWeaponAnimation(AnimationSet set, string animName)
+    public void ApplyWeaponAnimation(AnimationSetSO set, string animName)
     {
-        animatorOverride["Player" + animName + "1"] = set.windup;
-        animatorOverride["Player" + animName + "2"] = set.execute;
-        animatorOverride["Player" + animName + "3"] = set.recover;
+        animatorOverride["Player_" + animName + "1"] = set.windup;
+        animatorOverride["Player_" + animName + "2"] = set.execute;
+        animatorOverride["Player_" + animName + "3"] = set.recover;
     }
     private void Update()
     {

@@ -11,7 +11,7 @@ public class EnemyHealth : HealthBase
     public EnemyShieldSystem enemyShieldSystem;
 
     [Header("Hit Sprite Effect")]
-    [SerializeField] private FeedbackData destroyFeedback;
+    [SerializeField] private FeedbackDataSO destroyFeedback;
     [SerializeField] private EnemyUI enemyUI;
     [SerializeField] private SpriteRenderer[] hitSprites;
 
@@ -29,7 +29,7 @@ public class EnemyHealth : HealthBase
         FeedbackPlayer.Instance.Play(destroyFeedback, transform);
         OnDeath?.Invoke();
     }
-    public override void TakeDamage(WeaponBase.DamageInfo damageInfo, Vector3 hitPosition)
+    public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
         base.TakeDamage(damageInfo, hitPosition);
 

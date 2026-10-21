@@ -5,7 +5,7 @@ using System;
 public class EnemyShieldSystem : MonoBehaviour
 {
     [Header("ShieldSystem Settings")]
-    [SerializeField] private EnemyShieldData data;
+    [SerializeField] private EnemyShieldDataSO data;
     [SerializeField] private SpriteRenderer[] sprites;
 
     public float CurrentShield { get; private set; }
@@ -99,7 +99,7 @@ public class EnemyShieldSystem : MonoBehaviour
         }
     }
 
-    public void TakeDamage(WeaponBase.DamageInfo info, Vector3 hitPosition)
+    public void TakeDamage(WeaponBaseSO.DamageInfo info, Vector3 hitPosition)
     {
         if (IsSpawnLocked || health.IsInvincible)
             return;
@@ -123,7 +123,7 @@ public class EnemyShieldSystem : MonoBehaviour
             return;
         }
     }
-    private void ApplyShieldDamage(WeaponBase.DamageInfo dmgInfo, Vector3 hitPosition)
+    private void ApplyShieldDamage(WeaponBaseSO.DamageInfo dmgInfo, Vector3 hitPosition)
     {
         CurrentShield -= dmgInfo.damage;
         regenTimer = data.regenDelay;

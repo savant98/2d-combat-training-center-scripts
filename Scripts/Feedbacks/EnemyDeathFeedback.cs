@@ -3,8 +3,8 @@ using UnityEngine;
 public class EnemyDeathFeedback : MonoBehaviour
 {
     [Header("Destroy Timing Feedback")]
-    [SerializeField] private FeedbackData destroyFeedback;
-    [SerializeField] private FeedbackData destroyRepeatFeedback;
+    [SerializeField] private FeedbackDataSO destroyFeedback;
+    [SerializeField] private FeedbackDataSO destroyRepeatFeedback;
 
     public void DestroyFeedbackStart()
     {
