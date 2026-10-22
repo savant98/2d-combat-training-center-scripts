@@ -37,7 +37,7 @@ public class SpinningHammerShot : ProjectileBase
 
     private SoundHandle flyingLoopHandle;
 
-    private readonly Dictionary<HealthBase, float> nextDamageTimes = new();
+    private readonly Dictionary<HealthBase, float> nextDamageTimes = new(8);
 
     protected override void Awake()
     {
@@ -182,87 +182,20 @@ public class SpinningHammerShot : ProjectileBase
                 transform.position);
         }
     }
-    protected override void OnTriggerEnter2D(Collider2D collision)
-    {
-        TryDamage(collision);
-    }
-
     private void OnTriggerStay2D(Collider2D collision)
     {
-        TryDamage(collision);
+        base.OnTriggerEnter2D(collision);
     }
 
-    private void TryDamage(Collider2D collision)
+    protected override void HitTarget(HealthBase health, Vector2 hitPoint)
     {
-        HealthBase health = GetHealth(collision);
-
-        if (health == null)
-            return;
-
-        if (health.IsInvincible)
-            return;
-
         float now = Time.time;
-
-        if (nextDamageTimes.TryGetValue(health, out float nextTime))
-        {
-            if (now < nextTime)
-                return;
-        }
-
-        if (!CanDamageTarget(health))
+        if (nextDamageTimes.TryGetValue(health, out float nextTime) && now < nextTime)
             return;
-
-        Vector2 hitPoint = collision.ClosestPoint(transform.position);
-
-        ApplyDamage(health, hitPoint);
 
         nextDamageTimes[health] = now + tickInterval;
-
+        ApplyHitDamage(health, hitPoint);
         ApplyHitSlowdown();
-
-        if (hitFeedbackData != null)
-            FeedbackPlayer.Instance.Play(hitFeedbackData, hitPoint);
-    }
-
-    private HealthBase GetHealth(Collider2D collision)
-    {
-        HealthBase health = collision.GetComponentInParent<HealthBase>();
-
-        if (health != null)
-            return health;
-        //if (collision.TryGetComponent<HealthBase>(out var health))
-        //    return health;
-
-        return null;
-    }
-
-    private bool CanDamageTarget(HealthBase health)
-    {
-        if (ownerFaction == Faction.Player && health is EnemyHealth)
-            return true;
-
-        if (ownerFaction == Faction.Enemy && health is PlayerHealth)
-            return true;
-
-        return false;
-    }
-
-    private void ApplyDamage(HealthBase health, Vector2 hitPoint)
-    {
-        if (ownerFaction == Faction.Player && health is EnemyHealth enemy)
-        {
-            if (enemy.enemyShieldSystem == null)
-                enemy.TakeDamage(damageInfo, hitPoint);
-            else
-                enemy.enemyShieldSystem.TakeDamage(damageInfo, hitPoint);
-
-            OnHitEnemy?.Invoke(owner, hitPoint);
-        }
-        else if (ownerFaction == Faction.Enemy && health is PlayerHealth player)
-        {
-            player.TakeDamage(damageInfo, hitPoint);
-        }
     }
 
     private void ApplyHitSlowdown()

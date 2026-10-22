@@ -68,23 +68,41 @@ public class RaycastMotor2D : MonoBehaviour
         return Physics2D.OverlapBox(center, size, angle, filter, results);
     }
 
-    // 원형 탄의 실제 이동 경로를 캡슐로 검사해 틱 사이의 통과와 시작점 겹침을 함께 처리한다.
-    public int OverlapAttackCirclePath(Vector2 start, Vector2 end, float radius,
-        System.Collections.Generic.List<Collider2D> results, LayerMask targetLayer)
+    private static double lastAttackQuerySyncTime = double.NaN;
+
+    // 캐릭터 이동 후 실행되는 ProjectileBase에서 물리 틱당 한 번만 동기화한다.
+    public static void PrepareAttackQueries()
     {
-        var filter = new ContactFilter2D();
-        filter.SetLayerMask(targetLayer);
-        filter.useTriggers = true;
+        double fixedTime = Time.fixedTimeAsDouble;
+        if (lastAttackQuerySyncTime == fixedTime) return;
         Physics2D.SyncTransforms();
+        lastAttackQuerySyncTime = fixedTime;
+    }
 
-        Vector2 delta = end - start;
-        if (delta.sqrMagnitude <= 0.000001f)
-            return Physics2D.OverlapCircle(start, radius, filter, results);
+    // 같은 틱의 판정 도중 새 탄이 배치된 경우에도 시작 위치를 반영한다.
+    public static void InvalidateAttackQuerySync()
+    {
+        lastAttackQuerySyncTime = double.NaN;
+    }
 
-        float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg - 90f;
-        Vector2 size = new Vector2(radius * 2f, delta.magnitude + radius * 2f);
-        return Physics2D.OverlapCapsule((start + end) * 0.5f, size,
-            CapsuleDirection2D.Vertical, angle, filter, results);
+    // position·angle은 이 Collider가 연결된 기존 Rigidbody2D의 월드 배치다.
+    // 실제 Collider 형상과 오프셋을 사용하며 결과는 진행 거리순으로 반환된다.
+    public int CastAttackPath(Vector2 position, float angle, Vector2 move,
+        ContactFilter2D filter, System.Collections.Generic.List<RaycastHit2D> results)
+    {
+        float distance = move.magnitude;
+        if (distance <= 0f)
+        {
+            results.Clear();
+            return 0;
+        }
+        return col.Cast(position, angle, move / distance, filter, results, distance, true);
+    }
+
+    public int OverlapAttackCollider(Vector2 position, float angle,
+        ContactFilter2D filter, System.Collections.Generic.List<Collider2D> results)
+    {
+        return col.Overlap(position, angle, filter, results);
     }
 
     private void CalculateRaySpacing()

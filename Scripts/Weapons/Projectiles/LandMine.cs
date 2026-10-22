@@ -6,6 +6,9 @@ using static UnityEngine.UI.Image;
 
 public class LandMine : ProjectileBase
 {
+    // 지뢰는 비행 중 접촉 피해 대신 기존 설치·기폭 수명을 사용한다.
+    protected override bool UsesPathHitDetection => false;
+
     [Header("Physics")]
     [SerializeField] private int angleStep = 15;
     [SerializeField] private float gravity = -10f;

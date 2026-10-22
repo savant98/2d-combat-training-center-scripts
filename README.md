@@ -42,6 +42,8 @@ flowchart TD
 
 플레이어와 적의 일반적인 속도 기반 이동은 `CharacterController2D`의 공통 경로를 사용합니다. `RaycastMotor2D`가 충돌을 계산한 이동량을 반환하면 컨트롤러가 위치와 충돌 상태를 반영합니다.
 
+발사체는 `MovingEntityBase → RaycastMotor2D.Move`로 이동하고, `ProjectileBase`가 모터의 Collider 경로·겹침 질의로 틱 사이의 피격 누락을 보완합니다. 상대 진영 레이어와 재사용 결과 목록을 사용하며 캐릭터 이동 뒤 물리 틱당 한 번 Transform을 동기화합니다. 일반 탄의 첫 명중 반환, 관통 탄의 대상별 한 번 피해, Hammer의 간격별 반복 피해는 각각의 명중 규칙으로 유지합니다. 지뢰는 기존 설치·기폭 수명을 사용합니다.
+
 ## 훈련 진행과 결과 처리
 
 ```mermaid
