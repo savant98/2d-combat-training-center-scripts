@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="Images/ProjectCover.png" alt="2D Combat Training Center 대표 이미지: 네온 훈련장과 프로젝트 로고" width="100%">
+
 # 2D Combat Training Center
 
 **공격을 읽고, 타이밍을 익히고, 다음 훈련에 도전하세요.**
@@ -15,10 +17,6 @@
 
 <p><strong><a href="https://capable-shade-0e8.notion.site/2D-Combat-Training-Center-401f11a67c9c81659388e84c5944d0a3">프로젝트·설계 문서 ↗</a></strong> &nbsp; · &nbsp; <a href="#features">주요 기능</a> &nbsp; · &nbsp; <a href="#design">핵심 설계</a> &nbsp; · &nbsp; <a href="#code-map">코드 탐색</a></p>
 
-<img src="Images/GameplayTraining.png" alt="보스 전투 화면: 플레이어 HP와 Gear, 보스 HP, 훈련 시간·피격 횟수·등급을 표시하는 HUD" width="100%">
-
-<sub>기존 개발 캡처 · 촬영일 미기록 · 전투 화면과 HUD 구성</sub>
-
 </div>
 
 ## 게임 소개
@@ -31,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.2.9f1** · **C#** |
-| 공개 내용 | 게임 스크립트 **182개**, 입력 생성 코드 포함 · 설계 구조도 · 소개용 게임 캡처 |
+| 공개 내용 | 게임 스크립트 **182개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -50,6 +48,15 @@
     <td valign="top"><strong>전투 피드백</strong><br><br>애니메이션·사운드·카메라·화면 효과와 HUD로 공격·피격 상태를 전달합니다.</td>
   </tr>
 </table>
+
+<details>
+<summary><strong>보스 전투 화면 더 보기</strong></summary>
+
+![보스 전투 화면: 플레이어 HP와 Gear, 보스 HP, 훈련 시간·피격 횟수·등급을 표시하는 HUD](Images/GameplayTraining.png)
+
+기존 개발 캡처로, 전투 화면과 HUD의 구성을 보여줍니다. 촬영일은 기록되어 있지 않습니다.
+
+</details>
 
 <details>
 <summary><strong>훈련 공간 화면 더 보기</strong></summary>
@@ -171,7 +178,7 @@ flowchart TD
 
 `Scripts/`는 게임 코드의 폴더 구성을 유지합니다. `Scripts/Input/Generated/PlayerInputActions.cs`는 Unity Input System이 프로젝트 입력 설정에서 생성한 코드입니다.
 
-이 저장소는 **코드와 설계를 살펴보기 위한 공개 스크립트 저장소**입니다. 실행에 필요한 Scene·Prefab·ScriptableObject 인스턴스·외부 플러그인과 원본 게임 에셋은 전체 Unity 프로젝트에서 관리합니다. `Images/`에는 README 소개용으로 선별한 게임 캡처만 담았습니다.
+이 저장소는 **코드와 설계를 살펴보기 위한 공개 스크립트 저장소**입니다. 실행에 필요한 Scene·Prefab·ScriptableObject 인스턴스·외부 플러그인과 원본 게임 에셋은 전체 Unity 프로젝트에서 관리합니다. `Images/`에는 README 대표 이미지와 소개용으로 선별한 게임 캡처만 담았습니다.
 
 이동·충돌 구현의 참고 출처는 [RaycastMotor2D.cs](Scripts/Controllers/RaycastMotor2D.cs)의 주석에 기록되어 있습니다.
 
