@@ -39,7 +39,7 @@ public class AngleChargeShot : ProjectileBase
     private float explicitAngleFromDown;
 
     // 관통하면서 같은 대상을 여러 번 때리지 않도록
-    private readonly HashSet<HealthBase> hitSet = new();
+    private readonly HashSet<HealthBase> hitSet = new(8);
 
     public void SetAngleFromVertical(float angle)
     {
@@ -205,45 +205,12 @@ public class AngleChargeShot : ProjectileBase
         activePreview = null;
     }
 
-    protected override void OnTriggerEnter2D(Collider2D collision)
+    protected override bool UsesPathHitDetection => state == ShotState.Fired;
+
+    protected override void HitTarget(HealthBase health, Vector2 hitPoint)
     {
-        if (state != ShotState.Fired)
-            return;
-
-        //if (!collision.TryGetComponent<HealthBase>(out var health))
-        //    return;
-        HealthBase health = collision.GetComponentInParent<HealthBase>();
-        if (health == null) 
-            return;
-
-        if (!hitSet.Add(health))
-            return;
-
-        if (ownerFaction == Faction.Player && health is EnemyHealth enemy)
-        {
-            if (enemy.enemyShieldSystem == null)
-                enemy.TakeDamage(damageInfo, transform.position);
-            else
-                enemy.enemyShieldSystem.TakeDamage(damageInfo, transform.position);
-
-            Vector2 hitPoint = collision.ClosestPoint(transform.position);
-
-            OnHitEnemy?.Invoke(owner, hitPoint);
-
-            if (hitFeedbackData != null)
-                FeedbackPlayer.Instance.Play(hitFeedbackData, hitPoint);
-        }
-        else if (ownerFaction == Faction.Enemy && health is PlayerHealth player)
-        {
-            player.TakeDamage(damageInfo, transform.position);
-
-            if (hitFeedbackData != null)
-                FeedbackPlayer.Instance.Play(hitFeedbackData, transform.position);
-        }
-
-        // 중요:
-        // 여기서는 ReturnToPool() 하지 않음.
-        // 공격 대상은 관통하고, 벽 충돌만 MovingEntityBase 쪽에서 처리됨.
+        if (hitSet.Add(health))
+            ApplyHitDamage(health, hitPoint);
     }
 
     protected override void ReturnToPool()
