@@ -10,7 +10,11 @@ public class StarShotgun : ProjectileBase
 
     private bool hasCustomDirection;
     private Vector2 customDirection;
-    private HashSet<HealthBase> hitTargets = new HashSet<HealthBase>();
+    private readonly HashSet<HealthBase> hitTargets = new HashSet<HealthBase>();
+    private readonly List<Collider2D> pathHits = new List<Collider2D>();
+    private Vector2 movementStart;
+
+    private Vector2 HitCenter => transform.TransformPoint(col.offset);
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
@@ -38,7 +42,10 @@ public class StarShotgun : ProjectileBase
             return;
         }
 
+        movementStart = HitCenter;
         base.FixedUpdate();
+        if (!isReturning)
+            CheckMovementHits();
     }
 
 
@@ -60,37 +67,54 @@ public class StarShotgun : ProjectileBase
         currentLifeTime = Time.time;
     }
 
+    protected override void OnHitSomething()
+    {
+        // 지형에 반환되기 전까지 실제로 이동한 구간의 적도 처리한다.
+        CheckMovementHits();
+        base.OnHitSomething();
+    }
+
+    private void CheckMovementHits()
+    {
+        if (!(col is CircleCollider2D circle)) return;
+        Vector3 scale = transform.lossyScale;
+        float radius = circle.radius * Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.y));
+        motor.OverlapAttackCirclePath(movementStart, HitCenter, radius, pathHits, ~0);
+        foreach (var collision in pathHits)
+            TryHit(collision);
+    }
+
     protected override void OnTriggerEnter2D(Collider2D collision)
     {
-        //if (!collision.TryGetComponent<HealthBase>(out var health))
-        //    return;
+        TryHit(collision);
+    }
 
+    private void TryHit(Collider2D collision)
+    {
         HealthBase health = collision.GetComponentInParent<HealthBase>();
-
-        if (health == null || !hitTargets.Add(health)) 
+        if (health == null || health.IsInvincible || hitTargets.Contains(health))
             return;
 
-        if (health.IsInvincible)
-            return;
-
+        Vector2 hitPoint = collision.ClosestPoint(HitCenter);
         if (ownerFaction == Faction.Player && health is EnemyHealth enemy)
         {
+            // 무적·스폰 잠금 중 거절된 접촉은 명중으로 기록하지 않는다.
+            if (enemy.enemyShieldSystem != null && enemy.enemyShieldSystem.IsSpawnLocked)
+                return;
+            hitTargets.Add(health);
             if (enemy.enemyShieldSystem == null)
-                enemy.TakeDamage(damageInfo, transform.position);
+                enemy.TakeDamage(damageInfo, hitPoint);
             else
-                enemy.enemyShieldSystem.TakeDamage(damageInfo, transform.position);
-
-            Vector2 hitPoint = collision.ClosestPoint(transform.position);
+                enemy.enemyShieldSystem.TakeDamage(damageInfo, hitPoint);
 
             OnHitEnemy?.Invoke(owner, hitPoint);
             FeedbackPlayer.Instance.Play(hitFeedbackData, hitPoint);
-            //ReturnToPool();
         }
         else if (ownerFaction == Faction.Enemy && health is PlayerHealth player)
         {
-            player.TakeDamage(damageInfo, transform.position);
-            FeedbackPlayer.Instance.Play(hitFeedbackData, transform.position);
-            //ReturnToPool();
+            hitTargets.Add(health);
+            player.TakeDamage(damageInfo, hitPoint);
+            FeedbackPlayer.Instance.Play(hitFeedbackData, hitPoint);
         }
     }
 }

@@ -68,6 +68,25 @@ public class RaycastMotor2D : MonoBehaviour
         return Physics2D.OverlapBox(center, size, angle, filter, results);
     }
 
+    // 원형 탄의 실제 이동 경로를 캡슐로 검사해 틱 사이의 통과와 시작점 겹침을 함께 처리한다.
+    public int OverlapAttackCirclePath(Vector2 start, Vector2 end, float radius,
+        System.Collections.Generic.List<Collider2D> results, LayerMask targetLayer)
+    {
+        var filter = new ContactFilter2D();
+        filter.SetLayerMask(targetLayer);
+        filter.useTriggers = true;
+        Physics2D.SyncTransforms();
+
+        Vector2 delta = end - start;
+        if (delta.sqrMagnitude <= 0.000001f)
+            return Physics2D.OverlapCircle(start, radius, filter, results);
+
+        float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg - 90f;
+        Vector2 size = new Vector2(radius * 2f, delta.magnitude + radius * 2f);
+        return Physics2D.OverlapCapsule((start + end) * 0.5f, size,
+            CapsuleDirection2D.Vertical, angle, filter, results);
+    }
+
     private void CalculateRaySpacing()
     {
         bounds = col.bounds;
@@ -90,12 +109,28 @@ public class RaycastMotor2D : MonoBehaviour
 
         if (move.y != 0)
             VerticalCollisions(ref move, ref collisionInfo);
+        else
+            collisionInfo.down = HasGroundSupport(move.x);
 
         return new RaycastMoveResult2D
         {
             move = move,
             info = collisionInfo
         };
+    }
+
+    private bool HasGroundSupport(float horizontalMove)
+    {
+        // 수평 대시나 정지 중에도 이동 후 발밑을 확인해 실제 발판 이탈만 알린다.
+        // 위치는 보정하지 않고 기존 바닥 충돌과 같은 레이 간격·레이어를 사용한다.
+        float distance = skinWidth + 0.001f;
+        for (int i = 0; i < verticalRayCount; i++)
+        {
+            Vector2 origin = new Vector2(bounds.min.x + verticalRaySpacing * i + horizontalMove, bounds.min.y);
+            if (Physics2D.Raycast(origin, Vector2.down, distance, collisionLayer))
+                return true;
+        }
+        return false;
     }
 
     private void HorizontalCollisions(ref Vector2 move, ref RaycastCollisionInfo2D info)

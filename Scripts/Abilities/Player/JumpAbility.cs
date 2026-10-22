@@ -90,7 +90,8 @@ public class JumpAbility : PlayerAbility
     }
     private void BeginFall()
     {
-        if (currentJumpCount == maxJumpCount && controller.Velocity.y < 0)
+        // 지상을 떠나면 세로 속도와 무관하게 지상 점프 몫을 사용한다.
+        if (currentJumpCount == maxJumpCount)
             currentJumpCount--;
     }
     public override void Interrupt()
