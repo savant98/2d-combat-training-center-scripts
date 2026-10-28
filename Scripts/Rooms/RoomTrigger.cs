@@ -69,6 +69,7 @@ public class RoomTrigger : MonoBehaviour, IInteractable
         // Menu를 연다면
         if (menuController != null)
         {
+            menuController.OnConfirmEnterRoom -= HandleEnterRoom;
             menuController.Show();
             menuController.OnConfirmEnterRoom += HandleEnterRoom;
         }
