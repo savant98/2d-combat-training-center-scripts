@@ -98,7 +98,7 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
             PlayFeedback(moveFeedback);
         }
     }
-    public void OnConfirm()
+    public virtual void OnConfirm()
     {
         if (!IsActive)
             return;
@@ -107,7 +107,7 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
         OnSelected?.Invoke(currentIndex);
     }
 
-    public void OnCancel()
+    public virtual void OnCancel()
     {
         if (!IsActive)
             return;
