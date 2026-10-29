@@ -68,6 +68,15 @@ public class RaycastMotor2D : MonoBehaviour
         return Physics2D.OverlapBox(center, size, angle, filter, results);
     }
 
+    // 범위 공격도 기존 모터에서 동기화한 물리 상태를 사용한다.
+    public int OverlapAttackCircle(Vector2 center, float radius, ContactFilter2D filter,
+        System.Collections.Generic.List<Collider2D> results)
+    {
+        PrepareAttackQueries();
+        results.Clear();
+        return Physics2D.OverlapCircle(center, Mathf.Max(0f, radius), filter, results);
+    }
+
     private static double lastAttackQuerySyncTime = double.NaN;
 
     // 캐릭터 이동 후 실행되는 ProjectileBase에서 물리 틱당 한 번만 동기화한다.

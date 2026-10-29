@@ -87,7 +87,7 @@ public abstract class ProjectileBase : MovingEntityBase
             CheckMovementHits();
     }
 
-    private void CheckMovementHits()
+    protected void CheckMovementHits()
     {
         if (!UsesPathHitDetection || movementChecked) return;
         movementChecked = true;
