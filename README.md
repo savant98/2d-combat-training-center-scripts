@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.2.9f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **193개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **196개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -86,6 +86,12 @@
 플레이어도 `AbilityManager`와 `PlayerStateMachine.CanPerform`으로 행동 가능 여부를 확인하고, `PlayerWeaponAbility`와 `WeaponBaseSO`로 무기·공격 단계를 연결합니다.
 
 → [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs)
+
+**Constructor의 유도 미사일 패턴** — 기존 모터로 양쪽 벽의 X 중점과 중앙 바닥 높이를 찾고, 보스 기준 위치가 바닥 위 5인 중앙 목표로 이동합니다. 도착 후 준비 동작을 거쳐 플레이어 반대쪽 발사구에서 두 발을 0.35초 간격으로 쏩니다. 두 번째 발사로부터 1초 뒤 다른 발사구에서 같은 간격으로 두 발을 쏘며, 발사 시각에 맞는 반동·흰 연기·로켓 발사음을 Feedback으로 연결합니다.
+
+각 미사일은 좌우 위쪽 45도 대각선으로 0.7초 동안 사출된 뒤 현재 플레이어를 추적합니다. 속도 6→3의 감속과 3→14의 재가속, 초당 180도의 선회 한도와 각가속도 제한으로 움직임을 잇습니다. 접근 뒤 지나치면 보유 각속도를 1.8초 동안 줄이며 관성으로 이탈합니다. 이동·지형 충돌·타격·폭발 범위 질의는 기존 RaycastMotor2D 경로를 사용합니다.
+
+폭발 반경 1.5에 범위 피해 12를 적용하며 직격 대상과 여러 Collider의 중복 피해를 제외합니다. 폭발 Trail은 분리해 자연 소멸시키고 다음 발사에는 빈 Renderer를 사용합니다. StomperDestroyEffect를 참고한 짧은 지속 폭발과 Platform에 부딪히는 파편은 시각 효과로 재생하며, 강제 반환·Disable 취소는 폭발 피해를 만들지 않습니다. 패턴 중단·종료 때는 관절·Facing·LockFacing과 중력·외력 상태를 복원합니다.
 
 ### 03. 훈련 설정·진행 상태·결과 저장의 구분
 
@@ -167,6 +173,7 @@ flowchart TD
 | 무기와 전투 | [PlayerWeaponAbility](Scripts/Abilities/Player/PlayerWeaponAbility.cs) · [WeaponBaseSO](Scripts/Weapons/Definitions/WeaponBaseSO.cs) · [Weapons](Scripts/Weapons/Definitions) | 무기 선택, 공격 단계, 콤보·카운터·투사체 |
 | 발사체 판정 | [ProjectileBase](Scripts/Weapons/Projectiles/ProjectileBase.cs) · [Projectiles](Scripts/Weapons/Projectiles) | 이동 경로 검사, 관통·반복 피해, 풀 반환 |
 | 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행 |
+| Constructor 유도 미사일 | [ConstructorHomingMissileAbility](Scripts/Abilities/Enemies/Patterns/Bosses/Constructor/ConstructorHomingMissileAbility.cs) · [ConstructorHomingMissileDataSO](Scripts/Abilities/Enemies/Data/Bosses/Constructor/ConstructorHomingMissileDataSO.cs) · [ConstructorHomingMissile](Scripts/Weapons/Projectiles/ConstructorHomingMissile.cs) | 중앙 이동 뒤 플레이어 반대쪽 발사구부터 두 발씩 순차 발사, 제한된 유도와 가속, 기존 판정·Feedback·풀 수명 |
 | 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs) · [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs) · [Wave](Scripts/Waves) | 스폰 설정, 클리어 조건, 적·월드 오브젝트 풀링 |
 | 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs) · [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs) · [DataManager](Scripts/Persistence/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |
 | 방 전환 | [RoomTransitionManager](Scripts/Rooms/RoomTransitionManager.cs) · [Rooms](Scripts/Rooms) | 전환 요청, 컨텍스트와 연출 분리 |
