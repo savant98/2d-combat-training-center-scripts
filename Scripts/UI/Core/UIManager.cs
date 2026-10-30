@@ -274,6 +274,13 @@ public class UIManager : MonoBehaviour
     {
         gameplayBlockCount = 0;
     }
+    // 포인터와 직접 호출도 실제 최상단 입력 수신자만 처리하게 한다. 스택 순서는 바꾸지 않는다.
+    public bool IsCurrentInputTarget(IUIInputReceiver receiver)
+    {
+        var current = GetCurrentEntry();
+        return current != null && object.ReferenceEquals(current.receiver, receiver);
+    }
+
     public void SetInputTarget(IUIInputReceiver ui)
     {
         PushInputTarget(ui, UIInputLayer.Gameplay);
