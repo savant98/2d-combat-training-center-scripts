@@ -87,19 +87,7 @@
 
 → [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs)
 
-**Constructor의 유도 미사일 패턴** — 기존 모터로 양쪽 벽의 X 중점과 중앙 바닥 높이를 찾고, 보스 기준 위치가 바닥 위 5인 중앙 목표로 이동합니다. 도착 후 준비 동작을 거쳐 플레이어 반대쪽 발사구에서 두 발을 0.35초 간격으로 쏩니다. 두 번째 발사로부터 1초 뒤 다른 발사구에서 같은 간격으로 두 발을 쏘며, 발사 시각에 맞는 반동·흰 연기·로켓 발사음을 Feedback으로 연결합니다.
-
-각 미사일은 좌우 위쪽 45도 대각선으로 0.7초 동안 사출된 뒤 현재 플레이어를 추적합니다. 속도 6→3의 감속과 3→14의 재가속, 초당 180도의 선회 한도와 각가속도 제한으로 움직임을 잇습니다. 접근 뒤 지나치면 보유 각속도를 1.8초 동안 줄이며 관성으로 이탈합니다. 이동·지형 충돌·타격·폭발 범위 질의는 기존 RaycastMotor2D 경로를 사용합니다.
-
-폭발 반경 1.5에 범위 피해 12를 적용하며 직격 대상과 여러 Collider의 중복 피해를 제외합니다. 폭발 Trail은 분리해 자연 소멸시키고 다음 발사에는 빈 Renderer를 사용합니다. StomperDestroyEffect를 참고한 짧은 지속 폭발과 Platform에 부딪히는 파편은 시각 효과로 재생하며, 강제 반환·Disable 취소는 폭발 피해를 만들지 않습니다. 패턴 중단·종료 때는 관절·Facing·LockFacing과 중력·외력 상태를 복원합니다.
-
-**Constructor의 큐브 장비 패턴** — 현재 설정과 실행 흐름을 기준으로 설명합니다. 보스는 플레이어 반대쪽 벽에서 여유를 두고 높이 8로 접근합니다. 컨베이어 없이 지면에 큐브를 생성하고 외피가 열리면 몸체를 0.35초에 한 번 내립니다. 이 높이에서 왼쪽·오른쪽을 각 0.65초 단계로 순차 장착하고 먼저 장착한 팔을 아래에 유지합니다. 양쪽 장착 뒤 0.75초에 한 번 천천히 상승하며 중간에 몸체를 위아래로 흔들지 않습니다. 기존 10개 Clip의 GUID를 유지하고 AssemblyRise를 추가해 총 11개를 연결합니다.
-
-- **폭탄 장비**: 가속도 44·최고 속도 16·선회 초당 270도로 유도하며 플레이어에게 근접하거나 지나쳐도 2.5초 동안 추적을 계속합니다. 고정 원형 예고 뒤 폭발하며 작은 입자는 플랫폼에 반사됩니다. 7개 ParticleSystem의 수명·크기 곡선을 보존하고 simulationSpeed 2로 재생해 실제 최장 약 1.37초에 소멸하며 풀 반환은 1.7초입니다.
-- **충격파 장비**: 중앙에서 왼쪽·오른쪽·왼쪽으로 세 번 수직 타격합니다. 각 단계는 1.65초, 내려찍기는 0.2초, 회수는 1초이며 몸체·손목·피스톤을 같은 구간에 연결합니다. 임팩트 시각은 단계 시작 후 0.403초를 유지합니다.
-- **바운스 기어**: 집은 자리에서 0.55초 동안 1만큼 들어 올린 뒤 수직으로 놓습니다. 첫 반동으로 0.7초 상승한 뒤 파란 점등과 함께 0.5초 대기하고, 이후 스스로 벽에 반사되며 정상 작동부터 6초의 수명을 적용합니다.
-
-선택은 기존 AiPatternDirector·Profile에 큐브 그룹 규칙을 연결하고, 이동·충돌·피해는 기존 모터·Pool 경로를 사용합니다. 기존 클래스명·AbilityKey·경로는 연결 호환을 위해 유지합니다. 대표 코드 경로는 `Scripts/Abilities/Enemies/Patterns/Bosses/Constructor/ConstructorCubeThrowAbility.cs`와 `Scripts/Weapons/Projectiles/ConstructorThrownCube.cs`입니다.
+Constructor의 동작과 설정은 [보스 패턴 상세 문서](https://capable-shade-0e8.notion.site/401f11a67c9c81c7b841cab7d9752dd4)에서 확인할 수 있습니다.
 
 ### 03. 훈련 설정·진행 상태·결과 저장의 구분
 
@@ -181,7 +169,6 @@ flowchart TD
 | 무기와 전투 | [PlayerWeaponAbility](Scripts/Abilities/Player/PlayerWeaponAbility.cs) · [WeaponBaseSO](Scripts/Weapons/Definitions/WeaponBaseSO.cs) · [Weapons](Scripts/Weapons/Definitions) | 무기 선택, 공격 단계, 콤보·카운터·투사체 |
 | 발사체 판정 | [ProjectileBase](Scripts/Weapons/Projectiles/ProjectileBase.cs) · [Projectiles](Scripts/Weapons/Projectiles) | 이동 경로 검사, 관통·반복 피해, 풀 반환 |
 | 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행 |
-| Constructor 유도 미사일 | [ConstructorHomingMissileAbility](Scripts/Abilities/Enemies/Patterns/Bosses/Constructor/ConstructorHomingMissileAbility.cs) · [ConstructorHomingMissileDataSO](Scripts/Abilities/Enemies/Data/Bosses/Constructor/ConstructorHomingMissileDataSO.cs) · [ConstructorHomingMissile](Scripts/Weapons/Projectiles/ConstructorHomingMissile.cs) | 중앙 이동 뒤 플레이어 반대쪽 발사구부터 두 발씩 순차 발사, 제한된 유도와 가속, 기존 판정·Feedback·풀 수명 |
 | 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs) · [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs) · [Wave](Scripts/Waves) | 스폰 설정, 클리어 조건, 적·월드 오브젝트 풀링 |
 | 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs) · [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs) · [DataManager](Scripts/Persistence/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |
 | 방 전환 | [RoomTransitionManager](Scripts/Rooms/RoomTransitionManager.cs) · [Rooms](Scripts/Rooms) | 전환 요청, 컨텍스트와 연출 분리 |
