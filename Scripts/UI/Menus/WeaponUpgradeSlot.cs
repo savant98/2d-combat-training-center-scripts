@@ -65,6 +65,20 @@ public class WeaponUpgradeSlot : MonoBehaviour
     public Image LeftNodeButtonImage => leftNodeButtonImage;
     public Image RightNodeButtonImage => rightNodeButtonImage;
 
+    // 확인 창은 현재 SO의 이름과 가격을 읽기만 한다. 차감과 저장은 기존 구매 메서드가 담당한다.
+    public bool TryGetPurchaseInfo(int nodeType, out string purchaseName, out int price)
+    {
+        purchaseName = string.Empty;
+        price = 0;
+        if (weaponData == null || string.IsNullOrWhiteSpace(WeaponID) || nodeType < 0 || nodeType > 2) return false;
+        var node = nodeType == 0 ? weaponData.unlockInfo : nodeType == 1 ? weaponData.leftNodeInfo : weaponData.rightNodeInfo;
+        string label = nodeType == 0 ? "해금" : !string.IsNullOrWhiteSpace(node.nodeName)
+            ? node.nodeName : nodeType == 1 ? "왼쪽 모듈" : "오른쪽 모듈";
+        purchaseName = WeaponID + " · " + label;
+        price = node.upgradeCost;
+        return price >= 0;
+    }
+
     private Tween leftFadeTween;
     private Tween rightFadeTween;
     private Tween unlockCostFadeTween;

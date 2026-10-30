@@ -16,6 +16,17 @@ public class UpgradeMenu : SelectableMenuUI
     // [0,1,2,3] -> 왼쪽 그룹 1~4열 / [4,5,6,7] -> 오른쪽 그룹 1~4열
     [SerializeField] private WeaponUpgradeSlot[] weaponSlots;
 
+    [Header("Purchase Confirmation")]
+    [SerializeField] private UpgradePurchaseDialog purchaseDialog;
+    private Coroutine purchaseRoutine;
+    private bool purchaseInProgress;
+    private bool ownsPurchaseInputBlock;
+
+    public bool IsPurchasePending => purchaseInProgress || (purchaseDialog != null && purchaseDialog.IsActive);
+    private bool CanReceiveInput => IsActive && isActiveAndEnabled && !IsPurchasePending
+        && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked
+        && UIManager.Instance.IsCurrentInputTarget(this);
+
     private int currentRow = 0; // 세로 (무기 인덱스)
     private bool isRightGroup = false; // 현재 오른쪽 그룹(4~7번 슬롯들)에 있는지 여부
     private int currentCol = 0; // 가로 (0: 왼쪽 원, 1: 오른쪽 원)
@@ -51,6 +62,7 @@ public class UpgradeMenu : SelectableMenuUI
 
         // Bind는 버튼 조립 이후
         base.Awake();
+        if (purchaseDialog == null) purchaseDialog = GetComponentInChildren<UpgradePurchaseDialog>(true);
     }
     private void Start()
     {
@@ -96,6 +108,7 @@ public class UpgradeMenu : SelectableMenuUI
     /// </summary>
     protected override void ProcessMove(Vector2 dir)
     {
+        if (!CanReceiveInput) return;
         int nextRow = currentRow;
         int nextCol = currentCol;
         bool nextGroup = isRightGroup;
@@ -187,7 +200,7 @@ public class UpgradeMenu : SelectableMenuUI
     /// </summary>
     protected override void OnPointerEnter(int index)
     {
-        if (!IsActive)
+        if (!CanReceiveInput)
             return;
 
         // UIManager에서 UI 입력이 막혀있다면 마우스 호버(Hover) 완벽 무시!
@@ -250,86 +263,150 @@ public class UpgradeMenu : SelectableMenuUI
         // 부모 SelectableMenuUI의 인덱스 변경 및 피드백 재생 함수 호출
         ChangeIndex(targetIndex);
     }
-    private void HandleSelected(int index)
+    protected override void OnPointerClick(int index)
     {
-        StartCoroutine(UpgradeSequenceCo(index));
-        
+        if (!CanReceiveInput) return;
+        OnPointerEnter(index);
+        base.OnPointerClick(index);
+    }
+    public override void OnConfirm()
+    {
+        if (CanReceiveInput) base.OnConfirm();
+    }
+    public override void OnCancel()
+    {
+        if (CanReceiveInput) base.OnCancel();
     }
 
-    private IEnumerator UpgradeSequenceCo(int index)
+    private void HandleSelected(int index)
     {
-        // 입력 차단
-        UIManager.Instance.SetUIInputBlock(true);
+        if (!CanReceiveInput) return;
+        if (!TryResolvePurchase(index, out var slot, out var nodeType, out var purchaseName, out var price, out var warning))
+        {
+            ShowPurchaseWarning(warning, slot, nodeType);
+            return;
+        }
+        if (purchaseDialog == null)
+        {
+            Debug.LogError("업그레이드 구매 확인 창 연결이 필요합니다.", this);
+            return;
+        }
+        string weaponId = slot.WeaponID;
+        purchaseDialog.ShowConfirmation(purchaseName, price,
+            () => ConfirmPurchase(index, weaponId, price), RestorePurchaseFocus);
+    }
 
-        int slotIdx = index / 3;
+    private bool TryResolvePurchase(int index, out WeaponUpgradeSlot slot, out int nodeType,
+        out string purchaseName, out int price, out string warning)
+    {
+        slot = null; nodeType = index % 3; purchaseName = string.Empty; price = 0;
+        warning = "구매 정보를 확인할 수 없습니다.";
+        if (index < 0 || weaponSlots == null || index / 3 >= weaponSlots.Length) return false;
+        slot = weaponSlots[index / 3];
+        if (slot == null || !slot.TryGetPurchaseInfo(nodeType, out purchaseName, out price)) return false;
+        var manager = DataManager.Instance;
+        bool unlocked = manager.IsWeaponUnlocked(slot.WeaponID);
+        if (nodeType == 0 ? unlocked : manager.IsWeaponNodeUpgraded(slot.WeaponID, nodeType == 2))
+        { warning = "이미 구매한 업그레이드입니다"; return false; }
+        if (nodeType != 0 && !unlocked)
+        { warning = "먼저 무기를 해금해 주세요."; return false; }
+        if (manager.CurrentGold < price)
+        { warning = "재화가 부족합니다"; return false; }
+        warning = null;
+        return true;
+    }
+    private bool ValidateConfirmedPurchase(int index, string weaponId, int quotedPrice, out WeaponUpgradeSlot slot,
+        out int nodeType, out string warning)
+    {
+        if (!TryResolvePurchase(index, out slot, out nodeType, out _, out int currentPrice, out warning)) return false;
+        if (slot.WeaponID != weaponId || currentPrice != quotedPrice)
+        { warning = "구매 정보가 변경되었습니다. 다시 확인해 주세요."; return false; }
+        return true;
+    }
+    private void ShowPurchaseWarning(string message, WeaponUpgradeSlot slot = null, int nodeType = 0)
+    {
+        if (!IsActive || !isActiveAndEnabled || string.IsNullOrEmpty(message)) return;
+        if (slot != null) slot.PlayFailFeedback(nodeType == 0, nodeType == 2);
+        if (purchaseDialog != null) purchaseDialog.ShowWarning(message, RestorePurchaseFocus);
+        else Debug.LogError("업그레이드 구매 확인 창 연결이 필요합니다: " + message, this);
+    }
+    private void RestorePurchaseFocus()
+    {
+        // 스택에 소유 메뉴를 다시 밀어 넣지 않는다. 위에 열린 Pause나 System 입력은 그대로 둔다.
+        if (IsActive) SyncIndexToRowCol();
+    }
+    private void ConfirmPurchase(int index, string weaponId, int quotedPrice)
+    {
+        if (!CanReceiveInput) return;
+        if (!ValidateConfirmedPurchase(index, weaponId, quotedPrice, out var slot, out var nodeType, out var warning))
+        { ShowPurchaseWarning(warning, slot, nodeType); return; }
+        purchaseInProgress = true;
+        var routine = StartCoroutine(UpgradeSequenceCo(index, weaponId, quotedPrice));
+        purchaseRoutine = purchaseInProgress ? routine : null;
+    }
+
+    private IEnumerator UpgradeSequenceCo(int index, string weaponId, int quotedPrice)
+    {
+        string warning = null;
+        WeaponUpgradeSlot slot = null;
         int nodeType = index % 3;
-        WeaponUpgradeSlot slot = weaponSlots[slotIdx];
-
-        bool isAnimationFinishied = false;
-
-        if (nodeType == 0)
+        try
         {
-            // 해금 조건 검사
-            if (!slot.CanUnlockWeapon())
+            if (!ValidateConfirmedPurchase(index, weaponId, quotedPrice, out slot, out nodeType, out warning)) yield break;
+            ownsPurchaseInputBlock = true;
+            UIManager.Instance.SetUIInputBlock(true);
+            bool animationFinished = false;
+            if (nodeType == 0) slot.PlayUnlockAnimation(() => animationFinished = true);
+            else slot.PlayUpgradeAnimation(nodeType == 2, () => animationFinished = true);
+            yield return new WaitUntil(() => animationFinished);
+
+            // 연출 대기 중 가격·상태·재화가 바뀌었으면 다시 확인하게 하고 기존 거래는 수행하지 않는다.
+            if (!ValidateConfirmedPurchase(index, weaponId, quotedPrice, out slot, out nodeType, out warning)) yield break;
+            if (nodeType == 0)
             {
-                slot.PlayFailFeedback(true);
-                UIManager.Instance.SetUIInputBlock(false);
-                yield break;
+                slot.TryUnlockWeapon();
+                int slotIndex = index / 3;
+                isRightGroup = slotIndex >= ROW_COUNT;
+                currentRow = isRightGroup ? slotIndex - ROW_COUNT : slotIndex;
+                currentCol = 0;
             }
-
-            // [자물쇠 버튼 선택됨] -> 해금 전용 연출 시작 (완료 시 콜백 수행)
-            slot.PlayUnlockAnimation(() => isAnimationFinishied = true);
-
-            // 연출이 끝날 때까지 코루틴 대기
-            yield return new WaitUntil(() => isAnimationFinishied);
-
-            // 해금 시도
-            slot.TryUnlockWeapon();
-
-            // 골드 소모 UI 갱신
+            else slot.TryUpgradeWeapon(nodeType == 2);
             UpdateGoldText();
-
-            // 해금 직후 비주얼이 원형 버튼으로 바뀌므로, 커서도 자연스럽게 왼쪽 원형 버튼으로 이동
-            isRightGroup = slotIdx >= ROW_COUNT;
-            currentRow = isRightGroup ? (slotIdx - ROW_COUNT) : slotIdx;
-            currentCol = 0;
-
             SyncIndexToRowCol();
         }
-        else
+        finally
         {
-            // [원형 업그레이드 버튼 선택됨] -> 1이면 왼쪽(false), 2면 오른쪽(true)
-            bool isRightNode = (nodeType == 2);
-
-            // 업그레이드 조건 검사
-            if (!slot.CanUpgradeWeapon(isRightNode))
-            {
-                slot.PlayFailFeedback(false, isRightNode);
-                UIManager.Instance.SetUIInputBlock(false);
-                yield break;
-            }
-
-            // 업그레이드 전용 연출 시작 (완료 시 콜백 수행)
-            slot.PlayUpgradeAnimation(isRightNode, () => isAnimationFinishied = true);
-
-            // 연출이 끝날 때까지 코루틴 대기
-            yield return new WaitUntil(() => isAnimationFinishied);
-
-            // 업그레이드 시도
-            slot.TryUpgradeWeapon(isRightNode);
-
-            // 골드 소모 UI 갱신
-            UpdateGoldText();
-
-            SyncIndexToRowCol();
+            purchaseRoutine = null;
+            purchaseInProgress = false;
+            ReleasePurchaseInputBlock();
+            if (!string.IsNullOrEmpty(warning) && UIManager.Instance != null && UIManager.Instance.IsCurrentInputTarget(this))
+                ShowPurchaseWarning(warning, slot, nodeType);
         }
-
-        // UI 입력 차단 해제
-        UIManager.Instance.SetUIInputBlock(false);
+    }
+    private void ReleasePurchaseInputBlock()
+    {
+        if (!ownsPurchaseInputBlock) return;
+        ownsPurchaseInputBlock = false;
+        if (UIManager.Instance != null) UIManager.Instance.SetUIInputBlock(false);
+    }
+    private void CancelPurchaseSequence()
+    {
+        var routine = purchaseRoutine;
+        purchaseRoutine = null;
+        if (routine != null) StopCoroutine(routine);
+        purchaseInProgress = false;
+        ReleasePurchaseInputBlock();
+    }
+    private void OnDisable()
+    {
+        if (purchaseDialog != null) purchaseDialog.Close();
+        CancelPurchaseSequence();
+        if (IsActive && UIManager.Instance != null) base.Close();
     }
 
     private void HandleCanceled()
     {
+        if (!CanReceiveInput) return;
         GameManager.Instance.Player.AbilityManager.InterruptAllAbilities();
 
         animator.SetBool("Open", false);
@@ -343,6 +420,8 @@ public class UpgradeMenu : SelectableMenuUI
     public override void Close()
     {
         base.Close();
+        if (purchaseDialog != null) purchaseDialog.Close();
+        CancelPurchaseSequence();
 
         for (int i = 0; i < weaponSlots.Length; i++)
         {
