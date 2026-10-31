@@ -113,7 +113,17 @@ public class GameManager : MonoBehaviour
         UIManager.Instance.PopGameplayBlock();
 
         // Wave 재시작
-        RoomManager.Instance.CurrentRoom.WaveManager.RestartWaves();
+        var currentRoom = RoomManager.Instance.CurrentRoom;
+        if (currentRoom.roomType == RoomType.SelfTraining)
+        {
+            var practice = currentRoom.GetComponentInChildren<SelfTrainingController>();
+            if (practice != null)
+            {
+                practice.CancelAnalysis();
+                practice.Configure(practice.DummyCount, practice.UseShield, practice.ShieldCapacity);
+            }
+        }
+        else currentRoom.WaveManager.RestartWaves();
     }
     private IEnumerator EnemyDespawnNextFrame()
     {

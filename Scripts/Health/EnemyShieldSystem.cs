@@ -14,6 +14,40 @@ public class EnemyShieldSystem : MonoBehaviour
     public event Action OnBreak;
     public event Action OnBreakEnd;
 
+    public event Action<WeaponBaseSO.DamageInfo> OnShieldDamaged;
+    public float MaximumShield => data.maxShield;
+    private EnemyShieldDataSO trainingData;
+
+    // 공유 SO를 수정하지 않고 자율훈련용 인스턴스의 용량만 조절한다.
+    public void ConfigureTrainingCapacity(float capacity)
+    {
+        if (trainingData == null)
+        {
+            trainingData = Instantiate(data);
+            data = trainingData;
+        }
+        data.maxShield = Mathf.Max(1f, capacity);
+        ResetTrainingShield();
+    }
+
+    public void ResetTrainingShield()
+    {
+        if (isBreaking)
+        {
+            aiBrain.ResumeBrain();
+            OnBreakEnd?.Invoke();
+        }
+        ResetShield();
+    }
+
+    private void OnDestroy()
+    {
+        if (trainingData != null) Destroy(trainingData);
+        if (shieldMaterials == null) return;
+        foreach (var material in shieldMaterials)
+            if (material != null) Destroy(material);
+    }
+
     private EnemyHealth health;
     private EnemyUI enemyUI;
     private AiBrain aiBrain;
@@ -49,6 +83,18 @@ public class EnemyShieldSystem : MonoBehaviour
         CurrentShield = data.maxShield;
         breakable = false;
         isBreaking = false;
+        regenTimer = 0f;
+        breakEndTime = 0f;
+        breakableEndTime = 0f;
+        if (coroutine != null)
+        {
+            StopCoroutine(coroutine);
+            coroutine = null;
+        }
+        SetShieldEmission(Color.black);
+        if (sprites != null)
+            foreach (var sprite in sprites)
+                if (sprite != null) sprite.enabled = false;
 
         enemyUI.ResetEnemyHUD();
     }
@@ -125,6 +171,7 @@ public class EnemyShieldSystem : MonoBehaviour
     }
     private void ApplyShieldDamage(WeaponBaseSO.DamageInfo dmgInfo, Vector3 hitPosition)
     {
+        OnShieldDamaged?.Invoke(dmgInfo);
         CurrentShield -= dmgInfo.damage;
         regenTimer = data.regenDelay;
 

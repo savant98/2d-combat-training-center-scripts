@@ -18,7 +18,7 @@ public class MeleeWeaponSO : WeaponBaseSO
         // 현재 콤보 스텝
 
         MeleeComboStep step = comboSteps[currentComboIndex];
-        meleeHitbox.Initialize(controller, step.damageInfo);
+        meleeHitbox.Initialize(controller, WithSource(step.damageInfo));
         meleeHitbox.SetHitFeedback(step.hitFeedbackData, (owner, hitPoint) => OnHitEnemy?.Invoke(owner, hitPoint));
     }
 }

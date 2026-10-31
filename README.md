@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.2.9f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **205개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **213개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -50,6 +50,8 @@
 </table>
 
 Lobby의 손목 단말기 UI 시안은 홈에서 저장된 수료 비율·Gold를 보여 주고, 훈련 목표·적 도감·장비 교본·수신함을 통해 다음 도전에 필요한 정보를 모읍니다.
+
+자율훈련장에서는 회복하는 Dummy를 자유롭게 타격하거나, 3초 준비 뒤 10초 전투 분석으로 무기·스킬별 피해와 DPS·기여도를 비교할 수 있습니다. 표적 수와 쉴드를 조절해 다음 훈련에 앞서 공격 조합을 연습합니다.
 
 <details>
 <summary><strong>보스 전투 화면 더 보기</strong></summary>
@@ -176,6 +178,7 @@ flowchart TD
 | 방 전환 | [RoomTransitionManager](Scripts/Rooms/RoomTransitionManager.cs) · [Rooms](Scripts/Rooms) | 전환 요청, 컨텍스트와 연출 분리 |
 | 훈련 선택·홀로그램 | [TrainingMenuController](Scripts/UI/Menus/TrainingMenuController.cs) · [TrainingMenuMechanism](Scripts/UI/Effects/TrainingMenuMechanism.cs) · [TrainingHologramGraphic](Scripts/UI/Effects/TrainingHologramGraphic.cs) | 빔 투사와 화면 열기·닫기, 목록·상세 좌우 전환, 기어·케이블 표시 수명과 UI Mesh |
 | 손목 훈련 단말기 | [InventoryTerminalMenu](Scripts/UI/Menus/InventoryTerminalMenu.cs) | Lobby 전용 홈·읽기 전용 기록 요약, 네 자료실의 목록·팝업 탐색과 입력·정지 수명 |
+| 자율훈련 전투 분석 | [SelfTrainingController](Scripts/Training/SelfTrainingController.cs) · [SelfTrainingStatistics](Scripts/Training/SelfTrainingStatistics.cs) | 자유 타격·10초 분석과 무기·기어별 기여도, 기존 Pool 기반 표적 수명 |
 | 표현 | [Feedbacks](Scripts/Feedbacks) · [Animation](Scripts/Animation) · [UI](Scripts/UI) | 사운드·카메라·화면 효과와 상태 표시 |
 | 배경 배치 도구 | [LobbyBackdropLayoutEditor](Scripts/Editor/LobbyBackdropLayoutEditor.cs) · [LobbyBackdropLayoutBaker](Scripts/Editor/LobbyBackdropLayoutBaker.cs) · [LobbyBackdropParallax](Scripts/World/LobbyBackdropParallax.cs) · [LobbyCableScroll](Scripts/World/LobbyCableScroll.cs) · [LobbyBackdropDepth](Scripts/World/LobbyBackdropDepth.cs) · [LobbyBackdropBatchRenderer](Scripts/World/LobbyBackdropBatchRenderer.cs) · [LobbyBackdropGearInstancing](Scripts/World/LobbyBackdropGearInstancing.cs) · [LobbyObservationWindow](Scripts/World/LobbyObservationWindow.cs) | 후경·Furniture 위치 편집, 연결점 기반 장식 동선 갱신, 후경 시차·케이블 UV 흐름·깊이별 명암 합성·장식 형상 결합·반복 기어 GPU instancing·통창 불투명도 조절 |
 | 훈련실 배경 연출 | [TrainingFabricationFlow](Scripts/World/TrainingFabricationFlow.cs) | 공장형 모형의 마스크 생성, 관절 팔·컨베이어·집게 이송과 복귀 제어 |

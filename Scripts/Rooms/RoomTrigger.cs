@@ -7,6 +7,7 @@ public class RoomTrigger : MonoBehaviour, IInteractable
     [SerializeField] private Room room;
     [SerializeField] private RoomTransitionEffectSO transitionEffect;
     [SerializeField] private TrainingMenuController menuController;
+    [SerializeField] private SelfTrainingEntrancePanel selfTrainingPanel;
 
     [Header("Teleport Point")]
     [SerializeField] private Transform teleportPoint;
@@ -67,7 +68,11 @@ public class RoomTrigger : MonoBehaviour, IInteractable
             interactUI.DOFade(0f, 0.3f);
 
         // Menu를 연다면
-        if (menuController != null)
+        if (selfTrainingPanel != null)
+        {
+            selfTrainingPanel.Show(EnterRoom, player);
+        }
+        else if (menuController != null)
         {
             menuController.OnConfirmEnterRoom -= HandleEnterRoom;
             menuController.Show();
@@ -96,6 +101,7 @@ public class RoomTrigger : MonoBehaviour, IInteractable
     }
     public void CancelInteract(PlayerController player)
     {
+        if (selfTrainingPanel != null) selfTrainingPanel.Hide();
         // Room 이동에는 취소가 없으므로 비워둠
     }
 }

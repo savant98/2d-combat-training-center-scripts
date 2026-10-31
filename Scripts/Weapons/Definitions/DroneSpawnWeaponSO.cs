@@ -22,7 +22,7 @@ public class DroneSpawnWeaponSO : WeaponBaseSO
         Vector3 spawnPos = controller.transform.position + (Vector3)offset;
 
         var drone = (DroneBase)WorldEntityPool.Instance.Spawn(dronePrefab, spawnPos, Quaternion.identity);
-        drone.InitializeDrone(controller, damageInfo, droneSpeed, count: 0, droneLifeTime, platformLayer);
+        drone.InitializeDrone(controller, WithSource(damageInfo), droneSpeed, count: 0, droneLifeTime, platformLayer);
 
         yield break;
     }

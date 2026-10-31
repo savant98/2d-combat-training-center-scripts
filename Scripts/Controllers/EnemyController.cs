@@ -140,6 +140,14 @@ public class EnemyController : CharacterController2D
     }
     public IEnumerator OnSpawn()
     {
+        spawnController.ResetSpawnSequence();
+        if (enemyHealth is TrainingDummyHealth trainingDummy)
+        {
+            // 비키 관절도 Prefab 기준으로 돌린 뒤 새 등장 상태를 시작한다.
+            trainingDummy.RestoreSpawnPose();
+            animator.Rebind();
+            animator.Update(0f);
+        }
         EnterFreeze();
 
         enemyHealth.ResetHealth();
@@ -157,6 +165,9 @@ public class EnemyController : CharacterController2D
     {
         ClearWaveDeathHandler();
         brain.PauseBrain();
+        spawnController.ResetSpawnSequence();
+        if (enemyHealth is TrainingDummyHealth trainingDummy)
+            trainingDummy.RestoreSpawnPose();
     }
     public void SetWaveDeathHandler(Action handler)
     {

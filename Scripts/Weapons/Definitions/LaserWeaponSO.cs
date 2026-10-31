@@ -24,7 +24,7 @@ public class LaserWeaponSO : WeaponBaseSO
         LaserBeam laser = WorldEntityPool.Instance.Spawn(laserPrefab, controller.transform.position, Quaternion.identity);
 
         laser.Fire(
-            damageInfo,
+            WithSource(damageInfo),
             origin,
             Vector2.right * controller.Facing,
             laserLength,
