@@ -110,7 +110,7 @@ public class CounterWeaponSO : WeaponBaseSO
             controller.transform.position,
             Quaternion.identity);
 
-        hitbox.Initialize(controller, counterDamageInfo);
+        hitbox.Initialize(controller, WithSource(counterDamageInfo));
     }
 
     public override bool ShouldEnterRecover()

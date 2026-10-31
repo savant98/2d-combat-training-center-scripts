@@ -42,6 +42,15 @@ public abstract class WeaponBaseSO : ScriptableObject
     {
         public float damage;
         public DamageType damageType;
+
+        // 발사 시 복사된 출처를 유지하여 무기 교체 후 적중도 구분한다.
+        [NonSerialized] public WeaponBaseSO sourceWeapon;
+    }
+
+    protected DamageInfo WithSource(DamageInfo info)
+    {
+        info.sourceWeapon = this;
+        return info;
     }
 
     [Serializable]

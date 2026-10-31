@@ -47,7 +47,8 @@ public enum RoomType
     Lobby,
     Training,
     Boss,
-    Result
+    Result,
+    SelfTraining
 }
 public enum WeaponSlot
 {

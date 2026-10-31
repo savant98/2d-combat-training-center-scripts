@@ -36,7 +36,7 @@ public class RangedWeaponSO : WeaponBaseSO
 
                 // 발사체 발사
                 var projectile = (ProjectileBase)WorldEntityPool.Instance.Spawn(projectilePrefab, controller.transform.position, controller.transform.rotation);
-                projectile.Initialize(controller, damageInfo, projectileSpeed, count, platformLayer);
+                projectile.Initialize(controller, WithSource(damageInfo), projectileSpeed, count, platformLayer);
                 projectile.OnHitEnemy += (controller, hitPoint) =>
                 {
                     OnHitEnemy?.Invoke(controller, hitPoint);

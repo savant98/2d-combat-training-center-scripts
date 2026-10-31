@@ -114,7 +114,7 @@ public class MultipleShotWeaponSO : WeaponBaseSO
 
         projectile.Initialize(
             controller,
-            damageInfo,
+            WithSource(damageInfo),
             projectileSpeed,
             pelletsPerShot,
             platformLayer);

@@ -25,11 +25,50 @@ public class EnemySpawnController : MonoBehaviour
     [SerializeField] private LineRenderer maskLine;
 
     private SoundHandle revealLoopHandle;
+    private Vector3 initialMaskPosition;
+    private Vector3 initialLaserPosition;
+    private SpriteMaskInteraction[] initialMaskInteractions;
+    private SpriteMaskInteraction initialLineMaskInteraction;
+
+    private void Awake()
+    {
+        if (revealMask != null) initialMaskPosition = revealMask.transform.localPosition;
+        if (laserLine != null) initialLaserPosition = laserLine.transform.localPosition;
+        initialMaskInteractions = new SpriteMaskInteraction[maskOffSprites == null ? 0 : maskOffSprites.Length];
+        for (int i = 0; i < initialMaskInteractions.Length; i++)
+            if (maskOffSprites[i] != null) initialMaskInteractions[i] = maskOffSprites[i].maskInteraction;
+        if (maskLine != null) initialLineMaskInteraction = maskLine.maskInteraction;
+    }
+
+    public void ResetSpawnSequence()
+    {
+        StopRevealLoopSound();
+        if (laserLine != null)
+        {
+            laserLine.SetActive(false);
+            laserLine.transform.localPosition = initialLaserPosition;
+        }
+        if (laserParticle != null)
+        {
+            foreach (var particle in laserParticle.GetComponentsInChildren<ParticleSystem>(true))
+                particle.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            laserParticle.SetActive(false);
+        }
+        if (revealMask != null)
+        {
+            revealMask.enabled = false;
+            revealMask.transform.localPosition = initialMaskPosition;
+        }
+        if (initialMaskInteractions != null)
+            for (int i = 0; i < initialMaskInteractions.Length; i++)
+                if (maskOffSprites[i] != null) maskOffSprites[i].maskInteraction = initialMaskInteractions[i];
+        if (maskLine != null) maskLine.maskInteraction = initialLineMaskInteraction;
+    }
 
 
     private void OnDisable()
     {
-        StopRevealLoopSound();
+        ResetSpawnSequence();
     }
 
     public IEnumerator PlaySpawnSequence()
