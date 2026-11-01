@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 public class TitleIntroController : MonoBehaviour
@@ -14,15 +15,20 @@ public class TitleIntroController : MonoBehaviour
     [Header("Animator Parameters")]
     [SerializeField] private string introTransitionTrigger = "Transition";
     [SerializeField] private string playerWarpParameter = "Warp";
+    [SerializeField] private string introCompletedState = "TitleIntroTransition";
 
     [Header("Feedback")]
     [SerializeField] private FeedbackDataSO sparkBothFeedback;
 
     private TitleWorldInfiniteScrollLayer[] scrollLayers;
     private bool transitionStarted;
+    private bool externalIntroActive;
+    private bool transitionCompleted;
+    public event Action PlayerRevealed;
 
     private void Awake()
     {
+        transitionStarted = transitionCompleted = externalIntroActive = false;
         CacheScrollLayers();
 
         // Intro 중에는 Player가 화면에 나타나지 않는 상태로 둔다.
@@ -31,7 +37,7 @@ public class TitleIntroController : MonoBehaviour
 
     private void Update()
     {
-        if (transitionStarted)
+        if (transitionStarted || externalIntroActive)
             return;
 
         if (!PressedAnyMappedButton())
@@ -40,6 +46,29 @@ public class TitleIntroController : MonoBehaviour
         StartIntroTransition();
     }
 
+    // 훈련 고지서 연출이 타이틀의 기존 입력·Animation Event 진입을 임시 소유한다.
+    public void SetExternalIntroActive(bool active)
+    {
+        externalIntroActive = active;
+    }
+
+    public void ResumeAfterTrainingNotice()
+    {
+        externalIntroActive = false;
+        if (!transitionStarted) StartIntroTransition();
+    }
+    // 새 연출은 배경 복구가 끝난 뒤 기존 UI의 완료 자세와 Player 등장을 같은 프레임에 연결한다.
+    public void ResumeAfterTrainingNoticeImmediately()
+    {
+        externalIntroActive = false;
+        transitionStarted = true;
+        if (introUIAnimator != null && !string.IsNullOrEmpty(introCompletedState))
+        {
+            introUIAnimator.Play(introCompletedState, 0, 1f);
+            introUIAnimator.Update(0f);
+        }
+        CompleteIntroTransition();
+    }
     private void CacheScrollLayers()
     {
         if (scrollRoot == null)
@@ -80,6 +109,8 @@ public class TitleIntroController : MonoBehaviour
     /// </summary>
     public void CompleteIntroTransition()
     {
+        if (externalIntroActive || transitionCompleted) return;
+        transitionCompleted = true;
         if (playerAnimator != null)
         {
             playerAnimator.gameObject.SetActive(true);
@@ -87,6 +118,8 @@ public class TitleIntroController : MonoBehaviour
             FeedbackPlayer.Instance.Play(sparkBothFeedback, playerAnimator.gameObject.transform);
         }
 
+
+        PlayerRevealed?.Invoke();
 
         if (titleMenu != null)
             titleMenu.Open();

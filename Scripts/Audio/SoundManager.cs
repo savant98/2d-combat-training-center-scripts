@@ -11,6 +11,7 @@ public class SoundManager : MonoBehaviour
     [SerializeField] private AudioMixer audioMixer;
     [SerializeField] private string masterVolumeParam = "MasterVolume";
     [SerializeField] private string bgmVolumeParam = "BGMVolume";
+    [SerializeField, Range(-80f, 0f)] private float defaultBgmVolumeDb = -15f;
     [SerializeField] private string sfxVolumeParam = "SFXVolume";
 
     [Header("Audio Sources")]
@@ -32,6 +33,8 @@ public class SoundManager : MonoBehaviour
 
     private Transform sfxRoot;
     private Coroutine bgmFadeRoutine;
+    private bool earlyBgmVolumeWasSet;
+    private float earlyBgmVolumeValue;
 
     private void Awake()
     {
@@ -58,6 +61,24 @@ public class SoundManager : MonoBehaviour
 
         for (int i = 0; i < initialSfxPoolSize; i++)
             CreateSfxSource();
+    }
+
+    private void Start()
+    {
+        // Mixer 초기화 이후 기본값 또는 먼저 지정한 BGM 음량을 적용한다.
+        if (Instance != this || audioMixer == null)
+            return;
+
+        if (earlyBgmVolumeWasSet)
+            SetMixerVolume(bgmVolumeParam, earlyBgmVolumeValue);
+        else
+            audioMixer.SetFloat(bgmVolumeParam, defaultBgmVolumeDb);
+    }
+
+    private void OnDisable()
+    {
+        // 도메인 재로드 없이 다시 실행해도 이전 실행의 초기 설정을 재사용하지 않는다.
+        earlyBgmVolumeWasSet = false;
     }
 
     private AudioSource CreateSfxSource()
@@ -102,6 +123,24 @@ public class SoundManager : MonoBehaviour
     public void StopBGM()
     {
         bgmSource.Stop();
+    }
+
+    // 현재 재생 중인 곡이 요청한 곡일 때만 정지해 다른 연출의 BGM을 보존한다.
+    public void StopBGM(AudioClip expectedClip)
+    {
+        if (expectedClip == null || bgmSource == null || bgmSource.clip != expectedClip)
+            return;
+
+        bgmSource.Stop();
+    }
+
+    public void SetBGMPaused(AudioClip expectedClip, bool paused)
+    {
+        if (expectedClip == null || bgmSource == null || bgmSource.clip != expectedClip)
+            return;
+
+        if (paused) bgmSource.Pause();
+        else bgmSource.UnPause();
     }
 
     public void ChangeBGM(AudioClip clip, float fadeDuration = 0.5f, float volume = 1f, bool loop = true)
@@ -316,6 +355,8 @@ public class SoundManager : MonoBehaviour
 
     public void SetBGMVolume(float value01)
     {
+        earlyBgmVolumeWasSet = true;
+        earlyBgmVolumeValue = value01;
         SetMixerVolume(bgmVolumeParam, value01);
     }
 

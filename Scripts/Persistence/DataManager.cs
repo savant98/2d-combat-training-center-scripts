@@ -17,6 +17,9 @@ public class SaveData
     // [확장 영역] 플레이어 기본 정보 및 재화
     public int currentGold;
 
+    // 최초 실행 훈련 고지서의 서명 완료 여부. 기존 저장 파일은 기본값 false로 읽는다.
+    public bool trainingNoticeSigned;
+
     // 훈련장 관련 클리어 및 베스트 기록 정보 리스트
     public List<TrainingRoomSaveData> trainingRoomRecords = new List<TrainingRoomSaveData>();
 
