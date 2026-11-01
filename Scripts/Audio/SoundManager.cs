@@ -191,6 +191,11 @@ public class SoundManager : MonoBehaviour
 
     public void PlaySFX(SoundOptions sound, Vector3 position)
     {
+        PlaySound(sound, position);
+    }
+
+    public void PlaySound(SoundOptions sound, Vector3 position)
+    {
         if (sound == null || sound.clip == null)
             return;
 
@@ -222,7 +227,7 @@ public class SoundManager : MonoBehaviour
             : sound.pitch;
 
         source.spatialBlend = sound.spatialBlend;
-        source.outputAudioMixerGroup = sfxMixerGroup;
+        source.outputAudioMixerGroup = sound.bus == SoundBus.BGM ? bgmMixerGroup : sfxMixerGroup;
 
         source.Play();
 
@@ -254,7 +259,7 @@ public class SoundManager : MonoBehaviour
             : sound.pitch;
 
         source.spatialBlend = sound.spatialBlend;
-        source.outputAudioMixerGroup = sfxMixerGroup;
+        source.outputAudioMixerGroup = sound.bus == SoundBus.BGM ? bgmMixerGroup : sfxMixerGroup;
         source.loop = true;
         source.Play();
 

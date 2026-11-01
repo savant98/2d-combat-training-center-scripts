@@ -71,9 +71,9 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     [SerializeField, Tooltip("플랫폼 → 원경 4 → 3 → 2 → 1 순서의 점등 음량 배율입니다.")]
     private float[] recoveryLightVolumeScales = { .25f, .35f, .5f, .7f, 1f };
     [SerializeField] private AudioClip titleBgmClip;
-    [SerializeField, Range(0f, 1f)] private float titleBgmVolume = .20f;
+    [SerializeField, Range(0f, 1f)] private float titleBgmVolume = .38f;
     [SerializeField] private AudioClip titleBgmPreludeClip;
-    [SerializeField, Range(0f, 1f)] private float titleBgmPreludeVolumeRatio = .15f;
+    [SerializeField, Range(0f, 1f)] private float titleBgmPreludeVolumeRatio = .35f;
 
     private bool running, initialized, legacyRestored, completed, inputRegistered;
     private bool[] legacyActive;
@@ -1003,12 +1003,13 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
             ? recoveryLightVolumeScales[Mathf.Clamp(recoveryIndex, 0, recoveryLightVolumeScales.Length - 1)] : 1f;
         // 공유 Feedback의 설정을 바꾸지 않고 이번 점등에 사용할 사운드 옵션만 복사한다.
         var sound = new SoundOptions {
+            bus = source.bus,
             clip = source.clip, volume = source.volume * Mathf.Max(0f, scale), pitch = source.pitch,
             spatialBlend = source.spatialBlend, randomizePitch = source.randomizePitch, pitchRange = source.pitchRange,
             minInterval = source.minInterval, maxSimultaneous = source.maxSimultaneous,
             crowdedVolumeMultiplier = source.crowdedVolumeMultiplier
         };
-        SoundManager.Instance.PlaySFX(sound, Vector3.zero);
+        SoundManager.Instance.PlaySound(sound, Vector3.zero);
     }
     private void RemoveOwnInput()
     {

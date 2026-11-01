@@ -1,9 +1,17 @@
 using UnityEngine;
 
+public enum SoundBus
+{
+    SFX = 0,
+    BGM = 1
+}
+
 [System.Serializable]
 public class SoundOptions
 {
     [Header("Basic")]
+    [Tooltip("BGM/SFX 오디오 그룹을 선택합니다. 기존 설정의 기본값은 SFX입니다.")]
+    public SoundBus bus = SoundBus.SFX;
     public AudioClip clip;
     [Range(0f, 1f)] public float volume = 1f;
     [Range(0.1f, 3f)] public float pitch = 1f;

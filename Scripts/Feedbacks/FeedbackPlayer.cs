@@ -210,7 +210,7 @@ public class FeedbackPlayer : MonoBehaviour
         if (data.sound != null && data.sound.clip != null)
         {
             if (SoundManager.Instance != null)
-                SoundManager.Instance.PlaySFX(data.sound, pos);
+                SoundManager.Instance.PlaySound(data.sound, pos);
         }
 
         // Shake
