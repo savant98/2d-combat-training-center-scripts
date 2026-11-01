@@ -73,7 +73,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     [SerializeField] private AudioClip titleBgmClip;
     [SerializeField, Range(0f, 1f)] private float titleBgmVolume = .20f;
     [SerializeField] private AudioClip titleBgmPreludeClip;
-    [SerializeField, Range(0f, 1f)] private float titleBgmPreludeVolumeRatio = 1f / 3f;
+    [SerializeField, Range(0f, 1f)] private float titleBgmPreludeVolumeRatio = .15f;
 
     private bool running, initialized, legacyRestored, completed, inputRegistered;
     private bool[] legacyActive;
