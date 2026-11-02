@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Status-In_Development-EA4C89?style=flat-square" alt="개발 중">
 </p>
 
-<p><strong><a href="https://capable-shade-0e8.notion.site/2D-Combat-Training-Center-401f11a67c9c81659388e84c5944d0a3">프로젝트·설계 문서 ↗</a></strong> &nbsp; · &nbsp; <a href="#features">주요 기능</a> &nbsp; · &nbsp; <a href="#design">핵심 설계</a> &nbsp; · &nbsp; <a href="#code-map">코드 탐색</a></p>
+<p><strong><a href="https://capable-shade-0e8.notion.site/2D-Combat-Training-Center-401f11a67c9c81659388e84c5944d0a3">프로젝트·설계 문서 ↗</a></strong> &nbsp; · &nbsp; <a href="#features">주요 기능</a> &nbsp; · &nbsp; <a href="#design">핵심 설계</a> &nbsp; · &nbsp; <a href="#code-map">코드 탐색</a> &nbsp; · &nbsp; <a href="#ai-collaboration">AI 협업 방식</a></p>
 
 </div>
 
@@ -182,6 +182,23 @@ flowchart TD
 | 표현 | [Feedbacks](Scripts/Feedbacks) · [Animation](Scripts/Animation) · [UI](Scripts/UI) | 사운드·카메라·화면 효과와 상태 표시 |
 | 배경 배치 도구 | [LobbyBackdropLayoutEditor](Scripts/Editor/LobbyBackdropLayoutEditor.cs) · [LobbyBackdropLayoutBaker](Scripts/Editor/LobbyBackdropLayoutBaker.cs) · [LobbyBackdropParallax](Scripts/World/LobbyBackdropParallax.cs) · [LobbyCableScroll](Scripts/World/LobbyCableScroll.cs) · [LobbyBackdropDepth](Scripts/World/LobbyBackdropDepth.cs) · [LobbyBackdropBatchRenderer](Scripts/World/LobbyBackdropBatchRenderer.cs) · [LobbyBackdropGearInstancing](Scripts/World/LobbyBackdropGearInstancing.cs) · [LobbyObservationWindow](Scripts/World/LobbyObservationWindow.cs) | 후경·Furniture 위치 편집, 연결점 기반 장식 동선 갱신, 후경 시차·케이블 UV 흐름·깊이별 명암 합성·장식 형상 결합·반복 기어 GPU instancing·통창 불투명도 조절 |
 | 훈련실 배경 연출 | [TrainingFabricationFlow](Scripts/World/TrainingFabricationFlow.cs) | 공장형 모형의 마스크 생성, 관절 팔·컨베이어·집게 이송과 복귀 제어 |
+
+<a id="ai-collaboration"></a>
+
+## AI 에이전트 협업 방식
+
+이 프로젝트는 Codex와 Claude를 함께 사용해 개발합니다. 예를 들어 Codex가 UI를, Claude가 인게임 스킬을 동시에 맡을 수 있습니다. 두 에이전트가 서로의 작업을 덮어쓰지 않도록 **하네스 엔지니어링** 관점에서 작업 환경과 규칙을 정했습니다. 하네스는 모델을 제외한 지시 문서·작업 공간·검사·승인 절차를 뜻합니다.
+
+| 원칙 | 내용 |
+| --- | --- |
+| 공통 규칙 | 두 에이전트가 함께 읽는 `AGENTS.md`를 단일 원본으로 둡니다. 서로 공유되지 않는 개인 메모리에만 규칙을 저장하지 않습니다. |
+| 작업 격리 | **폴더 1개 = 에이전트 1개 = 브랜치 1개 = Unity Editor 1개.** 동시 작업은 `git worktree` 폴더로 나눕니다. |
+| 담당 영역 | 기본적으로 UI는 Codex, 인게임 스킬·전투는 Claude가 맡습니다. 메인 Scene·Player Prefab·입력 설정 같은 공유 파일은 사용자 승인 후 한쪽만 수정합니다. |
+| 영역 사이 접점 | 게임플레이 코드는 읽기 전용 상태와 C# event를 제공하고, UI는 구독해서 표시만 합니다. |
+| 병합 | 경로를 지정해 스테이징하고, `main`은 merge로 받습니다. Scene·Prefab 충돌은 UnityYAMLMerge로 병합한 뒤 확인합니다. |
+| 검증 | PR 전에 컴파일 오류 0개와 담당 기능의 Play 동작을 확인합니다. |
+
+전체 규칙과 첫 적용 사례는 [Notion · AI 에이전트 병렬 작업 규칙](https://capable-shade-0e8.notion.site/40cf11a67c9c8199b57fee834027f5bc)에서 볼 수 있습니다.
 
 ## 환경과 공개 범위
 
