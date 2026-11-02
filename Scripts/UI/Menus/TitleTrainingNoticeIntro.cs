@@ -179,6 +179,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         }
         CachePresentation();
         running = true;
+        titleMenu.MarkIntroPlayed();
         if (SoundManager.Instance != null)
         {
             SoundManager.Instance.StopBGM(titleBgmClip);
@@ -890,7 +891,8 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     private void HandleTitleExit()
     {
         StopPrelude();
-        if (titleMusicStarted && SoundManager.Instance != null) SoundManager.Instance.StopBGM(titleBgmClip);
+        if (titleMusicStarted && SoundManager.Instance != null)
+            SoundManager.Instance.FadeOutBGM(titleBgmClip, titleMenu != null ? titleMenu.PlayerDisappearTime : 1.0833334f);
         titleMusicStarted = false;
     }
 

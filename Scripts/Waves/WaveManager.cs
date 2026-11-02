@@ -11,6 +11,8 @@ public class WaveManager : MonoBehaviour
 
     public static WaveManager ActiveInstance { get; private set; }
     public Action OnAllWavesCleared;
+    public event Action<EnemyController> EnemySpawned;
+    public bool SuppressTrainingRecording { get; set; }
     public int currentWaveIndex = 0;
     public int aliveTargets = 0;
 
@@ -22,7 +24,7 @@ public class WaveManager : MonoBehaviour
     private List<WorldEntityBase> currentWaveEntities = new List<WorldEntityBase>();
 
 
-    public void BeginWaves()
+    public void BeginWaves(bool showWaveIntro = true)
     {
         currentWaveIndex = 0;
         ActiveInstance = this;
@@ -30,10 +32,11 @@ public class WaveManager : MonoBehaviour
         if (coroutine != null)
             StopCoroutine(coroutine);
 
-        if (TrainingRunTracker.Instance != null && currentTrainingDef != null)
+        if (!SuppressTrainingRecording && TrainingRunTracker.Instance != null && currentTrainingDef != null)
             TrainingRunTracker.Instance.Begin(currentTrainingDef);
 
-        coroutine = StartCoroutine(NextWaveDelay());
+        if (showWaveIntro) coroutine = StartCoroutine(NextWaveDelay());
+        else SpawnWave(waveData.waves[currentWaveIndex]);
     }
     public void RestartWaves()
     {
@@ -95,6 +98,7 @@ public class WaveManager : MonoBehaviour
             {
                 EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, spawnPos);
                 enemyInstance.Health.IsBossEnemy = info.isBossEnemy;
+                EnemySpawned?.Invoke(enemyInstance);
 
                 if (info.isBossEnemy)
                 {

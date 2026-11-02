@@ -10,7 +10,8 @@ public class LobbyBackdropParallax : MonoBehaviour
     private void OnEnable()
     {
         if (!Application.isPlaying) return;
-        if (layers == null) layers = GetComponentsInChildren<PositionConstraint>(true);
+        // 재로드 없이 재진입해도 빈 캐시와 새 후경 레이어를 다시 확인한다.
+        layers = GetComponentsInChildren<PositionConstraint>(true);
         SetEnabled(true);
     }
 

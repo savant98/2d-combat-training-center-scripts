@@ -72,8 +72,9 @@ public class LobbyCableScroll : MonoBehaviour
 
     private void ReleaseMaterials()
     {
-        if (originalMaterials == null) return;
-        for (int i = 0; i < lineRenderers.Length; i++)
+        if (originalMaterials == null || assignedMaterials == null || lineRenderers == null) return;
+        int count = Mathf.Min(lineRenderers.Length, Mathf.Min(originalMaterials.Length, assignedMaterials.Length));
+        for (int i = 0; i < count; i++)
         {
             var line = lineRenderers[i];
             if (line != null && assignedMaterials[i] != null

@@ -18,10 +18,13 @@ public class LobbyBackdropDepth : MonoBehaviour
         [Range(0f, 12f)] public float BlurPixels = 2f;
         [Range(0f, 1f)] public float Brightness = .6f;
         public Color Tint = Color.white;
+        public Color FogColor = Color.clear;
+        [Range(0f, 1f)] public float FogAmount;
     }
 
     [SerializeField] private Shader depthShader;
     [SerializeField] private DepthBand[] bands;
+    [SerializeField] private bool blurInComposite;
 
     private class BandResources
     {
@@ -133,7 +136,7 @@ public class LobbyBackdropDepth : MonoBehaviour
     {
         int width = Mathf.Max(16, Mathf.RoundToInt(mainCamera.pixelWidth * resource.Settings.Resolution));
         int height = Mathf.Max(16, Mathf.RoundToInt(mainCamera.pixelHeight * resource.Settings.Resolution));
-        bool requiresBlur = resource.Settings.BlurPixels > .01f;
+        bool requiresBlur = !blurInComposite && resource.Settings.BlurPixels > .01f;
         if (resource.Raw == null || resource.Raw.width != width || resource.Raw.height != height)
         {
             resource.Camera.targetTexture = null;
@@ -158,8 +161,11 @@ public class LobbyBackdropDepth : MonoBehaviour
         resource.Camera.nearClipPlane = mainCamera.nearClipPlane;
         resource.Camera.farClipPlane = mainCamera.farClipPlane;
         resource.Material.SetFloat("_BlurRadius", resource.Settings.BlurPixels * height / 1080f);
+        resource.Material.SetFloat("_CompositeBlurRadius", blurInComposite ? resource.Settings.BlurPixels * height / 1080f : 0);
         resource.Material.SetFloat("_Brightness", resource.Settings.Brightness);
         resource.Material.SetColor("_Tint", resource.Settings.Tint);
+        resource.Material.SetColor("_FogColor", resource.Settings.FogColor);
+        resource.Material.SetFloat("_FogAmount", resource.Settings.FogAmount);
         PositionSurface(resource);
     }
 

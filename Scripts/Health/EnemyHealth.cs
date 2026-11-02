@@ -16,13 +16,27 @@ public class EnemyHealth : HealthBase
     [SerializeField] private SpriteRenderer[] hitSprites;
 
     public bool IsBossEnemy { get; set; }
+    public float MinimumHealth => minimumHealth;
 
+    private float minimumHealth;
     private Coroutine coroutine;
     protected override void Awake()
     {
         base.Awake();
         if (enemyShieldSystem != null)
             enemyShieldSystem.SetShieldSystem(this, enemyUI, brain);
+    }
+    // 연출 전투의 현재 인스턴스만 보호하고 공유 Prefab의 체력 설정은 바꾸지 않는다.
+    public void SetMinimumHealth(float value)
+    {
+        minimumHealth = Mathf.Clamp(value, 0f, Mathf.Max(0f, maxHP));
+        if (minimumHealth > 0f)
+            currentHP = Mathf.Max(currentHP, minimumHealth);
+    }
+    private void OnDisable()
+    {
+        // 풀에서 다시 사용될 때 일반 전투로 보호 상태가 이어지지 않게 한다.
+        minimumHealth = 0f;
     }
     protected override void Die()
     {
@@ -31,6 +45,11 @@ public class EnemyHealth : HealthBase
     }
     public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
+        if (minimumHealth > 0f)
+        {
+            // Die 호출 전에 양의 피해만 남은 허용량으로 제한한다. 음수 피해는 기존 동작을 유지한다.
+            damageInfo.damage = Mathf.Min(damageInfo.damage, Mathf.Max(0f, currentHP - minimumHealth));
+        }
         base.TakeDamage(damageInfo, hitPosition);
 
         enemyUI.ShowHP(currentHP / maxHP, IsBossEnemy);

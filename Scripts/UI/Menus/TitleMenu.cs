@@ -18,6 +18,11 @@ public class TitleMenu : SelectableMenuUI
     [SerializeField] private FeedbackDataSO warpFeedback;
 
     private bool isTransitioning;
+    private bool introPlayed;
+    private UIManager exitInputOwner;
+    public float PlayerDisappearTime => 1.0833334f;
+
+    public void MarkIntroPlayed() => introPlayed = true;
 
     private void Start()
     {
@@ -35,6 +40,7 @@ public class TitleMenu : SelectableMenuUI
     }
     private void OnDestroy()
     {
+        if (exitInputOwner != null) exitInputOwner.SetUIInputBlock(false);
         OnSelected -= HandleSelected;
         OnCanceled -= HandleCanceled;
     }
@@ -69,8 +75,11 @@ public class TitleMenu : SelectableMenuUI
     private void StartGame()
     {
         isTransitioning = true;
+        NightmareIntroSequence.QueueNextStart(introPlayed);
         Close();
 
+        exitInputOwner = UIManager.Instance;
+        if (exitInputOwner != null) exitInputOwner.SetUIInputBlock(true);
         OnTitleExitStarted?.Invoke();
 
         StartCoroutine(StartGameRoutine());
@@ -84,11 +93,12 @@ public class TitleMenu : SelectableMenuUI
 
         FeedbackPlayer.Instance.Play(startFeedback, playerAnimator.gameObject.transform);
         playerAnimator.SetBool("Warp", true);
-        yield return new WaitForSeconds(1.1f);
+        yield return new WaitForSeconds(.6f);
+        UIManager.Instance.StartScreenFade(1f, PlayerDisappearTime - .6f);
+        yield return new WaitForSeconds(.5f);
 
         FeedbackPlayer.Instance.Play(warpFeedback, new Vector3(playerTransform.position.x, playerTransform.position.y + 1.5f, 0));
 
-        UIManager.Instance.StartScreenFade(1f, 0.2f);
         UIManager.Instance.StartWireframeEffect(3f, Color.red, 0.2f);
 
         // 암전 시작

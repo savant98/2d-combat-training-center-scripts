@@ -31,8 +31,55 @@ public class SoundManager : MonoBehaviour
     private readonly Dictionary<SoundHandle, Coroutine> loopFollowRoutines = new();
     private readonly Dictionary<SoundHandle, AudioClip> loopHandleClips = new();
 
+    private readonly Dictionary<AudioSource, SoundBus> sourceBuses = new();
+    private readonly Dictionary<AudioSource, Coroutine> returnRoutines = new();
+    private readonly Dictionary<int, AudioClip> sfxExceptions = new();
+    private int nextSfxScope;
+
+    // 차단은 중첩 가능하다. 모든 소유자가 허용한 Clip만 통과한다.
+    public System.IDisposable SuppressSfxExcept(AudioClip allowedClip)
+    {
+        int id = ++nextSfxScope;
+        sfxExceptions.Add(id, allowedClip);
+        return new SfxScope(() => sfxExceptions.Remove(id));
+    }
+
+    private sealed class SfxScope : System.IDisposable
+    {
+        private System.Action release;
+        public SfxScope(System.Action release) { this.release = release; }
+        public void Dispose() { var action = release; release = null; action?.Invoke(); }
+    }
+
+    private bool IsSfxSuppressed(SoundOptions options)
+    {
+        if (options.bus != SoundBus.SFX) return false;
+        foreach (var allowed in sfxExceptions.Values)
+            if (options.clip != allowed) return true;
+        return false;
+    }
+
+    // pooled BGM과 전용 BGM Source는 보존한다. 반환 루틴도 취소해 즉시 재사용을 안전하게 한다.
+    public void StopAllSfx()
+    {
+        foreach (var handle in new List<SoundHandle>(loopHandleClips.Keys))
+            if (sourceBuses.TryGetValue(handle.GetSource(), out var bus) && bus == SoundBus.SFX)
+                StopLoop(handle);
+        foreach (var source in new List<AudioSource>(activeSfxSources))
+        {
+            if (!sourceBuses.TryGetValue(source, out var bus) || bus != SoundBus.SFX) continue;
+            if (returnRoutines.TryGetValue(source, out var routine)) StopCoroutine(routine);
+            ReturnOneShot(source, source.clip);
+        }
+    }
+
     private Transform sfxRoot;
     private Coroutine bgmFadeRoutine;
+    private AudioSource scheduledBgmSource;
+    private AudioClip sequencePreludeClip, sequenceLoopClip;
+    private double sequenceStartDspTime, sequenceSwitchDspTime, pausedBgmRemaining;
+    private bool sequencePending, sequencePaused;
+    private int bgmPlaybackId, pausedBgmSamples;
     private bool earlyBgmVolumeWasSet;
     private float earlyBgmVolumeValue;
 
@@ -79,6 +126,7 @@ public class SoundManager : MonoBehaviour
     {
         // 도메인 재로드 없이 다시 실행해도 이전 실행의 초기 설정을 재사용하지 않는다.
         earlyBgmVolumeWasSet = false;
+        if (Instance == this) StopBGM();
     }
 
     private AudioSource CreateSfxSource()
@@ -113,32 +161,160 @@ public class SoundManager : MonoBehaviour
     public void PlayBGM(AudioClip clip, float volume = 1f, bool loop = true)
     {
         if (clip == null) return;
-
+        StopBGM();
         bgmSource.clip = clip;
         bgmSource.volume = volume;
         bgmSource.loop = loop;
         bgmSource.Play();
     }
 
-    public void StopBGM()
+    // 전주와 메인을 오디오 시계에 함께 예약한다. 반환 번호로 해당 재생만 정리한다.
+    public int PlayBGMWithPrelude(AudioClip prelude, AudioClip loopClip, double loopStartSeconds, float volume = 1f)
     {
-        bgmSource.Stop();
+        if (prelude == null || loopClip == null || loopStartSeconds <= 0 || bgmSource == null) return 0;
+        StopBGM();
+        if (scheduledBgmSource == null)
+        {
+            var child = new GameObject("BGMTransition");
+            child.transform.SetParent(transform, false);
+            scheduledBgmSource = child.AddComponent<AudioSource>();
+            scheduledBgmSource.playOnAwake = false;
+        }
+        scheduledBgmSource.outputAudioMixerGroup = bgmMixerGroup;
+        scheduledBgmSource.spatialBlend = 0f;
+        scheduledBgmSource.pitch = 1f;
+        scheduledBgmSource.priority = 0;
+        scheduledBgmSource.clip = loopClip;
+        scheduledBgmSource.volume = volume;
+        scheduledBgmSource.loop = true;
+        bgmSource.outputAudioMixerGroup = bgmMixerGroup;
+        bgmSource.spatialBlend = 0f;
+        bgmSource.pitch = 1f;
+        bgmSource.priority = 0;
+        bgmSource.clip = prelude;
+        bgmSource.volume = volume;
+        bgmSource.loop = false;
+        sequencePreludeClip = prelude;
+        sequenceLoopClip = loopClip;
+        sequencePending = true;
+        sequenceStartDspTime = AudioSettings.dspTime + .1;
+        // 직렬화된 float의 오차를 전주 샘플 경계로 맞춘다.
+        double duration = System.Math.Round(loopStartSeconds * prelude.frequency) / prelude.frequency;
+        sequenceSwitchDspTime = sequenceStartDspTime + duration;
+        bgmSource.PlayScheduled(sequenceStartDspTime);
+        bgmSource.SetScheduledEndTime(sequenceSwitchDspTime);
+        scheduledBgmSource.PlayScheduled(sequenceSwitchDspTime);
+        return bgmPlaybackId;
     }
 
-    // 현재 재생 중인 곡이 요청한 곡일 때만 정지해 다른 연출의 BGM을 보존한다.
+    private void Update() => PromoteScheduledBgm();
+
+    private void PromoteScheduledBgm()
+    {
+        if (!sequencePending || sequencePaused || AudioSettings.dspTime < sequenceSwitchDspTime) return;
+        var previous = bgmSource;
+        bgmSource = scheduledBgmSource;
+        scheduledBgmSource = previous;
+        previous.Stop();
+        previous.clip = null;
+        sequencePending = false;
+    }
+
+    private bool MatchesBgm(AudioClip clip)
+    {
+        PromoteScheduledBgm();
+        return clip != null && ((bgmSource != null && bgmSource.clip == clip)
+            || sequencePreludeClip == clip || sequenceLoopClip == clip);
+    }
+
+    private void CancelScheduledBgm()
+    {
+        if (scheduledBgmSource != null) { scheduledBgmSource.Stop(); scheduledBgmSource.clip = null; }
+        sequencePending = false;
+        sequencePaused = false;
+        sequencePreludeClip = null;
+        sequenceLoopClip = null;
+    }
+
+    public void StopBGM()
+    {
+        CancelBgmFade();
+        CancelScheduledBgm();
+        if (bgmSource != null) bgmSource.Stop();
+        bgmPlaybackId++;
+    }
+
+    public void StopBGM(int playbackId)
+    {
+        if (playbackId != 0 && playbackId == bgmPlaybackId) StopBGM();
+    }
+
+    // 전주·메인 어느 쪽을 지정해도 같은 재생 묶음만 정지한다.
     public void StopBGM(AudioClip expectedClip)
     {
-        if (expectedClip == null || bgmSource == null || bgmSource.clip != expectedClip)
-            return;
+        if (MatchesBgm(expectedClip)) StopBGM();
+    }
 
-        bgmSource.Stop();
+    public AudioClip CurrentBgmClip { get { PromoteScheduledBgm(); return bgmSource != null ? bgmSource.clip : null; } }
+    public float CurrentBgmVolume { get { PromoteScheduledBgm(); return bgmSource != null ? bgmSource.volume : 0f; } }
+    public bool IsBgmPlaying { get { PromoteScheduledBgm(); return bgmSource != null && bgmSource.isPlaying; } }
+
+    // 현재 곡을 줄이는 동안 예약된 메인이 뒤늦게 시작하지 않도록 함께 취소한다.
+    public void FadeOutBGM(AudioClip expectedClip, float duration)
+    {
+        if (!MatchesBgm(expectedClip)) return;
+        CancelBgmFade();
+        CancelScheduledBgm();
+        if (duration <= 0f) { bgmSource.volume = 0f; bgmSource.Stop(); return; }
+        bgmFadeRoutine = StartCoroutine(FadeOutBgmRoutine(bgmSource.clip, duration));
+    }
+
+    private void CancelBgmFade()
+    {
+        if (bgmFadeRoutine != null) StopCoroutine(bgmFadeRoutine);
+        bgmFadeRoutine = null;
+    }
+
+    private IEnumerator FadeOutBgmRoutine(AudioClip expectedClip, float duration)
+    {
+        float volume = bgmSource.volume, elapsed = 0f;
+        double started = Time.unscaledTimeAsDouble;
+        while (elapsed < duration && bgmSource.clip == expectedClip)
+        {
+            bgmSource.volume = Mathf.Lerp(volume, 0f, Mathf.SmoothStep(0f, 1f, elapsed / duration));
+            yield return null;
+            elapsed = (float)(Time.unscaledTimeAsDouble - started);
+        }
+        if (bgmSource.clip == expectedClip) { bgmSource.volume = 0f; bgmSource.Stop(); }
+        bgmFadeRoutine = null;
     }
 
     public void SetBGMPaused(AudioClip expectedClip, bool paused)
     {
-        if (expectedClip == null || bgmSource == null || bgmSource.clip != expectedClip)
+        if (!MatchesBgm(expectedClip)) return;
+        if (sequencePending)
+        {
+            if (sequencePaused == paused) return;
+            if (paused)
+            {
+                pausedBgmSamples = bgmSource.timeSamples;
+                pausedBgmRemaining = System.Math.Max(0, sequenceSwitchDspTime - System.Math.Max(AudioSettings.dspTime, sequenceStartDspTime));
+                bgmSource.Stop();
+                scheduledBgmSource.Stop();
+                sequencePaused = true;
+            }
+            else
+            {
+                sequenceStartDspTime = AudioSettings.dspTime + .1;
+                sequenceSwitchDspTime = sequenceStartDspTime + pausedBgmRemaining;
+                bgmSource.timeSamples = pausedBgmSamples;
+                bgmSource.PlayScheduled(sequenceStartDspTime);
+                bgmSource.SetScheduledEndTime(sequenceSwitchDspTime);
+                scheduledBgmSource.PlayScheduled(sequenceSwitchDspTime);
+                sequencePaused = false;
+            }
             return;
-
+        }
         if (paused) bgmSource.Pause();
         else bgmSource.UnPause();
     }
@@ -146,21 +322,19 @@ public class SoundManager : MonoBehaviour
     public void ChangeBGM(AudioClip clip, float fadeDuration = 0.5f, float volume = 1f, bool loop = true)
     {
         if (clip == null) return;
-
-        if (bgmFadeRoutine != null)
-            StopCoroutine(bgmFadeRoutine);
-
+        PromoteScheduledBgm();
+        CancelBgmFade();
+        CancelScheduledBgm();
+        bgmPlaybackId++;
         bgmFadeRoutine = StartCoroutine(ChangeBGMRoutine(clip, fadeDuration, volume, loop));
     }
 
     private IEnumerator ChangeBGMRoutine(AudioClip nextClip, float fadeDuration, float targetVolume, bool loop)
     {
         float startVolume = bgmSource.volume;
-
         if (bgmSource.isPlaying && fadeDuration > 0f)
         {
             float t = 0f;
-
             while (t < fadeDuration)
             {
                 t += Time.unscaledDeltaTime;
@@ -168,15 +342,12 @@ public class SoundManager : MonoBehaviour
                 yield return null;
             }
         }
-
         bgmSource.clip = nextClip;
         bgmSource.loop = loop;
         bgmSource.Play();
-
         if (fadeDuration > 0f)
         {
             float t = 0f;
-
             while (t < fadeDuration)
             {
                 t += Time.unscaledDeltaTime;
@@ -184,10 +355,10 @@ public class SoundManager : MonoBehaviour
                 yield return null;
             }
         }
-
         bgmSource.volume = targetVolume;
         bgmFadeRoutine = null;
     }
+
 
     public void PlaySFX(SoundOptions sound, Vector3 position)
     {
@@ -196,7 +367,7 @@ public class SoundManager : MonoBehaviour
 
     public void PlaySound(SoundOptions sound, Vector3 position)
     {
-        if (sound == null || sound.clip == null)
+        if (sound == null || sound.clip == null || IsSfxSuppressed(sound))
             return;
 
         AudioClip clip = sound.clip;
@@ -226,16 +397,17 @@ public class SoundManager : MonoBehaviour
             ? Random.Range(sound.pitchRange.x, sound.pitchRange.y)
             : sound.pitch;
 
+        sourceBuses[source] = sound.bus;
         source.spatialBlend = sound.spatialBlend;
         source.outputAudioMixerGroup = sound.bus == SoundBus.BGM ? bgmMixerGroup : sfxMixerGroup;
 
         source.Play();
 
-        StartCoroutine(ReturnSfxWhenFinished(source, clip));
+        returnRoutines[source] = StartCoroutine(ReturnSfxWhenFinished(source, clip));
     }
     public SoundHandle PlayLoop(SoundOptions sound, Vector3 position, Transform followTarget = null)
     {
-        if (sound == null || sound.clip == null)
+        if (sound == null || sound.clip == null || IsSfxSuppressed(sound))
             return null;
 
         AudioClip clip = sound.clip;
@@ -258,6 +430,7 @@ public class SoundManager : MonoBehaviour
             ? Random.Range(sound.pitchRange.x, sound.pitchRange.y)
             : sound.pitch;
 
+        sourceBuses[source] = sound.bus;
         source.spatialBlend = sound.spatialBlend;
         source.outputAudioMixerGroup = sound.bus == SoundBus.BGM ? bgmMixerGroup : sfxMixerGroup;
         source.loop = true;
@@ -308,6 +481,7 @@ public class SoundManager : MonoBehaviour
         source.transform.SetParent(sfxRoot);
         source.transform.localPosition = Vector3.zero;
 
+        sourceBuses.Remove(source);
         activeSfxSources.Remove(source);
         sfxPool.Enqueue(source);
 
@@ -338,13 +512,22 @@ public class SoundManager : MonoBehaviour
         if (source.loop)
             yield break;
 
-        source.clip = null;
-        source.transform.localPosition = Vector3.zero;
+        ReturnOneShot(source, clip);
+    }
 
-        activeSfxSources.Remove(source);
+    private void ReturnOneShot(AudioSource source, AudioClip clip)
+    {
+        if (!activeSfxSources.Remove(source)) return;
+        returnRoutines.Remove(source);
+        sourceBuses.Remove(source);
+        source.Stop();
+        source.loop = false;
+        source.clip = null;
+        source.transform.SetParent(sfxRoot);
+        source.transform.localPosition = Vector3.zero;
         sfxPool.Enqueue(source);
 
-        if (activeClipCounts.ContainsKey(clip))
+        if (clip != null && activeClipCounts.ContainsKey(clip))
         {
             activeClipCounts[clip]--;
 

@@ -18,13 +18,16 @@ public class Room : MonoBehaviour
     [SerializeField] private FeedbackDataSO spawnPortalFeedback;
 
     public WaveManager WaveManager => waveManager;
+    public bool SuppressAutomaticWaves { get; set; }
     public Vector3 SpawnPoint => currentSpawnPoint;
 
     private float defaultOrthographicSize = 7f;
     private float waitForBossEntryTime = 3.5f;
+    private Tween bossEntryCameraTween;
     private Vector3 currentSpawnPoint;
     private void Awake()
     {
+        defaultOrthographicSize = virtualCamera.Lens.OrthographicSize;
         virtualCamera.enabled = false;
 
         if (waveManager != null)
@@ -42,7 +45,7 @@ public class Room : MonoBehaviour
         if (virtualCamera.Follow == null)
             virtualCamera.Follow = GameManager.Instance.Player.transform;
 
-        if (roomType == RoomType.Training)
+        if (roomType == RoomType.Training && !SuppressAutomaticWaves)
         {
             waveManager.BeginWaves(); // Wave 시작
         }
@@ -54,25 +57,42 @@ public class Room : MonoBehaviour
     }
     public IEnumerator ActivateBossEntryCamera(Transform bossTr)
     {
+        ResetBossEntryCamera();
         UIManager.Instance.ShowWarningLine();
 
         virtualCamera.Follow = bossTr;
-        DOTween.To(() => virtualCamera.Lens.OrthographicSize,
+        bossEntryCameraTween = DOTween.To(() => virtualCamera.Lens.OrthographicSize,
             x => virtualCamera.Lens.OrthographicSize = x,
             defaultOrthographicSize * 0.75f,
             0.3f);
 
         yield return new WaitForSeconds(waitForBossEntryTime);
 
+        if (bossTr == null || !bossTr.gameObject.activeInHierarchy || RoomManager.Instance.CurrentRoom != this)
+        {
+            ResetBossEntryCamera();
+            yield break;
+        }
         UIManager.Instance.ShowBossHP(true);
         virtualCamera.Follow = GameManager.Instance.Player.transform;
-        DOTween.To(() => virtualCamera.Lens.OrthographicSize,
+        bossEntryCameraTween = DOTween.To(() => virtualCamera.Lens.OrthographicSize,
             x => virtualCamera.Lens.OrthographicSize = x,
             defaultOrthographicSize,
             0.3f);
     }
+    public void ResetBossEntryCamera()
+    {
+        bossEntryCameraTween?.Kill();
+        bossEntryCameraTween = null;
+        if (virtualCamera == null) return;
+        virtualCamera.Lens.OrthographicSize = defaultOrthographicSize;
+        if (GameManager.Instance != null && GameManager.Instance.Player != null)
+            virtualCamera.Follow = GameManager.Instance.Player.transform;
+    }
+
     public void DeactivateRoom()
     {
+        ResetBossEntryCamera();
         if (virtualCamera != null)
             virtualCamera.Priority = 1; // 비활성화
 

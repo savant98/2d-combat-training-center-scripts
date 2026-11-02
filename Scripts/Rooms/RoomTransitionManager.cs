@@ -6,6 +6,7 @@ public class RoomTransitionManager : MonoBehaviour
     public static RoomTransitionManager Instance { get; private set; }
 
     private bool isTransitioning;
+    public bool IsTransitioning => isTransitioning;
 
     private void Awake()
     {

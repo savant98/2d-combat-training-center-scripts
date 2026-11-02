@@ -11,6 +11,13 @@ public class EnemySpawnController : MonoBehaviour
     [Header("Reveal Loop Sound")]
     [SerializeField] private SoundOptions revealLoopSound;
 
+    [Header("Boss Music")]
+    [SerializeField] private AudioClip bossBgmPrelude;
+    [SerializeField] private AudioClip bossBgmLoop;
+    [SerializeField, Min(0f)] private float bossBgmLoopStart = 16.2f;
+    [SerializeField, Range(0f, 1f)] private float bossBgmVolume = .38f;
+    private int bossBgmPlaybackId;
+
     [Header("Reveal Settings")]
     [SerializeField] private bool animationOnly = false;
     [SerializeField] private SpriteMask revealMask;
@@ -42,6 +49,7 @@ public class EnemySpawnController : MonoBehaviour
 
     public void ResetSpawnSequence()
     {
+        StopBossMusic();
         StopRevealLoopSound();
         if (laserLine != null)
         {
@@ -75,6 +83,9 @@ public class EnemySpawnController : MonoBehaviour
     {
         // 이전 생성 연출 도중 남은 소리가 있을 경우 정리
         StopRevealLoopSound();
+        StopBossMusic();
+        if (SoundManager.Instance != null && bossBgmPrelude != null && bossBgmLoop != null)
+            bossBgmPlaybackId = SoundManager.Instance.PlayBGMWithPrelude(bossBgmPrelude, bossBgmLoop, bossBgmLoopStart, bossBgmVolume);
 
         if (animationOnly)
         {
@@ -147,6 +158,14 @@ public class EnemySpawnController : MonoBehaviour
             maskLine.maskInteraction = SpriteMaskInteraction.None;
 
         yield return new WaitForSeconds(spareTime);
+    }
+
+    // 다른 음악이 시작된 뒤에는 이전 보스의 정리 요청으로 그 곡을 멈추지 않는다.
+    public void StopBossMusic()
+    {
+        if (SoundManager.Instance != null && bossBgmPlaybackId != 0)
+            SoundManager.Instance.StopBGM(bossBgmPlaybackId);
+        bossBgmPlaybackId = 0;
     }
 
     private void StartRevealLoopSound()

@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.2.9f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **214개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **223개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -158,6 +158,8 @@ flowchart TD
 
 `WaveManager`가 훈련 시작과 웨이브 완료를 알리고, `TrainingRunTracker`가 피격·사망 이벤트와 진행 시간을 기록합니다. 클리어 여부에 따라 등급과 보상을 정한 뒤 `DataManager`에 결과를 반영합니다. 방 전환과 재도전은 별도의 전환 요청·연출 구조를 사용합니다.
 
+타이틀 Intro를 재생한 직후에는 약 3초의 약한 노이즈를 거쳐 `NightmareIntroSequence`가 FinalRoom의 빈 악몽 구역으로 연결합니다. 왼쪽 안개와 URP Volumetric 가로등 빛이 오른쪽 이동을 유도하며, 흰 바닥선 아래에는 실제 월드 화면이 흐릿하게 반사됩니다. 넓은 간격의 가로등 세 개를 지나면 거울 배경과 가로등이 함께 파괴되고 입구가 막힙니다. 저장된 Lobby 설비 배치를 유지한 멈춘 공장이 드러난 뒤 기존 Nightmare Wave가 시작됩니다. 실제 외벽 셀은 떨어졌다가 복구되며 틈으로 약한 빛이 샙니다. 이 전투는 보스 체력을 1 이상 유지하고 훈련 기록을 시작하지 않습니다. 패배 즉시 기존 SFX를 정리하고 이명·블러를 재생한 뒤 `NightmareDefeatTerminal` 확인 후 TutorialWave의 방에 이동합니다.
+
 </details>
 
 <a id="code-map"></a>
@@ -176,6 +178,8 @@ flowchart TD
 | 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs) · [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs) · [Wave](Scripts/Waves) | 스폰 설정, 클리어 조건, 적·월드 오브젝트 풀링 |
 | 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs) · [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs) · [DataManager](Scripts/Persistence/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |
 | 방 전환 | [RoomTransitionManager](Scripts/Rooms/RoomTransitionManager.cs) · [Rooms](Scripts/Rooms) | 전환 요청, 컨텍스트와 연출 분리 |
+| Intro 연출 전투 | [NightmareIntroSequence](Scripts/Rooms/NightmareIntroSequence.cs) · [NightmareArrivalTransitionSO](Scripts/Rooms/NightmareArrivalTransitionSO.cs) · [NightmareBackdrop](Scripts/World/NightmareBackdrop.cs) · [NightmareScreenEffects](Scripts/UI/Effects/NightmareScreenEffects.cs) · [NightmareDefeatTerminal](Scripts/UI/Menus/NightmareDefeatTerminal.cs) | 탐색·배경 파괴 후 보스 등장, 16.2초 전주 뒤 전용 BGM 반복, 체력 보호, 이명·블러와 단말기 확인 |
+| 악몽 환경 | [NightmareWaterReflection](Scripts/World/NightmareWaterReflection.cs) · [NightmareWallPeelLoop](Scripts/World/NightmareWallPeelLoop.cs) · [NightmareFactoryLightRig](Scripts/World/NightmareFactoryLightRig.cs) · [NightmareStreetLights](Scripts/World/NightmareStreetLights.cs) | 흐린 수면 반사, 벽·설비 파손과 틈새 조사광·투영 그림자, 비발광 케이블, URP 가로등 파괴 |
 | 훈련 선택·홀로그램 | [TrainingMenuController](Scripts/UI/Menus/TrainingMenuController.cs) · [TrainingMenuMechanism](Scripts/UI/Effects/TrainingMenuMechanism.cs) · [TrainingHologramGraphic](Scripts/UI/Effects/TrainingHologramGraphic.cs) | 빔 투사와 화면 열기·닫기, 목록·상세 좌우 전환, 기어·케이블 표시 수명과 UI Mesh |
 | 손목 훈련 단말기 | [InventoryTerminalMenu](Scripts/UI/Menus/InventoryTerminalMenu.cs) | Lobby 전용 홈·읽기 전용 기록 요약, 네 자료실의 목록·팝업 탐색과 입력·정지 수명 |
 | 자율훈련 전투 분석 | [SelfTrainingController](Scripts/Training/SelfTrainingController.cs) · [SelfTrainingStatistics](Scripts/Training/SelfTrainingStatistics.cs) | 자유 타격·10초 분석과 무기·기어별 기여도, 기존 Pool 기반 표적 수명 |

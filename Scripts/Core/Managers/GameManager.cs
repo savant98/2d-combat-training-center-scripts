@@ -42,6 +42,7 @@ public class GameManager : MonoBehaviour
     }
     private void OnDestroy()
     {
+        if (Player != null) Player.Health.OnPlayerDeath -= HandlePlayerDeath;
         if (Instance == this)
             Instance = null;
     }
@@ -51,6 +52,9 @@ public class GameManager : MonoBehaviour
             return;
 
         Player.Health.OnPlayerDeath += HandlePlayerDeath;
+
+        if (TryGetComponent<NightmareIntroSequence>(out var introSequence)
+            && introSequence.TryBegin(firstSpawnTransitionEffect)) return;
 
         // spawn Transition
         RoomTransitionManager.Instance.RequestTransition(
@@ -63,6 +67,8 @@ public class GameManager : MonoBehaviour
     }
     private void HandlePlayerDeath()
     {
+        if (TryGetComponent<NightmareIntroSequence>(out var introSequence)
+            && introSequence.TryHandlePlayerDeath()) return;
         StartCoroutine(PlayerDeathRoutine());
     }
     private IEnumerator PlayerDeathRoutine()
