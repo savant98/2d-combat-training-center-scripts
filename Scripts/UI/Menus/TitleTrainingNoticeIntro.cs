@@ -74,6 +74,10 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     [SerializeField, Range(0f, 1f)] private float titleBgmVolume = .38f;
     [SerializeField] private AudioClip titleBgmPreludeClip;
     [SerializeField, Range(0f, 1f)] private float titleBgmPreludeVolumeRatio = .35f;
+    [SerializeField, Range(0f, 1f), Tooltip("고지서 Intro 뒤 FinalRoom으로 이어질 때 Title BGM을 남길 음량 배율입니다.")]
+    private float distantTitleBgmVolumeRatio = .4f;
+    [SerializeField, Range(200f, 22000f), Tooltip("FinalRoom에서 멀리서 들리게 남길 고음 상한(Hz)입니다. 낮을수록 먹먹하게 들립니다.")]
+    private float distantTitleBgmCutoff = 1400f;
 
     private bool running, initialized, legacyRestored, completed, inputRegistered;
     private bool[] legacyActive;
@@ -892,7 +896,14 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     {
         StopPrelude();
         if (titleMusicStarted && SoundManager.Instance != null)
-            SoundManager.Instance.FadeOutBGM(titleBgmClip, titleMenu != null ? titleMenu.PlayerDisappearTime : 1.0833334f);
+        {
+            float duration = titleMenu != null ? titleMenu.PlayerDisappearTime : 1.0833334f;
+            // 고지서 Intro 뒤 FinalRoom으로 이어지면 곡을 끊지 않고 멀리서 들리게 낮춰 보스 등장 전까지 잇는다.
+            if (NightmareIntroSequence.IsStartQueued)
+                SoundManager.Instance.SetBGMDistance(titleBgmClip, titleBgmVolume * distantTitleBgmVolumeRatio, distantTitleBgmCutoff, duration);
+            else
+                SoundManager.Instance.FadeOutBGM(titleBgmClip, duration);
+        }
         titleMusicStarted = false;
     }
 

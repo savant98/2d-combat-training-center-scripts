@@ -29,6 +29,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         public bool[] entryAvailable;
         public UnityEngine.UI.Button[] popupButtons;
         public bool[] popupAvailable;
+        [Tooltip("목록 옆 요약 정보를 복제해 항목 선택 시 단말기 위 팝업으로 띄웁니다.")]
+        public bool popupFromInline;
     }
 
     [Header("Availability")]
@@ -69,6 +71,15 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     [SerializeField] private GameObject noticeRoot;
     [SerializeField] private TextMeshProUGUI noticeText;
 
+    [Header("Popup Layer")]
+    [Tooltip("단말기 화면 밖, 단말기 위에서 상세창·안내창을 띄우는 층입니다. 비어 있으면 단말기 화면 안에 띄웁니다.")]
+    [SerializeField] private CanvasGroup popupLayerGroup;
+    [Tooltip("상세창을 놓는 무대입니다. 단말기와 같은 배율로 화면에 맞춥니다.")]
+    [SerializeField] private RectTransform popupStage;
+    [Tooltip("팝업 뒤 화면 전체를 어둡게 하는 막입니다. 누르면 팝업을 닫습니다.")]
+    [SerializeField] private UnityEngine.UI.Graphic popupDimmer;
+    [SerializeField, Min(.5f)] private float inlinePopupScale = 1.5f;
+
     private const float OpenDuration = .38f;
     private const float CloseDuration = .24f;
     private const float PageDuration = .52f;
@@ -83,6 +94,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private readonly Dictionary<RectTransform, Quaternion> pageRotations = new Dictionary<RectTransform, Quaternion>();
     private readonly Dictionary<RectTransform, CanvasGroup> pageGroups = new Dictionary<RectTransform, CanvasGroup>();
     private readonly Dictionary<UnityEngine.UI.Button, ButtonVisual> buttonVisuals = new Dictionary<UnityEngine.UI.Button, ButtonVisual>();
+    private readonly Dictionary<GameObject, GameObject> inlinePopupSources = new Dictionary<GameObject, GameObject>();
+    private float popupVisibility;
     private UnityEngine.UI.Button hoveredButton;
     private InputAction inventoryAction;
     private Coroutine transitionRoutine;
@@ -162,6 +175,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         homeDataManager = UnityEngine.Object.FindFirstObjectByType<DataManager>();
         homeLaserSignals = homeLaserSignals ?? Array.Empty<UnityEngine.UI.Graphic>();
         homeLaserColors = Array.ConvertAll(homeLaserSignals, signal => signal != null ? signal.color : Color.clear);
+        CreateInlinePopups();
         foreach (var section in sections)
         {
             CachePage(section.listRoot);
@@ -224,6 +238,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             });
         }
         BindClick(homeNavigationButton, ReturnHome);
+        if (popupDimmer != null) BindPointerClick(popupDimmer.gameObject, HandlePopupBackdropClick);
         foreach (var button in GetComponentsInChildren<UnityEngine.UI.Button>(true))
         {
             CacheButtonVisual(button);
@@ -242,6 +257,53 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         NormalizePages();
         ApplyPresentation(0f);
         rootObject.SetActive(false);
+    }
+
+    // 목록 옆 요약 정보를 복제해 단말기 위 팝업으로 쓴다. 원본은 목록 옆에 그대로 두고, 열 때마다 글자를 다시 맞춘다.
+    private void CreateInlinePopups()
+    {
+        if (popupStage == null) return;
+        foreach (var section in sections)
+        {
+            if (!section.popupFromInline || section.inlineDetails == null) continue;
+            if (section.popupAvailable == null || section.popupAvailable.Length != section.entryButtons.Length)
+                Array.Resize(ref section.popupAvailable, section.entryButtons.Length);
+            // 다른 분류의 DetailArea처럼 확대는 묶음 영역이 맡고, 각 팝업은 원래 크기를 기준으로 열고 닫는다.
+            RectTransform area = null;
+            for (int index = 0; index < section.inlineDetails.Length; index++)
+            {
+                var source = section.inlineDetails[index];
+                if (source == null || section.details[index] != null) continue;
+                if (area == null)
+                {
+                    area = new GameObject((section.root != null ? section.root.name : "Inline") + "PopupArea", typeof(RectTransform)).GetComponent<RectTransform>();
+                    area.SetParent(popupStage, false);
+                    area.anchorMin = area.anchorMax = area.pivot = new Vector2(.5f, .5f);
+                    area.sizeDelta = Vector2.zero;
+                    area.localScale = Vector3.one * inlinePopupScale;
+                    area.SetSiblingIndex(0);
+                }
+                var copy = Instantiate(source, area, false);
+                copy.name = source.name + "Popup";
+                var rect = (RectTransform)copy.transform;
+                rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(.5f, .5f);
+                rect.anchoredPosition = Vector2.zero;
+                rect.localRotation = Quaternion.identity;
+                rect.localScale = Vector3.one;
+                copy.SetActive(false);
+                section.details[index] = copy;
+                section.popupAvailable[index] = true;
+                inlinePopupSources[copy] = source;
+            }
+        }
+    }
+
+    private static void CopyTexts(GameObject source, GameObject target)
+    {
+        var from = source.GetComponentsInChildren<TextMeshProUGUI>(true);
+        var to = target.GetComponentsInChildren<TextMeshProUGUI>(true);
+        for (int index = 0; index < Mathf.Min(from.Length, to.Length); index++)
+            if (to[index].text != from[index].text) to[index].text = from[index].text;
     }
 
     private void CachePage(RectTransform page)
@@ -335,6 +397,15 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     {
         button.onClick.AddListener(action);
         unbindButtons.Add(() => { if (button != null) button.onClick.RemoveListener(action); });
+    }
+    private void BindPointerClick(GameObject target, Action action)
+    {
+        var trigger = target.GetComponent<EventTrigger>();
+        if (trigger == null) trigger = target.AddComponent<EventTrigger>();
+        var entry = new EventTrigger.Entry { eventID = EventTriggerType.PointerClick };
+        entry.callback.AddListener(_ => action());
+        trigger.triggers.Add(entry);
+        unbindButtons.Add(() => { if (trigger != null) trigger.triggers.Remove(entry); });
     }
     private void BindHover(UnityEngine.UI.Button button, Action action)
     {
@@ -742,6 +813,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         SelectEntry(index);
         if (section.inlineInformation && !PopupAvailable(section, index)) return;
         if (section.details[index] == null) return;
+        if (inlinePopupSources.TryGetValue(section.details[index], out var source)) CopyTexts(source, section.details[index]);
         PlayFeedback(confirmFeedback);
         selectedEntries[selectedTab] = index;
         detailOpen = true;
@@ -752,7 +824,9 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private void SelectEntryFromPointer(int tab, int index, bool openDetails)
     {
         if (!CanReceiveInput || homeVisible || NoticeVisible || detailOpen || tab != selectedTab) return;
-        if (openDetails && !sections[tab].inlineInformation) ShowEntryDetails(index);
+        var section = sections[tab];
+        bool opensPopup = !section.inlineInformation || section.popupFromInline && PopupAvailable(section, index);
+        if (openDetails && opensPopup) ShowEntryDetails(index);
         else SelectEntry(index, false);
     }
     public void ShowPreviewNotice(string message)
@@ -764,6 +838,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         if (path != null) path.text = (context != null ? context.text : "단말기") + " / 안내";
         hoveredButton = null;
         noticeRoot.SetActive(true);
+        popupVisibility = 1f;
+        ApplyPopupLayer();
         RefreshInteractable();
         RefreshButtonFaces();
     }
@@ -839,6 +915,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
                 var inline = section.inlineDetails[SelectedEntry];
                 var inlineAction = inline != null ? inline.GetComponentInChildren<UnityEngine.UI.Button>(false) : null;
                 if (inlineAction != null && inlineAction.interactable) inlineAction.onClick.Invoke();
+                else if (inlineAction == null && section.popupFromInline) ShowEntryDetails(SelectedEntry);
             }
             else ShowEntryDetails(SelectedEntry);
             return;
@@ -998,6 +1075,31 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
                 }
             }
         }
+        popupVisibility = PopupLayerWanted ? 1f : 0f;
+        ApplyPopupLayer();
+    }
+
+    private bool PopupLayerWanted => detailOpen || NoticeVisible;
+
+    // 팝업 층의 투명도는 팝업 표시 정도와 단말기 화면의 등장 정도를 함께 따른다.
+    private void ApplyPopupLayer()
+    {
+        if (popupLayerGroup == null) return;
+        float alpha = popupVisibility * Mathf.InverseLerp(.25f, .85f, presentationProgress);
+        popupLayerGroup.alpha = alpha;
+        popupLayerGroup.interactable = popupLayerGroup.blocksRaycasts = alpha > .99f && PopupLayerWanted;
+    }
+
+    // 어두운 배경을 누르면 안내창이나 상세창을 닫는다.
+    private void HandlePopupBackdropClick()
+    {
+        if (!CanReceiveInput) return;
+        if (NoticeVisible)
+        {
+            PlayFeedback(cancelFeedback);
+            DismissNotice();
+        }
+        else if (detailOpen) OnCancel();
     }
 
     private void BeginPopup(RectTransform next)
@@ -1065,12 +1167,15 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         var oldScales = outgoing.ConvertAll(page => page.localScale);
         var oldAlphas = outgoing.ConvertAll(page => pageGroups[page].alpha);
         float duration = next == null ? .22f : selectedTab == 1 ? .34f : selectedTab == 3 ? .38f : .3f;
+        float visibilityStart = popupVisibility, visibilityTarget = next != null || NoticeVisible ? 1f : 0f;
         float age = 0f;
         while (age < duration)
         {
             age += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(age / duration);
             float eased = 1f - Mathf.Pow(1f - t, 3f);
+            popupVisibility = Mathf.Lerp(visibilityStart, visibilityTarget, eased);
+            ApplyPopupLayer();
             list.localScale = Vector3.LerpUnclamped(listStart, pageScales[list] * (next == null ? 1f : .94f), eased);
             pageGroups[list].alpha = Mathf.Lerp(listAlpha, next == null ? 1f : .22f, eased);
             for (int index = 0; index < outgoing.Count; index++)
@@ -1231,6 +1336,9 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         float scale = Mathf.Min(lastFitSize.x / Mathf.Max(1f, terminalRoot.rect.width),
             lastFitSize.y / Mathf.Max(1f, terminalRoot.rect.height));
         terminalRoot.localScale = Vector3.one * (scale * Mathf.Lerp(.45f, 1f, progress));
+        // 팝업 무대는 연출 중 크기 변화 없이 단말기의 최종 배율로 화면 중앙에 맞춘다.
+        if (popupStage != null) popupStage.localScale = Vector3.one * scale;
+        ApplyPopupLayer();
         terminalRoot.anchoredPosition = terminalHome + new Vector2(lastFitSize.x * .62f, -lastFitSize.y * .7f) * (1f - progress);
         terminalRoot.localRotation = terminalRotation * Quaternion.Euler(0f, 0f, Mathf.Lerp(-14f, 0f, progress));
         terminalGroup.alpha = Mathf.Clamp01(progress * 2f);

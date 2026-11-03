@@ -82,6 +82,11 @@ public class SoundManager : MonoBehaviour
     private int bgmPlaybackId, pausedBgmSamples;
     private bool earlyBgmVolumeWasSet;
     private float earlyBgmVolumeValue;
+    private Coroutine bgmDistanceRoutine;
+    private const float OpenCutoffFrequency = 22000f;
+
+    // 현재 곡이 멀리서 들리도록 낮춰진 상태다. 새 곡을 시작하거나 멈추면 원음으로 돌아간다.
+    public bool IsBgmDistant { get; private set; }
 
     private void Awake()
     {
@@ -239,6 +244,7 @@ public class SoundManager : MonoBehaviour
     public void StopBGM()
     {
         CancelBgmFade();
+        ResetBgmDistance();
         CancelScheduledBgm();
         if (bgmSource != null) bgmSource.Stop();
         bgmPlaybackId++;
@@ -264,8 +270,9 @@ public class SoundManager : MonoBehaviour
     {
         if (!MatchesBgm(expectedClip)) return;
         CancelBgmFade();
+        StopBgmDistanceRamp();
         CancelScheduledBgm();
-        if (duration <= 0f) { bgmSource.volume = 0f; bgmSource.Stop(); return; }
+        if (duration <= 0f || !isActiveAndEnabled) { bgmSource.volume = 0f; bgmSource.Stop(); ResetBgmDistance(); return; }
         bgmFadeRoutine = StartCoroutine(FadeOutBgmRoutine(bgmSource.clip, duration));
     }
 
@@ -285,8 +292,62 @@ public class SoundManager : MonoBehaviour
             yield return null;
             elapsed = (float)(Time.unscaledTimeAsDouble - started);
         }
-        if (bgmSource.clip == expectedClip) { bgmSource.volume = 0f; bgmSource.Stop(); }
+        if (bgmSource.clip == expectedClip) { bgmSource.volume = 0f; bgmSource.Stop(); ResetBgmDistance(); }
         bgmFadeRoutine = null;
+    }
+
+    // 곡을 끊지 않고 음량과 고음을 함께 줄여 멀리서 들리는 것처럼 만든다.
+    // 장면이 바뀌어도 이어지며, 새 곡을 시작하거나 멈추면 원음으로 돌아간다.
+    public void SetBGMDistance(AudioClip expectedClip, float targetVolume, float cutoffFrequency, float duration)
+    {
+        if (!MatchesBgm(expectedClip) || sequencePending || bgmSource == null || !bgmSource.isPlaying) return;
+        CancelBgmFade();
+        StopBgmDistanceRamp();
+        if (!bgmSource.TryGetComponent<AudioLowPassFilter>(out var filter))
+            filter = bgmSource.gameObject.AddComponent<AudioLowPassFilter>();
+        if (!filter.enabled) { filter.cutoffFrequency = OpenCutoffFrequency; filter.enabled = true; }
+        IsBgmDistant = true;
+        targetVolume = Mathf.Clamp01(targetVolume);
+        cutoffFrequency = Mathf.Clamp(cutoffFrequency, 10f, OpenCutoffFrequency);
+        if (duration <= 0f || !isActiveAndEnabled) { bgmSource.volume = targetVolume; filter.cutoffFrequency = cutoffFrequency; return; }
+        bgmDistanceRoutine = StartCoroutine(BgmDistanceRoutine(bgmSource.clip, filter, targetVolume, cutoffFrequency, duration));
+    }
+
+    private IEnumerator BgmDistanceRoutine(AudioClip expectedClip, AudioLowPassFilter filter, float targetVolume, float targetCutoff, float duration)
+    {
+        float startVolume = bgmSource.volume, startCutoff = filter.cutoffFrequency, elapsed = 0f;
+        double started = Time.unscaledTimeAsDouble;
+        while (elapsed < duration && bgmSource.clip == expectedClip)
+        {
+            float t = Mathf.SmoothStep(0f, 1f, elapsed / duration);
+            bgmSource.volume = Mathf.Lerp(startVolume, targetVolume, t);
+            // 고음 상한은 귀에 고르게 들리도록 배율로 줄인다.
+            filter.cutoffFrequency = startCutoff * Mathf.Pow(targetCutoff / startCutoff, t);
+            yield return null;
+            elapsed = (float)(Time.unscaledTimeAsDouble - started);
+        }
+        if (bgmSource.clip == expectedClip) { bgmSource.volume = targetVolume; filter.cutoffFrequency = targetCutoff; }
+        bgmDistanceRoutine = null;
+    }
+
+    private void StopBgmDistanceRamp()
+    {
+        if (bgmDistanceRoutine != null) StopCoroutine(bgmDistanceRoutine);
+        bgmDistanceRoutine = null;
+    }
+
+    // 먼 소리 처리를 걷어 다음 곡이 원음으로 시작되게 한다.
+    private void ResetBgmDistance()
+    {
+        StopBgmDistanceRamp();
+        IsBgmDistant = false;
+        DisableDistanceFilter(bgmSource);
+        DisableDistanceFilter(scheduledBgmSource);
+    }
+
+    private static void DisableDistanceFilter(AudioSource source)
+    {
+        if (source != null && source.TryGetComponent<AudioLowPassFilter>(out var filter)) filter.enabled = false;
     }
 
     public void SetBGMPaused(AudioClip expectedClip, bool paused)
@@ -324,6 +385,7 @@ public class SoundManager : MonoBehaviour
         if (clip == null) return;
         PromoteScheduledBgm();
         CancelBgmFade();
+        StopBgmDistanceRamp();
         CancelScheduledBgm();
         bgmPlaybackId++;
         bgmFadeRoutine = StartCoroutine(ChangeBGMRoutine(clip, fadeDuration, volume, loop));
@@ -342,6 +404,7 @@ public class SoundManager : MonoBehaviour
                 yield return null;
             }
         }
+        ResetBgmDistance();
         bgmSource.clip = nextClip;
         bgmSource.loop = loop;
         bgmSource.Play();

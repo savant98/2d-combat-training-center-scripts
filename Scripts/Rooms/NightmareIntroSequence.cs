@@ -42,16 +42,21 @@ public sealed class NightmareIntroSequence : MonoBehaviour
     /// <summary>이번 Title에서 실제로 Intro를 재생한 경우만 다음 MainScene에 한 번 전달한다.</summary>
     public static void QueueNextStart(bool introPlayed) => startRequested = introPlayed;
 
+    /// <summary>다음 MainScene이 이 연출로 시작될 예정인지 알려 준다. Title BGM을 FinalRoom까지 이어 갈지 정할 때 쓴다.</summary>
+    public static bool IsStartQueued => startRequested;
+
     public bool TryBegin(RoomTransitionEffectSO transition)
     {
         bool requested = startRequested;
         startRequested = false;
-        if (!isActiveAndEnabled || !requested) return false;
+        if (!requested) return false;
+        if (!isActiveAndEnabled) { FadeOutCarriedTitleMusic(.5f); return false; }
         if (finalRoom == null || finalRoom.WaveManager == null || finalSpawnPoint == null
             || tutorialRoom == null || tutorialSpawnPoint == null || nightmarePrefab == null || terminal == null
             || backdrop == null || screenEffects == null || arrivalTransition == null)
         {
             Debug.LogError("Nightmare Intro의 방·등장 위치·단말기 참조가 누락되었습니다.", this);
+            FadeOutCarriedTitleMusic(.5f);
             return false;
         }
 
@@ -125,6 +130,8 @@ public sealed class NightmareIntroSequence : MonoBehaviour
         CurrentStage = SequenceStage.Defeat;
         if (nightmare != null && nightmare.TryGetComponent<EnemySpawnController>(out var musicOwner))
             musicOwner.StopBossMusic();
+        // 보스 음악이 시작되기 전에 쓰러지면 이어 온 Title BGM도 이명 연출 전에 멈춘다.
+        FadeOutCarriedTitleMusic(0f);
         // TakeDamage 뒤 같은 호출 스택에서 실행되는 Feedback도 이 시점부터 차단한다.
         if (SoundManager.Instance != null)
         {
@@ -233,6 +240,15 @@ public sealed class NightmareIntroSequence : MonoBehaviour
         defeatSfxScope?.Dispose();
         defeatSfxScope = null;
         if (backdrop != null) backdrop.ResetPresentation();
+        FadeOutCarriedTitleMusic(.5f);
+    }
+
+    // Title에서 멀리 들리게 이어 온 곡은 보스 음악이 시작되면 그 곡으로 바뀐다.
+    // 그 전에 연출이 끝나거나 시작하지 못하면 다른 방까지 끌고 가지 않는다.
+    private static void FadeOutCarriedTitleMusic(float duration)
+    {
+        var sound = SoundManager.Instance;
+        if (sound != null && sound.IsBgmDistant) sound.FadeOutBGM(sound.CurrentBgmClip, duration);
     }
 
     private void OnDisable()
