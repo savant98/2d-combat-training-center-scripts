@@ -5,6 +5,8 @@ using UnityEngine.UI;
 public class TrainingMenu : SelectableMenuUI
 {
     [SerializeField] private ScrollRect scrollRect;
+    [SerializeField, Min(0), Tooltip("목록을 열 때 처음 선택할 항목의 순서입니다.")]
+    private int defaultIndex;
 
     public event Action<int> OnSelectionChanged;
     public bool InputSuppressed { get; set; }
@@ -12,6 +14,11 @@ public class TrainingMenu : SelectableMenuUI
     public override void Open()
     {
         base.Open();
+        if (defaultIndex > 0 && defaultIndex < buttons.Length)
+        {
+            currentIndex = defaultIndex;
+            UpdateHighlight(true);
+        }
         NotifySelection();
     }
 

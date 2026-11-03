@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.2.9f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **224개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **229개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -176,10 +176,11 @@ flowchart TD
 | 발사체 판정 | [ProjectileBase](Scripts/Weapons/Projectiles/ProjectileBase.cs) · [Projectiles](Scripts/Weapons/Projectiles) | 이동 경로 검사, 관통·반복 피해, 풀 반환 |
 | 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행 |
 | 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs) · [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs) · [Wave](Scripts/Waves) | 스폰 설정, 클리어 조건, 적·월드 오브젝트 풀링 |
+| 훈련 코스 구간 | [TrainingCourseStage](Scripts/Training/TrainingCourseStage.cs) · [ChasingLaserWall](Scripts/Waves/Spawning/ChasingLaserWall.cs) · [CourseGuideField](Scripts/Training/CourseGuideField.cs) · [TrainingCourseActivator](Scripts/Training/TrainingCourseActivator.cs) · [TrainingCourseStretch](Scripts/Training/TrainingCourseStretch.cs) | 기초 전투 훈련의 등반·달리기·보스 공간 구간: 기계식 지형 열림과 원래 상태 복귀, 일렬로 쫓아오는 레이저, 재질 오프셋으로 흐르는 길 안내 화살표, 통창·외곽선 늘이기, 목표 도달 뒤 정리 순서 |
 | 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs) · [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs) · [DataManager](Scripts/Persistence/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |
 | 방 전환 | [RoomTransitionManager](Scripts/Rooms/RoomTransitionManager.cs) · [Rooms](Scripts/Rooms) | 전환 요청, 컨텍스트와 연출 분리 |
-| 방 BGM | [RoomBgmPlayer](Scripts/Audio/RoomBgmPlayer.cs) · [SoundManager](Scripts/Audio/SoundManager.cs) | 현재 방 기준 Lobby·TutorialRoom 반복곡과 교차 전환, 타이틀 BGM을 끊지 않는 먼 소리 처리 |
-| Intro 연출 전투 | [NightmareIntroSequence](Scripts/Rooms/NightmareIntroSequence.cs) · [NightmareArrivalTransitionSO](Scripts/Rooms/NightmareArrivalTransitionSO.cs) · [NightmareBackdrop](Scripts/World/NightmareBackdrop.cs) · [NightmareScreenEffects](Scripts/UI/Effects/NightmareScreenEffects.cs) · [NightmareDefeatTerminal](Scripts/UI/Menus/NightmareDefeatTerminal.cs) | 탐색·배경 파괴 후 보스 등장, 16.2초 전주 뒤 전용 BGM 반복, 체력 보호, 이명·블러와 단말기 확인 |
+| 방·보스 BGM | [RoomBgmPlayer](Scripts/Audio/RoomBgmPlayer.cs) · [SoundManager](Scripts/Audio/SoundManager.cs) · [EnemySpawnController](Scripts/Waves/Spawning/EnemySpawnController.cs) | 현재 방 기준 Lobby·TutorialRoom·TrainingRoom(일반 전투) 반복곡과 교차 전환, 보스 등장 시 공용 보스곡과 처치 뒤 복귀, 전용 곡이 있는 보스의 분리, 타이틀 BGM을 끊지 않는 먼 소리 처리 |
+| Intro 연출 전투 | [NightmareIntroSequence](Scripts/Rooms/NightmareIntroSequence.cs) · [NightmareArrivalTransitionSO](Scripts/Rooms/NightmareArrivalTransitionSO.cs) · [NightmareBackdrop](Scripts/World/NightmareBackdrop.cs) · [NightmareScreenEffects](Scripts/UI/Effects/NightmareScreenEffects.cs) · [NightmareDefeatTerminal](Scripts/UI/Menus/NightmareDefeatTerminal.cs) | 탐색·배경 파괴 후 보스 등장, 16.2초 전주 뒤 전용 BGM을 도입부 다음(16.2초)부터 반복, 체력 보호, 이명·블러와 단말기 확인 |
 | 악몽 환경 | [NightmareWaterReflection](Scripts/World/NightmareWaterReflection.cs) · [NightmareWallPeelLoop](Scripts/World/NightmareWallPeelLoop.cs) · [NightmareFactoryLightRig](Scripts/World/NightmareFactoryLightRig.cs) · [NightmareStreetLights](Scripts/World/NightmareStreetLights.cs) | 흐린 수면 반사, 벽·설비 파손과 틈새 조사광·투영 그림자, 비발광 케이블, URP 가로등 파괴 |
 | 훈련 선택·홀로그램 | [TrainingMenuController](Scripts/UI/Menus/TrainingMenuController.cs) · [TrainingMenuMechanism](Scripts/UI/Effects/TrainingMenuMechanism.cs) · [TrainingHologramGraphic](Scripts/UI/Effects/TrainingHologramGraphic.cs) | 빔 투사와 화면 열기·닫기, 목록·상세 좌우 전환, 기어·케이블 표시 수명과 UI Mesh |
 | 손목 훈련 단말기 | [InventoryTerminalMenu](Scripts/UI/Menus/InventoryTerminalMenu.cs) | Lobby 전용 홈·읽기 전용 기록 요약, 네 자료실의 목록과 단말기 위 팝업 층, 입력·정지 수명 |

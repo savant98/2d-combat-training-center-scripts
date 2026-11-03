@@ -27,6 +27,20 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField] private TextMeshProUGUI listSummaryText;
     [SerializeField] private TextMeshProUGUI listCompletionText;
     [SerializeField, TextArea] private string listDescription = "근거리·원거리 적과 방어막 목표를 상대합니다.";
+    [SerializeField, Min(0), Tooltip("목록에서 이 패널의 currentTraining으로 입장하는 항목의 순서입니다.")]
+    private int currentTrainingListIndex;
+    [SerializeField, Tooltip("목록 순서별 제목·설명과 진행 기록을 보여 줄 훈련입니다. 손목 단말기의 훈련 목표 순서와 맞춥니다.")]
+    private TrainingListEntry[] listEntries;
+
+    // 목록 한 줄에 대응하는 표시 정보다. 입장은 currentTrainingListIndex 항목만 허용한다.
+    [System.Serializable]
+    private struct TrainingListEntry
+    {
+        public string title;
+        [TextArea] public string summary;
+        [Tooltip("진행 기록을 표시할 훈련입니다. 비우면 잠긴 훈련으로 표시합니다.")]
+        public TrainingDefinitionSO recordTraining;
+    }
 
     [Header("Training Menu Animation")]
     [SerializeField] private RectTransform listScroll;
@@ -225,7 +239,7 @@ public class TrainingMenuController : MonoBehaviour
 
     private void HandleListSelect(int index)
     {
-        if (isTransitioning || index != 0 || currentTraining == null) return;
+        if (isTransitioning || index != currentTrainingListIndex || currentTraining == null) return;
         if (!HasPresentation)
         {
             listMenu.Close(); listPanel.SetActive(false); detailPanel.SetActive(true); menu.Open();
@@ -296,20 +310,33 @@ public class TrainingMenuController : MonoBehaviour
 
     private void RefreshList(int index)
     {
-        if (index > 0)
+        bool hasEntry = listEntries != null && index >= 0 && index < listEntries.Length;
+        TrainingListEntry entry = hasEntry ? listEntries[index] : default;
+        string title = string.IsNullOrEmpty(entry.title) ? $"TRAINING {index + 1:00}" : entry.title;
+
+        if (index == currentTrainingListIndex && currentTraining != null)
         {
-            if (listTitleText != null) listTitleText.text = $"TRAINING {index + 1:00}";
-            if (listSummaryText != null) listSummaryText.text = "준비 중인 훈련입니다.";
-            if (listCompletionText != null) listCompletionText.text = "LOCKED";
+            if (listTitleText != null) listTitleText.text = string.IsNullOrEmpty(entry.title) ? currentTraining.displayName : entry.title;
+            if (listSummaryText != null) listSummaryText.text = $"{listDescription}\n\nREWARD  {currentTraining.baseRewardGold} G";
+            if (listCompletionText != null) listCompletionText.text = IsCompleted(currentTraining) ? "COMPLETED" : "NOT CLEARED";
             return;
         }
 
-        if (index != 0 || currentTraining == null) return;
-        TrainingRoomSaveData record = DataManager.Instance.GetTrainingRoomRecord(currentTraining.trainingId);
-        bool completed = record != null && record.bestHitCount != int.MaxValue && record.bestTimeSeconds != float.MaxValue;
-        if (listTitleText != null) listTitleText.text = currentTraining.displayName;
-        if (listSummaryText != null) listSummaryText.text = $"{listDescription}\n\nREWARD  {currentTraining.baseRewardGold} G";
-        if (listCompletionText != null) listCompletionText.text = completed ? "COMPLETED" : "NOT CLEARED";
+        if (listTitleText != null) listTitleText.text = title;
+        if (entry.recordTraining != null)
+        {
+            if (listSummaryText != null) listSummaryText.text = entry.summary;
+            if (listCompletionText != null) listCompletionText.text = IsCompleted(entry.recordTraining) ? "COMPLETED" : "NOT CLEARED";
+            return;
+        }
+        if (listSummaryText != null) listSummaryText.text = string.IsNullOrEmpty(entry.summary) ? "준비 중인 훈련입니다." : entry.summary;
+        if (listCompletionText != null) listCompletionText.text = "LOCKED";
+    }
+
+    private static bool IsCompleted(TrainingDefinitionSO training)
+    {
+        TrainingRoomSaveData record = DataManager.Instance.GetTrainingRoomRecord(training.trainingId);
+        return record != null && record.bestHitCount != int.MaxValue && record.bestTimeSeconds != float.MaxValue;
     }
 
     private void Cleanup()

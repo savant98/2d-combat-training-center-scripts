@@ -7,6 +7,8 @@ public class PlayerController : CharacterController2D
     public bool GravityOn = true;
     public float InitialGravity = -55f;
     public float Gravity = -30f;
+    [Tooltip("중력으로 떨어질 때 넘지 않는 속도(칸/초)입니다. 빠르게 떨어지며 얇은 판정을 지나치지 않게 합니다.")]
+    public float MaxFallSpeed = 25f;
 
     [Header("Health")]
     [SerializeField] private PlayerHealth health;
@@ -114,7 +116,11 @@ public class PlayerController : CharacterController2D
     }
     protected override Vector2 CalculateVelocity()
     {
-        Velocity.y += GravityOn && CanReceiveInput ? Gravity * Time.deltaTime : 0;
+        float fallen = Velocity.y + (GravityOn && CanReceiveInput ? Gravity * Time.deltaTime : 0);
+        // 중력으로 빨라지는 낙하만 상한에 맞춘다. 다른 기술이 준 더 빠른 하강 속도는 줄이지 않는다.
+        if (fallen < -MaxFallSpeed && fallen < Velocity.y)
+            fallen = Mathf.Min(Velocity.y, -MaxFallSpeed);
+        Velocity.y = fallen;
 
         return Velocity;
     }

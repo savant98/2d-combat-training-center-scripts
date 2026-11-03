@@ -12,6 +12,10 @@ public class WaveManager : MonoBehaviour
     public static WaveManager ActiveInstance { get; private set; }
     public Action OnAllWavesCleared;
     public event Action<EnemyController> EnemySpawned;
+    // 목표 지점 등이 보낸 사용자 트리거를 알린다. 훈련 구간은 도달 키를 받아 마무리 연출을 진행한 뒤 완료 키로 웨이브를 끝낸다.
+    public event Action<string> CustomTriggerRaised;
+    // 웨이브를 처음부터 시작하거나 강제로 정리할 때 알린다. 훈련 구간은 이때 바뀐 지형·카메라를 원래대로 되돌린다.
+    public event Action WavesReset;
     public bool SuppressTrainingRecording { get; set; }
     public int currentWaveIndex = 0;
     public int aliveTargets = 0;
@@ -26,6 +30,7 @@ public class WaveManager : MonoBehaviour
 
     public void BeginWaves(bool showWaveIntro = true)
     {
+        WavesReset?.Invoke();
         currentWaveIndex = 0;
         ActiveInstance = this;
 
@@ -46,6 +51,7 @@ public class WaveManager : MonoBehaviour
     }
     public void ForceClear()
     {
+        WavesReset?.Invoke();
         ClearActiveWaveHandlers();
         ClearCurrentWaveEntities();
         WorldEntityPool.Instance.DespawnAll();
@@ -58,8 +64,12 @@ public class WaveManager : MonoBehaviour
         if (ActiveInstance == this)
             ActiveInstance = null;
     }
-    private IEnumerator NextWaveDelay()
+    private IEnumerator NextWaveDelay(float clearDelay = 0f)
     {
+        // 앞 웨이브의 정리(발판 소멸·지형 복귀)를 기다린 뒤 다음 웨이브 안내를 시작한다.
+        if (clearDelay > 0f)
+            yield return new WaitForSeconds(clearDelay);
+
         UIManager.Instance.StartWavePanelEffect(currentWaveIndex + 1);
 
         yield return new WaitForSeconds(2f);
@@ -189,6 +199,8 @@ public class WaveManager : MonoBehaviour
 
     public void HandleCustomTrigger(string triggerKey)
     {
+        CustomTriggerRaised?.Invoke(triggerKey);
+
         if (!isWaveActive || currentWave.clearType != WaveClearType.CustomTrigger)
             return;
 
@@ -233,7 +245,7 @@ public class WaveManager : MonoBehaviour
         else
         {
             // 다음 웨이브로 이동
-            coroutine = StartCoroutine(NextWaveDelay());
+            coroutine = StartCoroutine(NextWaveDelay(currentWave != null ? currentWave.clearDelay : 0f));
         }
     }
     private void ClearCurrentWaveEntities()

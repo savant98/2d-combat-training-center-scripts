@@ -79,7 +79,7 @@ public class SoundManager : MonoBehaviour
     private AudioClip sequencePreludeClip, sequenceLoopClip;
     private double sequenceStartDspTime, sequenceSwitchDspTime, pausedBgmRemaining;
     private bool sequencePending, sequencePaused;
-    private int bgmPlaybackId, pausedBgmSamples;
+    private int bgmPlaybackId, pausedBgmSamples, sequenceLoopOffsetSamples;
     private bool earlyBgmVolumeWasSet;
     private float earlyBgmVolumeValue;
     private Coroutine bgmDistanceRoutine;
@@ -174,7 +174,8 @@ public class SoundManager : MonoBehaviour
     }
 
     // 전주와 메인을 오디오 시계에 함께 예약한다. 반환 번호로 해당 재생만 정리한다.
-    public int PlayBGMWithPrelude(AudioClip prelude, AudioClip loopClip, double loopStartSeconds, float volume = 1f)
+    // loopClipOffsetSeconds를 주면 메인을 그 위치부터 시작한다(전주가 메인의 도입부를 대신할 때). 반복은 메인 전체를 돈다.
+    public int PlayBGMWithPrelude(AudioClip prelude, AudioClip loopClip, double loopStartSeconds, float volume = 1f, double loopClipOffsetSeconds = 0)
     {
         if (prelude == null || loopClip == null || loopStartSeconds <= 0 || bgmSource == null) return 0;
         StopBGM();
@@ -192,6 +193,9 @@ public class SoundManager : MonoBehaviour
         scheduledBgmSource.clip = loopClip;
         scheduledBgmSource.volume = volume;
         scheduledBgmSource.loop = true;
+        // clip을 바꾸면 재생 위치가 0으로 돌아가므로 지정한 뒤에 시작 위치를 샘플 단위로 맞춘다.
+        sequenceLoopOffsetSamples = Mathf.Clamp((int)System.Math.Round(loopClipOffsetSeconds * loopClip.frequency), 0, loopClip.samples - 1);
+        scheduledBgmSource.timeSamples = sequenceLoopOffsetSamples;
         bgmSource.outputAudioMixerGroup = bgmMixerGroup;
         bgmSource.spatialBlend = 0f;
         bgmSource.pitch = 1f;
@@ -369,6 +373,8 @@ public class SoundManager : MonoBehaviour
                 sequenceStartDspTime = AudioSettings.dspTime + .1;
                 sequenceSwitchDspTime = sequenceStartDspTime + pausedBgmRemaining;
                 bgmSource.timeSamples = pausedBgmSamples;
+                // Stop으로 되돌아간 메인의 시작 위치를 다시 맞춘다.
+                scheduledBgmSource.timeSamples = sequenceLoopOffsetSamples;
                 bgmSource.PlayScheduled(sequenceStartDspTime);
                 bgmSource.SetScheduledEndTime(sequenceSwitchDspTime);
                 scheduledBgmSource.PlayScheduled(sequenceSwitchDspTime);
@@ -552,7 +558,8 @@ public class SoundManager : MonoBehaviour
     }
     private IEnumerator FollowLoopSound(SoundHandle handle, Transform followTarget)
     {
-        while (handle != null && handle.IsValid && followTarget != null)
+        // 따라가던 오브젝트가 사라지거나(풀로 돌아가 비활성화되는 경우 포함) 반복음을 멈춘다.
+        while (handle != null && handle.IsValid && followTarget != null && followTarget.gameObject.activeInHierarchy)
         {
             handle.SetPosition(followTarget.position);
             yield return null;

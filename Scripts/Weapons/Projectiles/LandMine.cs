@@ -153,10 +153,11 @@ public class LandMine : ProjectileBase
         if (SoundManager.Instance == null)
             return;
 
+        // 지뢰를 따라가게 해 지뢰가 사라지면 SoundManager도 경고음을 멈추게 한다.
         warningLoopHandle = SoundManager.Instance.PlayLoop(
             explosionWarningSound,
             transform.position,
-            null);
+            transform);
     }
 
     private void StopWarningLoopSound()
@@ -230,8 +231,16 @@ public class LandMine : ProjectileBase
     {
         StopAllCoroutines();
         stateRoutine = null;
+        // 폭발 대기 중 웨이브 정리 등으로 회수되면 코루틴이 끊겨 경고음이 남지 않도록 직접 끈다.
+        StopWarningLoopSound();
 
         base.ReturnToPool();
+    }
+
+    // 풀 정리로 바로 비활성화될 때도 경고음을 남기지 않는다.
+    private void OnDisable()
+    {
+        StopWarningLoopSound();
     }
 
 #if UNITY_EDITOR
