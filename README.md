@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.2.9f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **229개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **236개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -130,7 +130,7 @@ flowchart TD
     Health -.-> Feedback
 ```
 
-플레이어는 입력 이벤트를 Ability에 전달하고, `AbilityManager`가 현재 행동을 정리합니다. 각 Ability는 `PlayerStateMachine.CanPerform`을 통해 행동 가능 여부를 확인합니다. 적은 `AiBrain`이 실행 가능한 후보를 선택하고, `AiPatternDirector`가 프로필과 규칙을 적용합니다. 강제 지정한 적 행동은 후보 선택 경로를 건너뜁니다.
+플레이어는 입력 이벤트를 Ability에 전달하고, `AbilityManager`가 현재 행동을 정리합니다. 각 Ability는 `PlayerStateMachine.CanPerform`을 통해 행동 가능 여부를 확인합니다. 적은 `AiBrain`이 실행 가능한 후보를 선택하고, `AiPatternDirector`가 프로필과 규칙을 적용합니다. 강제 지정한 적 행동은 후보 선택 경로를 건너뜁니다. 순찰처럼 시간으로 끝나지 않는 패턴은 실행 중에 자리를 넘길 수 있다고 알리고, `AiBrain`은 매 프레임 같은 규칙으로 다음 패턴을 확인해 준비되면 바로 전환합니다.
 
 플레이어와 적의 일반적인 속도 기반 이동은 `CharacterController2D`의 공통 경로를 사용합니다. `RaycastMotor2D`가 충돌을 계산한 이동량을 반환하면 컨트롤러가 위치와 충돌 상태를 반영합니다.
 
@@ -174,7 +174,8 @@ flowchart TD
 | 입력과 행동 | [PlayerController](Scripts/Controllers/PlayerController.cs) · [AbilityManager](Scripts/Abilities/Player/AbilityManager.cs) · [PlayerStateMachine](Scripts/Abilities/Player/PlayerStateMachine.cs) | 입력 이벤트, 행동 우선순위, 상태별 실행 제한 |
 | 무기와 전투 | [PlayerWeaponAbility](Scripts/Abilities/Player/PlayerWeaponAbility.cs) · [WeaponBaseSO](Scripts/Weapons/Definitions/WeaponBaseSO.cs) · [Weapons](Scripts/Weapons/Definitions) | 무기 선택, 공격 단계, 콤보·카운터·투사체 |
 | 발사체 판정 | [ProjectileBase](Scripts/Weapons/Projectiles/ProjectileBase.cs) · [Projectiles](Scripts/Weapons/Projectiles) | 이동 경로 검사, 관통·반복 피해, 풀 반환 |
-| 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행 |
+| 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행, 실행 중 패턴의 자리 넘김 |
+| 순찰·돌진 적(Roller) | [GroundPatrolAbility](Scripts/Abilities/Enemies/Patterns/GroundPatrolAbility.cs) · [BurstChargeAbility](Scripts/Abilities/Enemies/Patterns/BurstChargeAbility.cs) · [PlayerDetectionSwapRuleSO](Scripts/Abilities/Enemies/Selection/Rules/PlayerDetectionSwapRuleSO.cs) · [EnemyRollVisual](Scripts/Abilities/Enemies/Support/EnemyRollVisual.cs) | 벽에 막히면 돌아서는 바닥 순찰, 시야 안 플레이어 감지 시 순찰에서 돌진으로 전환, 공회전 준비 뒤 플레이어 대시 속도 비율로 돌진하고 남은 제동 거리까지 계산해 목표 거리에서 멈춤, 돌진 뒤 플레이어 쪽 순찰, 이동 거리에 맞춘 바퀴 회전 |
 | 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs) · [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs) · [Wave](Scripts/Waves) | 스폰 설정, 클리어 조건, 적·월드 오브젝트 풀링 |
 | 훈련 코스 구간 | [TrainingCourseStage](Scripts/Training/TrainingCourseStage.cs) · [ChasingLaserWall](Scripts/Waves/Spawning/ChasingLaserWall.cs) · [CourseGuideField](Scripts/Training/CourseGuideField.cs) · [TrainingCourseActivator](Scripts/Training/TrainingCourseActivator.cs) · [TrainingCourseStretch](Scripts/Training/TrainingCourseStretch.cs) | 기초 전투 훈련의 등반·달리기·보스 공간 구간: 기계식 지형 열림과 원래 상태 복귀, 일렬로 쫓아오는 레이저, 재질 오프셋으로 흐르는 길 안내 화살표, 통창·외곽선 늘이기, 목표 도달 뒤 정리 순서 |
 | 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs) · [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs) · [DataManager](Scripts/Persistence/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |

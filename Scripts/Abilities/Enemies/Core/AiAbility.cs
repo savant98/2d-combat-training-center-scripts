@@ -28,6 +28,9 @@ public abstract class AiAbility : MonoBehaviour
     public AbilityState State { get; private set; } = AbilityState.None;
     public bool IsRunning => State != AbilityState.None;
 
+    // 순찰처럼 시간으로 끝나지 않는 패턴은 true를 반환해 실행 중에도 AiPatternProfileSO의 전환 판단을 받는다.
+    public virtual bool CanYieldToPattern => false;
+
     public void Initialize(AiBrain brain, EnemyController controller)
     {
         this.brain = brain;

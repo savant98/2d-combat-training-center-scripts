@@ -39,6 +39,7 @@ public class AiBrain : MonoBehaviour
         if (current != null && current.IsRunning)
         {
             current.UpdateAbility();
+            TryYieldToPattern();
             return;
         }
 
@@ -48,6 +49,23 @@ public class AiBrain : MonoBehaviour
     public void ForceNextAbility(AiAbility ability)
     {
         forcedAbility = ability;
+    }
+    // 실행 중인 패턴이 자리를 넘길 수 있으면 Profile 규칙으로 다음 패턴을 확인해 바로 전환한다.
+    private void TryYieldToPattern()
+    {
+        if (patternDirector == null || forcedAbility != null)
+            return;
+
+        if (current == null || !current.IsRunning || !current.CanYieldToPattern)
+            return;
+
+        AiAbility next = patternDirector.ResolveNextAbility(current);
+        if (next == null || next == current || !next.IsReady())
+            return;
+
+        current.StopAbility();
+        current = next;
+        current.StartAbility();
     }
     public AiAbility GetAbilityByKey(string abilityKey)
     {
