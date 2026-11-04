@@ -9,7 +9,7 @@
 <p>이동·회피와 여러 무기를 조합해 보스 패턴과 웨이브에 대응하는<br>Unity 기반 2D 전투 트레이닝 게임입니다.</p>
 
 <p>
-  <img src="https://img.shields.io/badge/Unity-6000.2.9f1-222222?style=flat-square&amp;logo=unity&amp;logoColor=white" alt="Unity 6000.2.9f1">
+  <img src="https://img.shields.io/badge/Unity-6000.3.28f1-222222?style=flat-square&amp;logo=unity&amp;logoColor=white" alt="Unity 6000.3.28f1">
   <img src="https://img.shields.io/badge/Language-C%23-7356BF?style=flat-square" alt="C#">
   <img src="https://img.shields.io/badge/Genre-2D_Action-00B8CC?style=flat-square" alt="2D Action">
   <img src="https://img.shields.io/badge/Status-In_Development-EA4C89?style=flat-square" alt="개발 중">
@@ -28,7 +28,7 @@
 | 프로젝트 | 내용 |
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
-| 기준 환경 | Unity **6000.2.9f1** · **C#** |
+| 기준 환경 | Unity **6000.3.28f1** · **C#** |
 | 공개 내용 | 게임·개발 지원 스크립트 **236개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
@@ -209,7 +209,7 @@ flowchart TD
 
 ## 환경과 공개 범위
 
-**Unity 6000.2.9f1**을 기준으로 Input System, Cinemachine, Universal Render Pipeline, DOTween, TextMesh Pro를 참조합니다.
+**Unity 6000.3.28f1**을 기준으로 Input System, Cinemachine, Universal Render Pipeline, DOTween, TextMesh Pro를 참조합니다.
 
 `Scripts/`는 게임 코드의 폴더 구성을 유지합니다. `Scripts/Input/Generated/PlayerInputActions.cs`는 Unity Input System이 프로젝트 입력 설정에서 생성한 코드입니다.
 
