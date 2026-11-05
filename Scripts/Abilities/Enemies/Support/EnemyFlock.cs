@@ -22,10 +22,9 @@ public sealed class EnemyFlock
 {
     // 구성이 그대로여도 이 간격(초)마다 칸 배정을 다시 해 넉백 등으로 생긴 어긋남을 바로잡는다.
     private const float ReassignInterval = 1.5f;
-    // 분리 방향을 모든 구성원이 반시계 방향으로 이만큼(도) 돌린다. 정면으로 마주친 두 구성원이 서로 반대쪽으로 비켜 간다.
-    private const float SidestepAngle = 25f;
-    private static readonly float SidestepCos = Mathf.Cos(SidestepAngle * Mathf.Deg2Rad);
-    private static readonly float SidestepSin = Mathf.Sin(SidestepAngle * Mathf.Deg2Rad);
+    // 분리 방향을 모든 구성원이 반시계 방향으로 돌리는 기본 각도(도)다. 정면으로 마주친 두 구성원이 서로 반대쪽으로 비켜 간다.
+    // 비행 데이터(FlyingAbilityDataSO.separationSidestep)가 적마다 정하며, 0이면 밀어내기만 한다(Drone).
+    private const float DefaultSidestepAngle = 25f;
 
     private static readonly Dictionary<string, EnemyFlock> flocks = new();
 
@@ -152,8 +151,8 @@ public sealed class EnemyFlock
 
     // member를 가까운 구성원에게서 밀어내는 속도(칸/초)다. distance 이상 떨어지면 0이고, 가까울수록 1/거리 비율로 커진다.
     // 거리가 distance의 절반이면 strength, 4분의 1이면 strength의 3배이며, 그보다 가까우면 4배까지 늘어난다.
-    // 방향은 SidestepAngle만큼 돌려 정면으로 마주쳐도 멈춰 서지 않고 옆으로 비켜 지나가게 한다.
-    public Vector2 GetSeparation(EnemyFlockMember member, float distance, float strength)
+    // 방향은 sidestepAngle만큼 돌려 정면으로 마주쳐도 멈춰 서지 않고 옆으로 비켜 지나가게 한다.
+    public Vector2 GetSeparation(EnemyFlockMember member, float distance, float strength, float sidestepAngle = DefaultSidestepAngle)
     {
         if (member == null || distance <= 0f || strength <= 0f)
             return Vector2.zero;
@@ -178,7 +177,8 @@ public sealed class EnemyFlock
             push += direction * ((1f - ratio) / Mathf.Max(ratio, 0.25f));
         }
 
-        Vector2 sidestep = new(push.x * SidestepCos - push.y * SidestepSin, push.x * SidestepSin + push.y * SidestepCos);
+        float angle = sidestepAngle * Mathf.Deg2Rad, cos = Mathf.Cos(angle), sin = Mathf.Sin(angle);
+        Vector2 sidestep = new(push.x * cos - push.y * sin, push.x * sin + push.y * cos);
         return sidestep * strength;
     }
 

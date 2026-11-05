@@ -3,10 +3,14 @@ using UnityEngine;
 [CreateAssetMenu(menuName = "Enemy/Ability Data/Flying Patrol")]
 public class FlyingPatrolDataSO : FlyingAbilityDataSO
 {
+    [Header("Group")]
+    [Tooltip("켜면 무리 전체가 좌우를 함께 바꾸고 대형을 이루며 동시 추적 수를 제한합니다(Swarmer). 끄면 개체마다 좌우를 정해 각자 유지 지점으로 가고, 같은 flockId끼리는 가까워질 때 서로 밀어내기만 합니다(Drone).")]
+    public bool moveAsFlock = true;
+
     [Header("Hold Point")]
     [Tooltip("플레이어 기준 거리 유지 지점입니다. x는 좌우 거리, y는 높이(칸)입니다.")]
     public Vector2 playerOffset = new(5f, 5f);
-    [Tooltip("무리가 플레이어의 왼쪽·오른쪽을 바꾸는 간격(초)입니다.")]
+    [Tooltip("플레이어의 왼쪽·오른쪽을 바꾸는 간격(초)입니다. 무리로 움직이지 않으면 개체마다 이 간격의 ±25% 안에서 따로 바꿉니다.")]
     [Min(0.1f)] public float sideSwitchInterval = 3.5f;
     [Tooltip("천장·벽과 띄우는 거리(칸)입니다. 유지 지점이 막히면 이만큼 방 안쪽으로 당깁니다.")]
     [Min(0f)] public float wallMargin = 1.2f;

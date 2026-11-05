@@ -99,6 +99,10 @@ public abstract class FlyingAbility : AiAbility
             controller.FacingUpdate(dx > 0f ? 1 : -1);
     }
 
+    // 거리 유지(FlyingPatrolAbility)가 이 패턴을 예약하기 전에 묻는다. 사거리·사격선처럼 시작 조건이 있는 패턴만 override한다.
+    // false인 동안 거리 유지가 이어지고, 유지 시간이 지난 뒤 조건을 채우는 순간 넘어온다.
+    public virtual bool CanBegin() => true;
+
     // 다음 패턴을 예약한다. 등장·사망·Freeze로 AiBrain이 정지해 멈춘 경우에는 예약하지 않는다.
     protected void ReserveNext(AiAbility next)
     {
@@ -116,7 +120,7 @@ public abstract class FlyingAbility : AiAbility
     {
         EnemyFlock flock = Flock;
         return flock != null
-            ? flock.GetSeparation(flockMember, flightData.separationDistance, flightData.separationStrength)
+            ? flock.GetSeparation(flockMember, flightData.separationDistance, flightData.separationStrength, flightData.separationSidestep)
             : Vector2.zero;
     }
 }

@@ -2,7 +2,15 @@ using UnityEngine;
 
 public class DroneEnemyBullet : ProjectileBase
 {
-    [SerializeField] private float fireConeAngle = 45f;
+    [Tooltip("적이 바라보는 방향에서 탄이 벗어날 수 있는 최대 각도(도)입니다. 180이면 모든 방향으로 쏩니다. Drone은 쏠 때 FlyingShootDataSO의 사격 각도로 바꿉니다.")]
+    [SerializeField, Range(0f, 180f)] private float fireConeAngle = 45f;
+
+    // 쏘는 적이 Initialize 전에 사격 각도를 정한다(FlyingShootAbility). 사격 시작 조건과 같은 값을 쓰게 한다.
+    public float FireConeAngle
+    {
+        get => fireConeAngle;
+        set => fireConeAngle = Mathf.Clamp(value, 0f, 180f);
+    }
 
     private Transform targetTr;
     private Transform ownerTr;

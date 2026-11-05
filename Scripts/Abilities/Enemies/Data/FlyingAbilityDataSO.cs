@@ -27,4 +27,6 @@ public abstract class FlyingAbilityDataSO : EnemyAbilityDataSO
     [Min(0f)] public float separationDistance = 1.4f;
     [Tooltip("중심 거리가 separationDistance의 절반일 때 밀어내는 속도(칸/초)입니다. 더 가까우면 최대 4배까지 커지고, separationDistance에서 0이 됩니다.")]
     [Min(0f)] public float separationStrength = 6f;
+    [Tooltip("밀어내는 방향을 반시계로 돌리는 각도(도)입니다. 정면으로 마주친 구성원이 옆으로 비켜 가게 하지만, 같은 지점에 모인 구성원은 서로 맴돕니다(Swarmer 25). 0이면 서로 밀어내기만 합니다(Drone).")]
+    [Range(0f, 45f)] public float separationSidestep = 25f;
 }
