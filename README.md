@@ -176,6 +176,7 @@ flowchart TD
 | 발사체 판정 | [ProjectileBase](Scripts/Weapons/Projectiles/ProjectileBase.cs) · [Projectiles](Scripts/Weapons/Projectiles) | 이동 경로 검사, 관통·반복 피해, 풀 반환 |
 | 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행, 실행 중 패턴의 자리 넘김 |
 | 순찰·돌진 적(Roller) | [GroundPatrolAbility](Scripts/Abilities/Enemies/Patterns/GroundPatrolAbility.cs) · [BurstChargeAbility](Scripts/Abilities/Enemies/Patterns/BurstChargeAbility.cs) · [PlayerDetectionSwapRuleSO](Scripts/Abilities/Enemies/Selection/Rules/PlayerDetectionSwapRuleSO.cs) · [EnemyRollVisual](Scripts/Abilities/Enemies/Support/EnemyRollVisual.cs) | 벽에 막히면 돌아서는 바닥 순찰, 시야 안 플레이어 감지 시 순찰에서 돌진으로 전환, 공회전 준비 뒤 플레이어 대시 속도 비율로 돌진하고 남은 제동 거리까지 계산해 목표 거리에서 멈춤, 돌진 뒤 플레이어 쪽 순찰, 이동 거리에 맞춘 바퀴 회전 |
+| 군집 비행 적(Swarmer) | [FlyingPatrolAbility](Scripts/Abilities/Enemies/Patterns/FlyingPatrolAbility.cs) · [FlyingChaseAbility](Scripts/Abilities/Enemies/Patterns/FlyingChaseAbility.cs) · [FlyingAbility](Scripts/Abilities/Enemies/Patterns/FlyingAbility.cs) · [EnemyFlock](Scripts/Abilities/Enemies/Support/EnemyFlock.cs) · [EnemyFlightSound](Scripts/Abilities/Enemies/Support/EnemyFlightSound.cs) | 플레이어 옆 위의 유지 지점에서 난수 흔들림으로 맴돌다 다가가는 패턴 반복, 감속 도착(Arrival)과 즉시 더하는 분리(Separation)로 겹침 방지, 무리 중심 구성원을 둘러싸는 고리 대형과 무리 단위 좌우 전환, 카메라에 가까운 4마리까지만 들리고 순위마다 줄어드는 비행 반복음 |
 | 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs) · [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs) · [Wave](Scripts/Waves) | 스폰 설정, 클리어 조건, 적·월드 오브젝트 풀링 |
 | 훈련 코스 구간 | [TrainingCourseStage](Scripts/Training/TrainingCourseStage.cs) · [ChasingLaserWall](Scripts/Waves/Spawning/ChasingLaserWall.cs) · [CourseGuideField](Scripts/Training/CourseGuideField.cs) · [TrainingCourseActivator](Scripts/Training/TrainingCourseActivator.cs) · [TrainingCourseStretch](Scripts/Training/TrainingCourseStretch.cs) | 기초 전투 훈련의 등반·달리기·보스 공간 구간: 기계식 지형 열림과 원래 상태 복귀, 일렬로 쫓아오는 레이저, 재질 오프셋으로 흐르는 길 안내 화살표, 통창·외곽선 늘이기, 목표 도달 뒤 정리 순서 |
 | 훈련 평가·저장 | [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs) · [TrainingDefinitionSO](Scripts/Training/TrainingDefinitionSO.cs) · [DataManager](Scripts/Persistence/DataManager.cs) | 결과 수집, 등급·보상, JSON 저장 |
@@ -198,7 +199,7 @@ flowchart TD
 
 | 원칙 | 내용 |
 | --- | --- |
-| 공통 규칙 | 두 에이전트가 함께 읽는 `AGENTS.md`를 단일 원본으로 둡니다. 서로 공유되지 않는 개인 메모리에만 규칙을 저장하지 않습니다. |
+| 공통 규칙 | 두 에이전트가 함께 읽는 `AGENTS.md`를 단일 원본으로 둡니다. 여기에는 모든 작업에 공통인 필수 규칙과 작업별 상세 문서를 읽는 조건만 두고, 작업별 절차는 별도 문서에서 관리합니다. 서로 공유되지 않는 개인 메모리에만 규칙을 저장하지 않습니다. |
 | 작업 격리 | **폴더 1개 = 에이전트 1개 = 브랜치 1개 = Unity Editor 1개.** 동시 작업은 `git worktree` 폴더로 나눕니다. |
 | 담당 영역 | 어느 에이전트가 UI·인게임 스킬 등을 맡을지는 고정하지 않고, 작업마다 사용자가 정합니다. 메인 Scene·Player Prefab·입력 설정 같은 공유 파일은 사용자 승인 후 한쪽만 수정합니다. |
 | 영역 사이 접점 | 게임플레이 코드는 읽기 전용 상태와 C# event를 제공하고, UI는 구독해서 표시만 합니다. |
