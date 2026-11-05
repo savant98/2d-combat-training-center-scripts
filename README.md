@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.3.28f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **246개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **249개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -132,7 +132,7 @@ flowchart TD
 
 플레이어는 입력 이벤트를 Ability에 전달하고, `AbilityManager`가 현재 행동을 정리합니다. 각 Ability는 `PlayerStateMachine.CanPerform`을 통해 행동 가능 여부를 확인합니다. 적은 `AiBrain`이 실행 가능한 후보를 선택하고, `AiPatternDirector`가 프로필과 규칙을 적용합니다. 강제 지정한 적 행동은 후보 선택 경로를 건너뜁니다. 순찰처럼 시간으로 끝나지 않는 패턴은 실행 중에 자리를 넘길 수 있다고 알리고, `AiBrain`은 매 프레임 같은 규칙으로 다음 패턴을 확인해 준비되면 바로 전환합니다.
 
-플레이어와 적의 일반적인 속도 기반 이동은 `CharacterController2D`의 공통 경로를 사용합니다. `RaycastMotor2D`가 충돌을 계산한 이동량을 반환하면 컨트롤러가 위치와 충돌 상태를 반영합니다.
+플레이어와 적의 일반적인 속도 기반 이동은 `CharacterController2D`의 공통 경로를 사용합니다. `RaycastMotor2D`가 충돌을 계산한 이동량을 반환하면 컨트롤러가 위치와 충돌 상태를 반영합니다. 정사각형 적(Jumper)의 구르기 순찰도 같은 경로를 씁니다. 물리 단계마다 아래 모서리를 축으로 넘어간 각도에서 다음 중심 위치를 계산해 `Velocity`로 넘기고, 외형은 실제 이동 거리에서 각도를 거꾸로 구해 돌리므로 축 모서리가 바닥에서 미끄러지지 않습니다.
 
 발사체는 `MovingEntityBase → RaycastMotor2D.Move`로 이동하고, `ProjectileBase`가 모터의 Collider 경로·겹침 질의로 틱 사이의 피격 누락을 보완합니다. 상대 진영 레이어와 재사용 결과 목록을 사용하며 캐릭터 이동 뒤 물리 틱당 한 번 Transform을 동기화합니다. 일반 탄의 첫 명중 반환, 관통 탄의 대상별 한 번 피해, Hammer의 간격별 반복 피해는 각각의 명중 규칙으로 유지합니다. 지뢰는 기존 설치·기폭 수명을 사용합니다.
 
@@ -176,6 +176,7 @@ flowchart TD
 | 발사체 판정 | [ProjectileBase](Scripts/Weapons/Projectiles/ProjectileBase.cs) · [Projectiles](Scripts/Weapons/Projectiles) | 이동 경로 검사, 관통·반복 피해, 풀 반환 |
 | 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행, 실행 중 패턴의 자리 넘김 |
 | 순찰·돌진 적(Roller) | [GroundPatrolAbility](Scripts/Abilities/Enemies/Patterns/GroundPatrolAbility.cs) · [BurstChargeAbility](Scripts/Abilities/Enemies/Patterns/BurstChargeAbility.cs) · [PlayerDetectionSwapRuleSO](Scripts/Abilities/Enemies/Selection/Rules/PlayerDetectionSwapRuleSO.cs) · [EnemyRollVisual](Scripts/Abilities/Enemies/Support/EnemyRollVisual.cs) | 벽에 막히면 돌아서는 바닥 순찰, 시야 안 플레이어 감지 시 순찰에서 돌진으로 전환, 공회전 준비 뒤 플레이어 대시 속도 비율로 돌진하고 남은 제동 거리까지 계산해 목표 거리에서 멈춤, 돌진 뒤 플레이어 쪽 순찰, 이동 거리에 맞춘 바퀴 회전 |
+| 구르기 순찰·점프 적(Jumper) | [TumblePatrolAbility](Scripts/Abilities/Enemies/Patterns/TumblePatrolAbility.cs) · [TumblePatrolDataSO](Scripts/Abilities/Enemies/Data/TumblePatrolDataSO.cs) · [EnemyTumbleVisual](Scripts/Abilities/Enemies/Support/EnemyTumbleVisual.cs) · [ParabolicDashAbility](Scripts/Abilities/Enemies/Patterns/ParabolicDashAbility.cs) · [AnimationFeedbackReceiver](Scripts/Animation/AnimationFeedbackReceiver.cs) | 정사각형이 아래 모서리를 축으로 한 면씩 넘어가는 순찰(들어 올린 뒤 모서리 축 중력 회전으로 떨어지고, 각도에서 계산한 위치로 이동해 축 모서리 고정), 한 칸이 남지 않은 벽 앞에서 기울었다 돌아섬, 시야 안 플레이어 감지 시 포물선 점프, 점프 뒤 플레이어 쪽 순찰, 준비 Clip 이벤트로 단계마다 달아오르는 색·불씨·차지 소리 |
 | 군집 비행 적(Swarmer) | [FlyingPatrolAbility](Scripts/Abilities/Enemies/Patterns/FlyingPatrolAbility.cs) · [FlyingChaseAbility](Scripts/Abilities/Enemies/Patterns/FlyingChaseAbility.cs) · [FlyingAbility](Scripts/Abilities/Enemies/Patterns/FlyingAbility.cs) · [EnemyFlock](Scripts/Abilities/Enemies/Support/EnemyFlock.cs) · [EnemyFlightSound](Scripts/Abilities/Enemies/Support/EnemyFlightSound.cs) | 플레이어 옆 위의 유지 지점에서 난수 흔들림으로 맴돌다 다가가는 패턴 반복, 감속 도착(Arrival)과 즉시 더하는 분리(Separation)로 겹침 방지, 무리 중심 구성원을 둘러싸는 고리 대형과 무리 단위 좌우 전환, 카메라에 가까운 4마리까지만 들리고 순위마다 줄어드는 비행 반복음 |
 | 웨이브 | [WaveManager](Scripts/Waves/WaveManager.cs) · [WaveDataSO](Scripts/Waves/Data/WaveDataSO.cs) · [Wave](Scripts/Waves) | 스폰 설정, 클리어 조건, 적·월드 오브젝트 풀링 |
 | 훈련 코스 구간 | [TrainingCourseStage](Scripts/Training/TrainingCourseStage.cs) · [ChasingLaserWall](Scripts/Waves/Spawning/ChasingLaserWall.cs) · [CourseGuideField](Scripts/Training/CourseGuideField.cs) · [TrainingCourseActivator](Scripts/Training/TrainingCourseActivator.cs) · [TrainingCourseStretch](Scripts/Training/TrainingCourseStretch.cs) | 기초 전투 훈련의 등반·달리기·보스 공간 구간: 기계식 지형 열림과 원래 상태 복귀, 일렬로 쫓아오는 레이저, 재질 오프셋으로 흐르는 길 안내 화살표, 통창·외곽선 늘이기, 목표 도달 뒤 정리 순서 |
