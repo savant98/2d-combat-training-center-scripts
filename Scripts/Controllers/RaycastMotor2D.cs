@@ -59,6 +59,17 @@ public class RaycastMotor2D : MonoBehaviour
         return Mathf.Max(referencePosition.y, floor.point.y - bottomOffset + skinWidth + 0.01f);
     }
 
+    // 바닥을 순찰하는 적이 발판 끝에서 돌아서도록, 진행 방향 쪽 몸 끝에서 lookAhead만큼 앞의 발밑에 바닥이 있는지 확인한다.
+    // 광선은 몸 바닥 바로 위에서 depth만큼 아래로 쏜다. 앞이 벽이라 광선이 벽 속에서 시작하면 바닥이 있는 것으로 본다.
+    public bool HasFloorAhead(int direction, float lookAhead, float depth)
+    {
+        if (col == null) return true;
+        Bounds bodyBounds = col.bounds;
+        float x = direction >= 0 ? bodyBounds.max.x + lookAhead : bodyBounds.min.x - lookAhead;
+        float startY = bodyBounds.min.y + skinWidth * 2f;
+        return RaycastEnvironment(new Vector2(x, startY), Vector2.down, depth + skinWidth * 2f).collider != null;
+    }
+
     public int OverlapAttackBox(Vector2 center, Vector2 size, float angle,
         Collider2D[] results, LayerMask targetLayer)
     {

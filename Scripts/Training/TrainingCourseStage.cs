@@ -7,7 +7,7 @@ using UnityEngine.Tilemaps;
 
 // 훈련실의 특수 구간(등반·달리기) 동안 지형 조각들을 옮겨 길을 열고 구간 전체를 담는 카메라로 전환한다.
 // 조각마다 시작 시차와 잠금 해제 동작(반대쪽으로 살짝 물러났다가 움직임)을 줄 수 있어, 벽이 기계처럼 열리는 연출을 만든다.
-// 목표 지점이 도달 키를 보내면 레이저와 길 안내를 거두고, 발판을 없앤 뒤
+// 목표 지점이 도달 키를 보내면 레이저·길 안내·코스 적(CourseEnemySpawner)을 거두고, 발판을 없앤 뒤
 // 플레이어가 바닥에 내려오면(또는 시작 위치로 돌려보내거나, 그 자리에서 다음 구간을 연 뒤) 완료 키로 웨이브를 끝낸다.
 // 웨이브를 처음부터 다시 시작하거나 방을 떠나면 옮긴 지형·카메라 범위·장식·위치를 원래대로 되돌린다.
 // 지형은 기존 Platform 레이어의 Tilemap이며, 플레이어 이동과 충돌은 기존 RaycastMotor2D 경로를 그대로 쓴다.
@@ -368,6 +368,9 @@ public sealed class TrainingCourseStage : MonoBehaviour
             if (laser.gameObject.activeInHierarchy) laser.Halt();
         foreach (var guide in FindObjectsByType<CourseGuideField>(FindObjectsSortMode.None))
             if (guide.gameObject.activeInHierarchy) guide.ForceReturnToPool();
+        // 코스에 놓은 적도 목표에 닿으면 모두 거두고 다시 꺼내지 않는다.
+        foreach (var spawner in FindObjectsByType<CourseEnemySpawner>(FindObjectsSortMode.None))
+            if (spawner.gameObject.activeInHierarchy) spawner.Halt();
         yield return new WaitForSeconds(successPause);
 
         CurrentStep = FinishStep.Vanishing;

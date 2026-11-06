@@ -4,9 +4,12 @@ using UnityEngine;
 
 // 같은 웨이브에서 플레이어가 맞으면 체력을 되돌리고, 화면을 빠르게 어둡게 한 뒤 이 위치에서 다시 시작하게 한다.
 // 암전 동안 입력을 막아 맞은 뒤에도 계속 움직이다가 갑자기 돌아가는 느낌이 나지 않게 하고, 카메라도 옮긴 위치로 바로 따라가게 한다.
+// courseLaserOnly를 켜면 훈련 코스 추격 레이저에 맞았을 때만 되돌리고, 코스에 놓인 적에게 맞은 피해는 일반 피해로 남긴다.
 public class TutorialPositionResetter : WorldEntityBase
 {
     [SerializeField] private string playerTransitionTriggerName = "";
+    [SerializeField, Tooltip("켜면 훈련 코스 추격 레이저(ChasingLaserWall)에 맞았을 때만 되돌립니다. 끄면 어떤 피해든 되돌립니다(튜토리얼).")]
+    private bool courseLaserOnly;
     [SerializeField, Min(0f), Tooltip("맞은 뒤 화면이 완전히 어두워지기까지의 시간(초)입니다.")]
     private float fadeOutDuration = .15f;
     [SerializeField, Min(0f), Tooltip("어두운 상태로 머무는 시간(초)입니다. 이때 시작 위치로 옮긴다.")]
@@ -20,6 +23,7 @@ public class TutorialPositionResetter : WorldEntityBase
     private bool holdingForces;
 
     public bool IsResetting => resetting;
+    public bool CourseLaserOnly => courseLaserOnly;
 
     public override void OnSpawnedFromPool()
     {
@@ -38,6 +42,8 @@ public class TutorialPositionResetter : WorldEntityBase
 
     private void HandleTutorialFail(WeaponBaseSO.DamageInfo damageInfo)
     {
+        // 코스 레이저만 되돌리는 경우, 다른 피해(코스 적)는 회복하지 않고 그 자리에서 이어 간다.
+        if (courseLaserOnly && !ChasingLaserWall.IsCourseLaserHit) return;
         // 받은 데미지 복구
         GameManager.Instance.Player.Health.Heal(damageInfo);
         if (resetting || !isActiveAndEnabled) return;

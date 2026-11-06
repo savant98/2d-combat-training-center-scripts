@@ -4,9 +4,29 @@ using UnityEngine;
 // 훈련 구간의 시작 쪽(바닥·벽 속)에 얇은 레이저를 켜 두고, 잠시 기다렸다가 진행 방향으로 밀어 플레이어를 쫓는다.
 // 앞장선 레이저 뒤로 일정 간격마다 레이저가 시작 위치에서 새로 나와 일렬로 나란히 함께 쫓아오며, 구간을 뒤에서부터 막는다.
 // 표시·피해 판정은 기존 LaserBeam을 그대로 쓰고, 이 컴포넌트는 레이저를 놓을 위치와 시점만 정한다.
-// 플레이어가 맞으면 같은 웨이브의 TutorialPositionResetter가 시작 위치로 되돌리고, 레이저도 시작 위치에서 다시 기다렸다가 쫓는다.
+// 플레이어가 이 레이저에 맞으면 같은 웨이브의 TutorialPositionResetter가 시작 위치로 되돌리고, 레이저도 시작 위치에서 다시 기다렸다가 쫓는다.
+// 코스에 놓인 적에게 맞은 피해로는 다시 시작하지 않는다. 피해의 출처는 LaserBeam.PlayerHitSource로 구분한다(IsCourseLaserHit).
 public sealed class ChasingLaserWall : WorldEntityBase
 {
+    // 지금 켜져 있는 코스 레이저 벽. Domain Reload를 끈 설정에서도 Play마다 비운다.
+    private static readonly List<ChasingLaserWall> ActiveWalls = new List<ChasingLaserWall>();
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics() => ActiveWalls.Clear();
+
+    // PlayerHealth.OnDamaged를 받는 중에 부르면, 이번 피해가 켜져 있는 코스 레이저 벽의 레이저에서 왔는지 알려 준다.
+    public static bool IsCourseLaserHit
+    {
+        get
+        {
+            var source = LaserBeam.PlayerHitSource;
+            if (source == null) return false;
+            foreach (var wall in ActiveWalls)
+                if (wall != null && wall.Owns(source)) return true;
+            return false;
+        }
+    }
+
     public enum Phase { Holding, Chasing, Halted }
 
     [Header("Direction")]
@@ -44,6 +64,9 @@ public sealed class ChasingLaserWall : WorldEntityBase
     private PlayerHealth subscribedHealth;
     private float travel;
     private float timer;
+    // 맞힌 다음 프레임에 처음부터 다시 기다린다. 같은 피해 알림을 받는 다른 쪽(위치 초기화·코스 적)이 출처를 확인하기 전에
+    // 맞힌 레이저를 거두면 IsCourseLaserHit가 거짓이 되고, 피해 판정 도중에 그 레이저를 풀로 돌려보내게 되기 때문이다.
+    private bool holdRequested;
 
     public Phase CurrentPhase { get; private set; }
     public float CurrentTravel => travel;
@@ -65,8 +88,19 @@ public sealed class ChasingLaserWall : WorldEntityBase
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
+        if (!ActiveWalls.Contains(this)) ActiveWalls.Add(this);
         Subscribe();
         Hold();
+    }
+
+    // 앞장선 레이저나 줄지어 따라오는 레이저 가운데 하나인지
+    public bool Owns(LaserBeam laser)
+    {
+        if (laser == null) return false;
+        if (laser == lead) return true;
+        foreach (var item in trail)
+            if (item == laser) return true;
+        return false;
     }
 
     private Vector2 OriginAt(float distance) => (Vector2)transform.position + TravelDirection * distance;
@@ -74,6 +108,7 @@ public sealed class ChasingLaserWall : WorldEntityBase
     // 시작 위치에 앞장선 레이저 하나만 켜 두고 기다린다.
     private void Hold()
     {
+        holdRequested = false;
         ClearTrail();
         travel = 0f;
         StopLead();
@@ -84,6 +119,12 @@ public sealed class ChasingLaserWall : WorldEntityBase
 
     private void Update()
     {
+        if (holdRequested && CurrentPhase != Phase.Halted)
+        {
+            Hold();
+            return;
+        }
+
         switch (CurrentPhase)
         {
             case Phase.Holding:
@@ -133,17 +174,18 @@ public sealed class ChasingLaserWall : WorldEntityBase
     // 구간 목표에 닿으면 레이저를 모두 거두고 더 이상 다시 시작하지 않는다.
     public void Halt()
     {
+        holdRequested = false;
         StopLead();
         ClearTrail();
         Unsubscribe();
         CurrentPhase = Phase.Halted;
     }
 
-    // 맞으면 남긴 레이저를 거두고 시작 위치에서 다시 기다린다.
+    // 코스 레이저에 맞으면 다음 프레임에 남긴 레이저를 거두고 시작 위치에서 다시 기다린다. 코스 적에게 맞은 피해는 무시한다.
     private void HandlePlayerDamaged(WeaponBaseSO.DamageInfo _)
     {
-        if (CurrentPhase == Phase.Halted) return;
-        Hold();
+        if (CurrentPhase == Phase.Halted || !IsCourseLaserHit) return;
+        holdRequested = true;
     }
 
     private void Subscribe()
@@ -166,6 +208,7 @@ public sealed class ChasingLaserWall : WorldEntityBase
         Unsubscribe();
         StopLead();
         ClearTrail();
+        ActiveWalls.Remove(this);
         base.ForceReturnToPool();
     }
 
@@ -173,6 +216,7 @@ public sealed class ChasingLaserWall : WorldEntityBase
     private void OnDisable()
     {
         Unsubscribe();
+        ActiveWalls.Remove(this);
         lead = null;
         trail.Clear();
     }

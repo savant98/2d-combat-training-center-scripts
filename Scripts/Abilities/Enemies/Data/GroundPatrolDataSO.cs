@@ -14,4 +14,12 @@ public class GroundPatrolDataSO : EnemyAbilityDataSO
     [Header("Direction")]
     [Tooltip("플레이어를 발견해 다른 패턴(Roller는 돌진)으로 넘어갔다가 순찰로 돌아올 때 플레이어 쪽으로 출발합니다. 끄면 마지막으로 바라본 방향으로 이어 갑니다.")]
     public bool facePlayerAfterOtherPattern = true;
+
+    [Header("Ledge")]
+    [Tooltip("발판 끝에 닿으면 떨어지지 않게 돌아섭니다(벽에서 돌아서는 것과 같습니다). 돌진 같은 다른 패턴에는 적용하지 않습니다.")]
+    public bool turnAtLedges = true;
+    [Tooltip("진행 방향 쪽 몸 끝에서 이만큼(칸) 앞의 발밑에 바닥이 없으면 돌아섭니다.")]
+    [Min(0f)] public float ledgeLookAhead = 0.1f;
+    [Tooltip("발밑 바닥을 찾는 깊이(칸)입니다. 이보다 깊으면 낭떠러지로 봅니다.")]
+    [Min(0.05f)] public float ledgeCheckDepth = 0.5f;
 }

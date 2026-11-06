@@ -2,6 +2,7 @@ using UnityEngine;
 
 // 바닥을 한 방향으로 계속 이동하는 순찰 패턴이다.
 // 벽 판정은 EnemyController가 RaycastMotor2D 이동 결과로 알리는 OnWallHit을 사용한다.
+// 발판 끝 판정은 바닥에 서 있을 때 RaycastMotor2D.HasFloorAhead로 진행 방향 앞 발밑을 확인해, 바닥이 없으면 벽처럼 돌아선다.
 // 플레이어 감지와 다음 패턴 선택은 AiPatternProfileSO의 규칙이 맡고, 이 패턴은 실행 중 자리를 넘긴다.
 // 플레이어를 발견해 다른 패턴(돌진)으로 넘어갔다가 돌아오면 플레이어 쪽으로 출발한다.
 public class GroundPatrolAbility : AiAbility
@@ -69,12 +70,26 @@ public class GroundPatrolAbility : AiAbility
 
     private void AccelerateToPatrolSpeed()
     {
+        TurnAtLedge();
         float speed = ResolvePatrolSpeed();
         float acceleration = speed / Mathf.Max(0.01f, patrolData.accelerationTime);
         controller.Velocity.x = Mathf.MoveTowards(
             controller.Velocity.x,
             patrolDirection * speed,
             acceleration * Time.deltaTime);
+    }
+
+    // 발판 끝에 닿으면 떨어지지 않게 벽에서처럼 돌아선다. 공중(낙하·넉백 중)에서는 확인하지 않는다.
+    private void TurnAtLedge()
+    {
+        if (!patrolData.turnAtLedges || !controller.IsGrounded || controller.Motor == null)
+            return;
+        if (controller.Motor.HasFloorAhead(patrolDirection, patrolData.ledgeLookAhead, patrolData.ledgeCheckDepth))
+            return;
+
+        patrolDirection = -patrolDirection;
+        controller.Velocity.x = 0f;
+        controller.FacingUpdate(patrolDirection);
     }
 
     private float ResolvePatrolSpeed()
