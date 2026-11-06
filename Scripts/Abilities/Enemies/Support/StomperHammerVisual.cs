@@ -89,6 +89,9 @@ public class StomperHammerVisual : MonoBehaviour
     // AiBrain.Update가 Execute Feedback을 재생하기 전에 예측 접점을 월드 위치에 고정한다.
     void Update()
     {
+        // 중앙 목표도 같은 ParabolicDash 인스턴스의 해머 경로를 사용한다.
+        if (owner != null && owner.Brain != null && owner.Brain.current is ParabolicDashAbility currentDash)
+            ability = currentDash;
         if (!CanDisplay()) { EndCycle(); return; }
         if (ability.State == AbilityState.Windup && (!cycleActive || ImpactFrame >= 0)) BeginCycle();
         if (cycleActive && impactPoint != null) impactPoint.position = contactPoint;
@@ -96,6 +99,8 @@ public class StomperHammerVisual : MonoBehaviour
 
     void LateUpdate()
     {
+        if (owner != null && owner.Brain != null && owner.Brain.current is ParabolicDashAbility currentDash)
+            ability = currentDash;
         if (!CanDisplay()) { EndCycle(); return; }
         if (ability.State == AbilityState.Windup)
         {

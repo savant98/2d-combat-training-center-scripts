@@ -24,6 +24,11 @@ public class LandMine : ProjectileBase
     [SerializeField] private SoundOptions explosionWarningSound;
     [SerializeField] private FeedbackDataSO explodeFeedback;
 
+    public float FlightGravity => gravity;
+    public bool IsFlying => state == MineState.Flying;
+    public bool HasLandingTarget { get; private set; }
+    public Vector2 PlannedLandingPoint { get; private set; }
+    public Vector2 FlightVelocity => velocity;
     private MineState state;
     private Coroutine stateRoutine;
     private Animator animator;
@@ -73,6 +78,7 @@ public class LandMine : ProjectileBase
     public override void Initialize(CharacterController2D owner, WeaponBaseSO.DamageInfo damageInfo, float speed, int count, LayerMask collideLayer)
     {
         base.Initialize(owner, damageInfo, speed, count, collideLayer);
+        HasLandingTarget = false;
 
         float angle = angleStep * count;
         velocity = AngleToDirection(angle) * speed;
@@ -80,6 +86,21 @@ public class LandMine : ProjectileBase
         state = MineState.Flying;
         animator.SetTrigger("Fly");
     }
+    public void InitializeTowardGround(CharacterController2D owner, WeaponBaseSO.DamageInfo damageInfo,
+        Vector2 surface, float flightTime, int count, LayerMask collideLayer)
+    {
+        Initialize(owner, damageInfo, 0f, count, collideLayer);
+        RaycastMotor2D.InvalidateAttackQuerySync(); RaycastMotor2D.PrepareAttackQueries();
+        float dt = Time.fixedDeltaTime;
+        float duration = Mathf.Max(2, Mathf.RoundToInt(flightTime / dt)) * dt;
+        Vector2 targetRoot = surface + Vector2.up * (transform.position.y - col.bounds.min.y);
+        velocity = (targetRoot - (Vector2)transform.position) / duration;
+        // Pool 대여 직후 이동을 쉬는 첫 물리 틱에도 누적되는 중력 한 틱을 보정한다.
+        velocity.y -= gravity * (duration + dt) * .5f;
+        PlannedLandingPoint = surface;
+        HasLandingTarget = true;
+    }
+
     private Vector2 AngleToDirection(float angle)
     {
         float rad = angle * Mathf.Deg2Rad;
