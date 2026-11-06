@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using Unity.Cinemachine;
 using UnityEngine;
 
 // Admin 블랙홀 패턴.
@@ -236,7 +235,7 @@ public class BlackHoleAbility : AiAbility
         if (rightHit.collider != null && rightHit.distance > 0.001f) { frame.right = rightHit.point.x; frame.hasRightWall = true; }
 
         Bounds bounds = default;
-        bool hasBounds = holeData.clampToCameraBounds && TryGetCameraBounds(out bounds);
+        bool hasBounds = holeData.clampToCameraBounds && EnemyCameraBounds.TryGet(out bounds);
         if (hasBounds)
         {
             frame.usedCameraBounds = true;
@@ -262,21 +261,5 @@ public class BlackHoleAbility : AiAbility
         y = maxY >= minY ? Mathf.Clamp(y, minY, maxY) : minY;
         frame.center = new Vector2(x, y);
         return frame;
-    }
-
-    // 현재 카메라가 따르는 가상 카메라의 경계 모양. 없으면 false.
-    private static bool TryGetCameraBounds(out Bounds bounds)
-    {
-        bounds = default;
-        var camera = Camera.main;
-        if (camera == null || !camera.TryGetComponent(out CinemachineBrain brain))
-            return false;
-        if (brain.ActiveVirtualCamera is not Component virtualCamera)
-            return false;
-        if (!virtualCamera.TryGetComponent(out CinemachineConfiner2D confiner) || confiner.BoundingShape2D == null)
-            return false;
-
-        bounds = confiner.BoundingShape2D.bounds;
-        return bounds.size.x > 1f && bounds.size.y > 1f;
     }
 }
