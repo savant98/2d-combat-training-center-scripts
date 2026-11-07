@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// StarCannon 별 창(2026-11-08 재디자인, 사용자 요청 "머리 위에 창 5개를 부채꼴로 0.2초 간격으로 생성한 뒤, 일정 시간 후 적을 추적해서
+// StarSpear 별 창(2026-11-08 재디자인, 사용자 요청 "머리 위에 창 5개를 부채꼴로 0.2초 간격으로 생성한 뒤, 일정 시간 후 적을 추적해서
 // 날아가 적이나 벽에 닿으면 폭발").
-// - 발사 전(Held): StarCannonVolley가 매 고정 단계 Hold로 자리·창끝 방향을 정한다. 판정 Collider를 꺼 두고 모터 이동·경로 판정을 하지 않는다.
+// - 발사 전(Held): StarSpearVolley가 매 고정 단계 Hold로 자리·창끝 방향을 정한다. 판정 Collider를 꺼 두고 모터 이동·경로 판정을 하지 않는다.
 // - 비행(Flight): Launch 방향으로 일정 속도로 날아가며, 목표 쪽으로 초당 최대 turnRateDegrees만큼만 돈다(최소 선회 반경 = 속도 / 각속도).
 //   목표를 잃으면 retargetInterval마다 가장 가까운 적을 다시 찾는다. 이동·벽 충돌은 MovingEntityBase(RaycastMotor2D.Move),
 //   적 판정은 ProjectileBase의 Collider 경로·겹침 질의를 그대로 쓴다.
@@ -16,7 +16,8 @@ using UnityEngine;
 //   Smoke(연기 자국)·Sparks(불꽃)는 ProjectileBase가 풀로 돌아갈 때 Trail과 함께 떼어 두므로 폭발 뒤에도 남았다가 사라진다.
 //   TrailRenderer는 emitting이 꺼진 동안 들어온 점을 끊긴 구간으로 보고 그리지 않으므로 비행 중에는 emitting을 켜 두고,
 //   자동 점 생성은 Prefab의 minVertexDistance를 아주 크게 해 막는다(점은 모두 RecordPath가 넣음). 폭발 지점을 넣은 뒤 emitting을 끄면 남은 선은 그대로 보인다.
-public class StarCannon : ProjectileBase
+[UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "StarCannon")]
+public class StarSpear : ProjectileBase
 {
     public enum SpearState { Held, Flight, Done }
     public enum DetonationCause { None, Enemy, Wall, Expired }

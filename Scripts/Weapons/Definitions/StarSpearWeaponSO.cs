@@ -2,18 +2,19 @@ using System;
 using System.Collections;
 using UnityEngine;
 
-// StarCannon(Star 세트 기어 2단계, 이름 '별창 발사'): 한 번 쓰면 Player 머리 위 발사점 둘레에 별 창을 부채꼴로 소환하고(summonInterval 0이면 한 번에),
+// StarSpear(Star 세트 기어 2단계, 이름 '별창 발사', 2026-11-08 StarCannon에서 이름 변경): 한 번 쓰면 Player 머리 위 발사점 둘레에 별 창을 부채꼴로 소환하고(summonInterval 0이면 한 번에),
 // 잠시 뒤 창마다 가장 가까운 적을 조준해 차례로 쏜다. 창은 선회 속도가 제한된 유도로 아주 빠르게 날아가 적·벽에 닿으면 폭발한다.
-// 소환·유지·조준·발사 순서는 StarCannonVolley가 맡고, 이 무기는 실행 단계 첫 프레임에 일제 사격 하나를 시작한다.
+// 소환·유지·조준·발사 순서는 StarSpearVolley가 맡고, 이 무기는 실행 단계 첫 프레임에 일제 사격 하나를 시작한다.
 // Player의 공격 단계(준비·실행·회수)는 짧게 끝나고, 소환된 창은 Player를 조금 늦게 따라다니므로 그동안 이동·다른 행동을 할 수 있다.
 // 주변(targetSearchRadius)에 적이 없으면 바로 쏘지 않고 noTargetWaitTime까지 기다리다가, 적이 나타나면 그 적을, 끝까지 없으면 보는 쪽으로 쏜다.
-[CreateAssetMenu(menuName = "Weapon/StarCannon")]
-public class StarCannonWeaponSO : WeaponBaseSO
+[CreateAssetMenu(menuName = "Weapon/StarSpear")]
+[UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "StarCannonWeaponSO")]
+public class StarSpearWeaponSO : WeaponBaseSO
 {
     [Header("Spawn")]
     public LayerMask platformLayer;
-    public StarCannonVolley volleyPrefab;
-    public StarCannon spearPrefab;
+    public StarSpearVolley volleyPrefab;
+    public StarSpear spearPrefab;
 
     [Header("Summon")]
     [Min(1)] public int spearCount = 5;

@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-// StarCannon 일제 사격(2026-11-08): Player 머리 위 발사점(별 문양)을 조금 늦게 따라다니며 별 창을 소환·유지·조준·발사한다.
+// StarSpear 일제 사격(2026-11-08): Player 머리 위 발사점(별 문양)을 조금 늦게 따라다니며 별 창을 소환·유지·조준·발사한다.
 // - 따라다니기: 발사점은 매 고정 단계 (Player 위치 + 발사점 보정 - 지금 자리) × followRate × 단계 시간만큼 다가간다(PlayerDrone과 같은 식).
 //   판정이 없는 외형이라 모터 없이 자리만 옮긴다. 창도 이 발사점을 기준으로 놓이므로 무리 전체가 살짝 늦게 따라온다.
 //   Player가 followSnapDistance보다 멀어지면(방 이동 등 순간 이동) 맵을 가로질러 날아오지 않게 바로 붙는다(대시 중 지연은 약 3.3칸).
-// - 소환: StarCannonWeaponSO.SummonTime(i)마다 창 하나를 부채꼴 자리(발사점에서 fanRadius, 뒤쪽 → 앞쪽 순서)에 꺼낸다.
-// - 유지: 매 고정 단계 발사점 + 자리로 창을 놓는다(StarCannon.Hold, 판정 없음). 창끝은 바깥(부채꼴 반지름 방향)을 향한다.
+// - 소환: StarSpearWeaponSO.SummonTime(i)마다 창 하나를 부채꼴 자리(발사점에서 fanRadius, 뒤쪽 → 앞쪽 순서)에 꺼낸다.
+// - 유지: 매 고정 단계 발사점 + 자리로 창을 놓는다(StarSpear.Hold, 판정 없음). 창끝은 바깥(부채꼴 반지름 방향)을 향한다.
 // - 조준·발사 순서: 소환 순서대로 한 창씩 조준을 시작한다. 첫 창은 FirstAimTime부터, 다음 창은 앞 창이 조준을 시작하고 launchInterval 뒤부터.
 //   조준을 시작하려는 순간 창 자리에서 targetSearchRadius 안에 적이 없으면 시작하지 않고 기다린다(기다린 시간을 누적한다).
 //   기다린 시간이 noTargetWaitTime에 이르면 더 기다리지 않고 Player가 보는 쪽(수평)을 조준한다.
@@ -16,7 +16,8 @@ using UnityEngine;
 // - 끝: 모든 창을 쏜 뒤 발사점 별 문양이 줄어들며 사라지고 풀로 돌아간다. Player가 사라지면 남은 창을 거두고 끝낸다.
 // 시간은 고정 단계로 센다(프레임 수와 무관). Player 이동(FixedUpdate) 뒤에 자리를 잡도록 실행 순서를 탄(100)보다 늦춘다.
 [DefaultExecutionOrder(110)]
-public class StarCannonVolley : WorldEntityBase
+[UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "StarCannonVolley")]
+public class StarSpearVolley : WorldEntityBase
 {
     [Header("Sigil")]
     [SerializeField] private Transform sigil;
@@ -36,7 +37,7 @@ public class StarCannonVolley : WorldEntityBase
 
     private sealed class Slot
     {
-        public StarCannon spear;
+        public StarSpear spear;
         public float angle, summonAt, launchAt = -1f;
         public bool summoned, launched, aiming;
         public Collider2D target;
@@ -46,7 +47,7 @@ public class StarCannonVolley : WorldEntityBase
     }
 
     private readonly List<Slot> slots = new List<Slot>(8);
-    private StarCannonWeaponSO weapon;
+    private StarSpearWeaponSO weapon;
     private Action<CharacterController2D, Vector2> onHitEnemy;
     private float age, finishedAt = -1f, lastSummonAt = -10f, nextAimAt, waited;
     private bool running;
@@ -61,7 +62,7 @@ public class StarCannonVolley : WorldEntityBase
     public float WaitedTime => waited;              // 적이 없어 기다린 시간(누적)
     public Vector2 AnchorPosition => anchor;        // 지금 발사점(부채꼴 중심, Player를 늦게 따라감)
     public int SlotCount => slots.Count;
-    public StarCannon SpearAt(int index) => index >= 0 && index < slots.Count ? slots[index].spear : null;
+    public StarSpear SpearAt(int index) => index >= 0 && index < slots.Count ? slots[index].spear : null;
     public float SlotAngle(int index) => index >= 0 && index < slots.Count ? slots[index].angle : 0f;
     // 검증·디버그용 읽기 전용 기록: 소환·발사 시각(초, 아직이면 -1), 발사 방향, 발사 순간 목표 판정 상자 중심(목표가 없으면 NaN)
     public float SummonedAgeOf(int index) => index >= 0 && index < slots.Count ? slots[index].summonedAge : -1f;
@@ -92,7 +93,7 @@ public class StarCannonVolley : WorldEntityBase
         if (sigil != null) sigil.localScale = Vector3.zero;
     }
 
-    public void Begin(CharacterController2D owner, StarCannonWeaponSO weapon, WeaponBaseSO.DamageInfo damageInfo,
+    public void Begin(CharacterController2D owner, StarSpearWeaponSO weapon, WeaponBaseSO.DamageInfo damageInfo,
         Action<CharacterController2D, Vector2> onHitEnemy)
     {
         Initialize(owner, damageInfo);   // 발사점 등장 피드백
@@ -221,7 +222,7 @@ public class StarCannonVolley : WorldEntityBase
     private void UpdateHeld(Slot slot, int index, float dt)
     {
         Vector2 position = HeldPosition(slot, index);
-        if (slot.aiming && !StarCannon.IsTrackable(slot.target))
+        if (slot.aiming && !StarSpear.IsTrackable(slot.target))
         {
             slot.target = slot.spear.FindNearestTarget(position, weapon.targetSearchRadius);
             if (slot.target == null && waited < weapon.noTargetWaitTime - Epsilon) CancelAim(index);
@@ -234,7 +235,7 @@ public class StarCannonVolley : WorldEntityBase
         slot.spear.Hold(position, angle);
         if (!slot.aiming || age < slot.launchAt - Epsilon) return;
         // 발사 순간 목표까지의 직선 방향(목표가 없으면 Player가 보는 쪽)
-        Collider2D target = StarCannon.IsTrackable(slot.target) ? slot.target : null;
+        Collider2D target = StarSpear.IsTrackable(slot.target) ? slot.target : null;
         slot.launchPosition = position;
         slot.launchDirection = Direction(AimAngle(slot, position));
         slot.launchTargetPoint = target != null ? (Vector2)target.bounds.center : new Vector2(float.NaN, float.NaN);
@@ -261,7 +262,7 @@ public class StarCannonVolley : WorldEntityBase
 
     private float AimAngle(Slot slot, Vector2 from)
     {
-        if (StarCannon.IsTrackable(slot.target))
+        if (StarSpear.IsTrackable(slot.target))
         {
             Vector2 delta = (Vector2)slot.target.bounds.center - from;
             if (delta.sqrMagnitude > 0.000001f) return Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
