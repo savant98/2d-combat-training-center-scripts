@@ -29,39 +29,35 @@ public class PlayerHealth : HealthBase
     }
     public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
-        if (TryCounter(hitPosition))
-            return;
-
-        if (IsInvincible)
-            return;
-
-        if (!hitAbility.CanTakeDamage())
-            return;
-
-        // 데미지 적용
+        var grab = GetComponentInParent<PlayerController>().AbilityManager.Grab;
+        // 잡기 보호는 반격 판정보다 먼저 적용하고 전역 무적 상태와 분리한다.
+        if (grab != null && grab.BlocksOtherDamage) return;
+        if (TryCounter(hitPosition) || IsInvincible || !hitAbility.CanTakeDamage()) return;
+        ApplyDamage(damageInfo, hitPosition, false);
+    }
+    public bool TakeGrabDamage(UnityEngine.Object attacker, uint session, WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
+    {
+        var grab = GetComponentInParent<PlayerController>().AbilityManager.Grab;
+        if (grab == null || !grab.IsOwnedBy(attacker, session) || currentHP <= 0) return false;
+        ApplyDamage(damageInfo, hitPosition, true); return true;
+    }
+    private void ApplyDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition, bool grabbed)
+    {
         currentHP -= damageInfo.damage;
-
-        // 피격 이벤트 호출
         OnDamaged?.Invoke(damageInfo);
-
-        UIManager.Instance.UpdateHP(currentHP, maxHP);
-        FloatingTextManager.Instance.ShowDamage(damageInfo, transform.position + Vector3.up * 0.5f, Color.red);
-
+        if (UIManager.Instance != null) UIManager.Instance.UpdateHP(currentHP, maxHP);
+        if (FloatingTextManager.Instance != null)
+            FloatingTextManager.Instance.ShowDamage(damageInfo, transform.position + Vector3.up * .5f, Color.red);
         if (currentHP <= 0)
         {
             currentHP = 0;
-            Die();
+            if (grabbed) CompleteDeath(); else Die();
             return;
         }
-
-        // 살아있을 때만 Hit 연출
-        hitAbility.Hit();
-
+        if (!grabbed) hitAbility.Hit();
         if (hitSprite != null)
         {
-            if (coroutine != null)
-                StopCoroutine(coroutine);
-
+            if (coroutine != null) StopCoroutine(coroutine);
             coroutine = StartCoroutine(HitSpriteFeedback());
         }
     }
@@ -98,6 +94,10 @@ public class PlayerHealth : HealthBase
         if (IsInvincible)
             return;
 
+        CompleteDeath();
+    }
+    private void CompleteDeath()
+    {
         IsInvincible = true;
         Debug.Log("Player Dead");
         // 플레이어 사망 연출, 리스폰 등

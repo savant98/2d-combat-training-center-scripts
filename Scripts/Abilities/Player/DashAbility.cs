@@ -89,6 +89,7 @@ public class DashAbility : PlayerAbility
         feedbackPlayer.Play(dashFeedback, transform);
         dashTrail.emitting = true;
     }
+    public void ClearPendingInput() => buffer.Reset();
     public override void Interrupt()
     {
         if (!isDashing) return;

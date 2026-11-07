@@ -94,6 +94,7 @@ public class JumpAbility : PlayerAbility
         if (currentJumpCount == maxJumpCount)
             currentJumpCount--;
     }
+    public void ClearPendingInput() { jumpBuffer.Reset(); releasedThisJump = true; }
     public override void Interrupt()
     {
         releasedThisJump = true;

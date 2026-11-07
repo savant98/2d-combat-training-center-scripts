@@ -147,7 +147,7 @@ public class EnemyShieldSystem : MonoBehaviour
 
     public void TakeDamage(WeaponBaseSO.DamageInfo info, Vector3 hitPosition)
     {
-        if (IsSpawnLocked || health.IsInvincible)
+        if (IsSpawnLocked || health.IsDamageBlocked)
             return;
 
         if (isBreaking)

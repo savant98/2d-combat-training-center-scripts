@@ -16,6 +16,7 @@ public class PlayerStateMachine
     }
     public bool CanPerform(PlayerActionType action)
     {
+        if (CurrentState == PlayerState.Grabbed) return false;
         switch (CurrentState)
         {
             case PlayerState.Idle:

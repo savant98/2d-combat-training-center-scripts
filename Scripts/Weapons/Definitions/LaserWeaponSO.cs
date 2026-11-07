@@ -42,6 +42,8 @@ public class LaserWeaponSO : WeaponBaseSO
 
         float t = Time.time + executeTime;
         PlayerController playerController = (PlayerController)controller;
+        Action cancelGrab = () => laser.ForceReturnToPool();
+        playerController.AbilityManager.AttackAbility.RegisterGrabCleanup(cancelGrab);
         while (Time.time < t)
         {
             yield return null;
@@ -52,5 +54,6 @@ public class LaserWeaponSO : WeaponBaseSO
                 break;
             }
         }
+        playerController.AbilityManager.AttackAbility.UnregisterGrabCleanup(cancelGrab);
     }
 }

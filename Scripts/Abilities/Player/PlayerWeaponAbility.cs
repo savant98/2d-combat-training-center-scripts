@@ -788,6 +788,20 @@ public class PlayerWeaponAbility : PlayerAbility
             ready);
     }
     #endregion
+    private event System.Action grabCleanup;
+    public void RegisterGrabCleanup(System.Action cleanup) => grabCleanup += cleanup;
+    public void UnregisterGrabCleanup(System.Action cleanup) => grabCleanup -= cleanup;
+    public void CancelForGrab()
+    {
+        Interrupt();
+        controller.PlayerCounterState.EndCounter();
+        controller.PlayerCounterState.EndInvulnerability();
+        foreach (var box in hammerHitBoxes) if (box != null) box.DisableHitbox();
+        foreach (var box in hammerSkillBoxes) if (box != null) box.DisableHitbox();
+        grabCleanup?.Invoke(); grabCleanup = null;
+        StopAllCoroutines();
+        normalWeaponBuffer.Reset(); secondaryWeaponBuffer.Reset();
+    }
     public override void Interrupt()
     {
         if (abilityState == AbilityState.None)

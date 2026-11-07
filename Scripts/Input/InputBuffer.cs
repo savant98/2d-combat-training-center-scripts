@@ -42,4 +42,5 @@ public class InputBuffer
         return true;
     }
     public void Clear() => lastUseTime = -999f;
+    public void Reset() { lastInputTime = lastUseTime = -999f; }
 }

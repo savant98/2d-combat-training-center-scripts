@@ -6,6 +6,19 @@ public class PlayerCounterState : MonoBehaviour
     public bool IsSuccess { get; private set; }
 
     private System.Action<Vector3> onSuccess;
+    private PlayerHealth protectedHealth;
+    private bool savedInvulnerability;
+    public void BeginInvulnerability(PlayerHealth health)
+    {
+        if (protectedHealth != null) return;
+        protectedHealth = health; savedInvulnerability = health.IsInvincible; health.IsInvincible = true;
+    }
+    public void EndInvulnerability()
+    {
+        if (protectedHealth == null) return;
+        if (protectedHealth.currentHP > 0) protectedHealth.IsInvincible = savedInvulnerability;
+        protectedHealth = null;
+    }
 
     public void StartCounter(System.Action<Vector3> onSuccess)
     {

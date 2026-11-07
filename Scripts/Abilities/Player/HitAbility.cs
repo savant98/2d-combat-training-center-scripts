@@ -43,6 +43,11 @@ public class HitAbility : PlayerAbility
 
         StartCoroutine(HitRoutine());
     }
+    public void CancelForGrab()
+    {
+        StopAllCoroutines(); isGettingHit = isInvincible = false;
+        controller.animator.SetBool("Hit", false);
+    }
     public void ForceStop()
     {
         manager.InterruptAllAbilities();

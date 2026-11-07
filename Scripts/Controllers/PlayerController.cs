@@ -17,6 +17,7 @@ public class PlayerController : CharacterController2D
     {
         get
         {
+            if (abilityManager != null && abilityManager.Grab != null && abilityManager.Grab.IsActive) return false;
             if (UIManager.Instance != null && UIManager.Instance.BlocksGameplayInput)
                 return false;
 
@@ -51,11 +52,13 @@ public class PlayerController : CharacterController2D
     }
     public void ResetPlayerPosition(Vector3 spawnPos)
     {
+        if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
         transform.position = spawnPos;
         Velocity = Vector2.zero;
     }
     public void ResetPlayerStatus()
     {
+        if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
         health.ResetHealth();
         abilityManager.AttackAbility.ResetSkillGauge();
     }
@@ -71,6 +74,10 @@ public class PlayerController : CharacterController2D
     }
     private void InputUpdate()
     {
+        if (abilityManager != null && abilityManager.Grab != null && abilityManager.Grab.IsActive)
+        {
+            MoveInput = Vector2.zero; return;
+        }
         if (InputManager.Instance == null) return;
 
         if (!CanReceiveInput)
@@ -123,6 +130,10 @@ public class PlayerController : CharacterController2D
         Velocity.y = fallen;
 
         return Velocity;
+    }
+    private void OnDisable()
+    {
+        if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
     }
     public void FacingUpdate(int value)
     {

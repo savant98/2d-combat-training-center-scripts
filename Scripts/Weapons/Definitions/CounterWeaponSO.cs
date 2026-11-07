@@ -30,14 +30,14 @@ public class CounterWeaponSO : WeaponBaseSO
         if (health == null || counter == null)
             yield break;
 
-        health.IsInvincible = true;
+        counter.BeginInvulnerability(health);
 
         counter.StartCounter((hitPosition) =>
         {
             if (!IsStillAttackState(playerController))
             {
                 counter.EndCounter();
-                health.IsInvincible = false;
+                counter.EndInvulnerability();
                 return;
             }
 
@@ -52,7 +52,7 @@ public class CounterWeaponSO : WeaponBaseSO
             if (!IsStillAttackState(playerController))
             {
                 counter.EndCounter();
-                health.IsInvincible = false;
+                counter.EndInvulnerability();
                 yield break;
             }
 
@@ -69,7 +69,7 @@ public class CounterWeaponSO : WeaponBaseSO
                 if (!IsStillAttackState(playerController))
                 {
                     counter.EndCounter();
-                    health.IsInvincible = false;
+                    counter.EndInvulnerability();
                     yield break;
                 }
 
@@ -86,7 +86,7 @@ public class CounterWeaponSO : WeaponBaseSO
                 if (!IsStillAttackState(playerController))
                 {
                     counter.EndCounter();
-                    health.IsInvincible = false;
+                    counter.EndInvulnerability();
                     yield break;
                 }
 
@@ -95,7 +95,7 @@ public class CounterWeaponSO : WeaponBaseSO
         }
 
         counter.EndCounter();
-        health.IsInvincible = false;
+        counter.EndInvulnerability();
     }
 
     private bool IsStillAttackState(PlayerController playerController)

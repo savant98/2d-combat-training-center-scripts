@@ -23,6 +23,8 @@ public class RoomTransitionManager : MonoBehaviour
         if (isTransitioning)
             return;
 
+        var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+        if (player != null && player.AbilityManager.Grab != null) player.AbilityManager.Grab.Abort();
         StartCoroutine(TransitionRoutine(request));
     }
 

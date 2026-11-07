@@ -9,7 +9,8 @@ public enum PlayerState
     Attack,
     Hit,
     Dead,
-    Interact
+    Interact,
+    Grabbed
 }
 
 public enum PlayerActionType

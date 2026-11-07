@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections;
 using System;
+using System.Collections.Generic;
 
 public class EnemyHealth : HealthBase
 {
@@ -18,6 +19,31 @@ public class EnemyHealth : HealthBase
     public bool IsBossEnemy { get; set; }
     public float MinimumHealth => minimumHealth;
 
+    private readonly Dictionary<int,UnityEngine.Object> invulnerabilityOwners = new Dictionary<int,UnityEngine.Object>();
+    private readonly List<int> expiredInvulnerability = new List<int>();
+    private int nextInvulnerability;
+    public bool IsDamageBlocked
+    {
+        get
+        {
+            expiredInvulnerability.Clear();
+            foreach(var pair in invulnerabilityOwners)
+                if(pair.Value == null || (pair.Value is Behaviour behaviour && !behaviour.isActiveAndEnabled)) expiredInvulnerability.Add(pair.Key);
+            foreach(int id in expiredInvulnerability) invulnerabilityOwners.Remove(id);
+            return IsInvincible || invulnerabilityOwners.Count>0;
+        }
+    }
+    /// <summary>호출한 공격의 임시 무적만 반환하며 기존 무적 상태는 보존한다.</summary>
+    public IDisposable AcquireInvulnerability(UnityEngine.Object owner)
+    {
+        int id=++nextInvulnerability; invulnerabilityOwners[id]=owner; return new InvulnerabilityLease(this,id);
+    }
+    private sealed class InvulnerabilityLease : IDisposable
+    {
+        private EnemyHealth health; private readonly int id;
+        public InvulnerabilityLease(EnemyHealth health,int id) { this.health=health; this.id=id; }
+        public void Dispose() { if(health!=null) health.invulnerabilityOwners.Remove(id); health=null; }
+    }
     private float minimumHealth;
     private Coroutine coroutine;
     protected override void Awake()
@@ -36,7 +62,7 @@ public class EnemyHealth : HealthBase
     private void OnDisable()
     {
         // 풀에서 다시 사용될 때 일반 전투로 보호 상태가 이어지지 않게 한다.
-        minimumHealth = 0f;
+        minimumHealth = 0f; invulnerabilityOwners.Clear();
     }
     protected override void Die()
     {
@@ -45,6 +71,7 @@ public class EnemyHealth : HealthBase
     }
     public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
+        if(IsDamageBlocked) return;
         if (minimumHealth > 0f)
         {
             // Die 호출 전에 양의 피해만 남은 허용량으로 제한한다. 음수 피해는 기존 동작을 유지한다.

@@ -4,6 +4,7 @@ public class ReadOnlyAttribute : PropertyAttribute { }
 public class AbilityManager : MonoBehaviour
 {
     public PlayerStateMachine StateMachine { get; private set; }
+    public PlayerGrabController Grab { get; private set; }
     private PlayerAbility[] abilities;
     [SerializeField, ReadOnly]
     private PlayerState debugState;
@@ -34,9 +35,12 @@ public class AbilityManager : MonoBehaviour
         hitAbility = GetComponent<HitAbility>();
         dashAbility = GetComponent<DashAbility>();
         interactAbility = GetComponent<InteractAbility>();
+        Grab = GetComponent<PlayerGrabController>();
+        if (Grab == null) Grab = gameObject.AddComponent<PlayerGrabController>();
     }
     public void InterruptAllAbilities()
     {
+        if (Grab != null) Grab.Abort();
         foreach (var ability in abilities)
         {
             ability.Interrupt();
@@ -51,6 +55,10 @@ public class AbilityManager : MonoBehaviour
     }
     private void Update()
     {
+        if (Grab != null && Grab.IsActive)
+        {
+            StateMachine.SetState(PlayerState.Grabbed); debugState = PlayerState.Grabbed; return;
+        }
         // Ability 로직 실행
         foreach (var ability in abilities)
         {
@@ -70,6 +78,7 @@ public class AbilityManager : MonoBehaviour
     }
     private void UpdateState()
     {
+        if (Grab != null && Grab.IsActive) { StateMachine.SetState(PlayerState.Grabbed); return; }
         // 최우선: Interact
         if (interactAbility != null && interactAbility.IsActive)
         {
