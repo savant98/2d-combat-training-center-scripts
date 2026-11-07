@@ -51,6 +51,9 @@ public class TumblePatrolAbility : AiAbility
     public int StepsCompleted => stepsCompleted;
     public bool IsResting => phase == Phase.Rest;
 
+    /// <summary>새 면이 완전히 넘어간 단계와 목표 중심 X를 알린다. 실제 모터 이동은 이 알림 이후 적용된다.</summary>
+    public event System.Action<float> OnFaceLanded;
+
     // 바닥에 놓여 쉬는 동안에만 다른 패턴으로 넘어간다. 넘어가는 도중에 멈춰 기울어진 채 점프하지 않는다.
     public override bool CanYieldToPattern =>
         State == AbilityState.Execute && phase == Phase.Rest && stepsCompleted >= patrolData.minStepsBeforeYield;
@@ -195,6 +198,7 @@ public class TumblePatrolAbility : AiAbility
                     return false;
                 angle = 90f;
                 angularSpeed = 0f;
+                OnFaceLanded?.Invoke(stepStartX + stepDirection * patrolData.tumbleSize);
                 if (patrolData.landingBounceAngle <= 0f)
                     return true;
                 phase = Phase.Bounce;
