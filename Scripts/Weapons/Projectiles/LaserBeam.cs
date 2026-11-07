@@ -7,6 +7,9 @@ public class LaserBeam : WorldEntityBase
 {
     public Action<CharacterController2D, Vector2> OnHitEnemy;
 
+    // 자동 반환 뒤 같은 풀 개체가 재대여됐는지 효과를 추적하는 쪽에서 구분한다.
+    public uint SpawnVersion { get; private set; }
+
     // 적 쪽 레이저가 플레이어에게 피해를 주는 동안(TakeDamage 호출 중)에만 그 레이저를 가리킨다.
     // PlayerHealth.OnDamaged를 받는 쪽이 피해의 출처를 구분할 때 쓴다(훈련 코스 레이저에 맞을 때만 처음부터 다시 시작).
     public static LaserBeam PlayerHitSource { get; private set; }
@@ -74,6 +77,7 @@ public class LaserBeam : WorldEntityBase
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
+        SpawnVersion++;
         ResetBeamState();
 
         OnHitEnemy = null;
