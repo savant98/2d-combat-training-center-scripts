@@ -16,6 +16,9 @@ public class PlayerHealth : HealthBase
     private Material hitMaterial;
     private Coroutine coroutine;
     private Color initialColor;
+    // 회복 순간 본체가 빛나는 색과 원래 발광색으로 돌아오는 시간
+    private static readonly Color HealFlashColor = new Color(0.25f, 1f, 0.45f) * 3.4f;
+    private const float HealFlashTime = 0.45f;
     protected override void Awake()
     {
         base.Awake();
@@ -61,6 +64,14 @@ public class PlayerHealth : HealthBase
             coroutine = StartCoroutine(HitSpriteFeedback());
         }
     }
+    // 회복 순간 본체 톱니가 초록빛으로 번쩍였다가 원래 발광색으로 돌아온다. 피격 번쩍임과 같은 경로라 서로 끊어 준다.
+    public override void Heal(WeaponBaseSO.DamageInfo damageInfo)
+    {
+        base.Heal(damageInfo);
+        if (hitSprite == null) return;
+        if (coroutine != null) StopCoroutine(coroutine);
+        coroutine = StartCoroutine(HealSpriteFeedback());
+    }
     private bool TryCounter(Vector3 hitPosition)
     {
         if (!TryGetComponent<PlayerCounterState>(out var counter))
@@ -77,6 +88,18 @@ public class PlayerHealth : HealthBase
         {
             hitMaterial.SetColor("_EmissionColor", Color.red * intensityValue);
             intensityValue -= Time.deltaTime * 5f;
+            yield return null;
+        }
+
+        hitMaterial.SetColor("_EmissionColor", initialColor);
+    }
+    private IEnumerator HealSpriteFeedback()
+    {
+        float elapsed = 0f;
+        while (elapsed < HealFlashTime)
+        {
+            hitMaterial.SetColor("_EmissionColor", Color.Lerp(HealFlashColor, initialColor, elapsed / HealFlashTime));
+            elapsed += Time.deltaTime;
             yield return null;
         }
 
@@ -99,6 +122,7 @@ public class PlayerHealth : HealthBase
     private void CompleteDeath()
     {
         IsInvincible = true;
+        if (coroutine != null) StopCoroutine(coroutine);
         Debug.Log("Player Dead");
         // 플레이어 사망 연출, 리스폰 등
         hitMaterial.SetColor("_EmissionColor", Color.red * 3f);
