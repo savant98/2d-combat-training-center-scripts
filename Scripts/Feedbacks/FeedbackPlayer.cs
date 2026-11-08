@@ -232,6 +232,27 @@ public class FeedbackPlayer : MonoBehaviour
             StartCoroutine(PlayPostProcessing(data.postFX));
         }
     }
+    // 끝나는 시점을 호출한 쪽이 정하는 지속 흔들림(레이저처럼 쏘는 동안 이어져야 하고 취소되면 함께 멈춰야 하는 경우).
+    // 돌려받은 값을 EndHeldShake에 넘기면 그 순간부터 잦아든다. 시작한 쪽은 어떤 경로로 끝나든 반드시 EndHeldShake를 불러야 한다.
+    public CinemachineImpulseManager.ImpulseEvent BeginHeldShake(float intensity, Vector3 position)
+    {
+        if (continuousImpulsePrefab == null || intensity <= 0f)
+            return null;
+
+        CinemachineImpulseSource source = GetImpulse(true);
+        CinemachineImpulseDefinition definition = source.ImpulseDefinition;
+        bool holdForever = definition.TimeEnvelope.HoldForever;
+        definition.TimeEnvelope.HoldForever = true;
+        CinemachineImpulseManager.ImpulseEvent impulse = definition.CreateAndReturnEvent(position, source.DefaultVelocity * intensity);
+        definition.TimeEnvelope.HoldForever = holdForever;
+        return impulse;
+    }
+
+    public void EndHeldShake(CinemachineImpulseManager.ImpulseEvent impulse)
+    {
+        impulse?.Cancel(CinemachineImpulseManager.Instance.CurrentTime, false);
+    }
+
     private void RequestShake(float intensity, Vector3 pos, float duration)
     {
         float scaled = intensity * shakeCombineMultiplier;

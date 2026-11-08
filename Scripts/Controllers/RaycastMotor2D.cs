@@ -51,6 +51,12 @@ public class RaycastMotor2D : MonoBehaviour
         return Physics2D.Raycast(origin, direction, distance, collisionLayer);
     }
 
+    // 이동 충돌 레이어와 다른 지형만 막는 공격(Player 레이저는 통과 발판을 지나간다)이 쓰는 벽 찾기.
+    public RaycastHit2D RaycastEnvironment(Vector2 origin, Vector2 direction, float distance, LayerMask blockLayer)
+    {
+        return Physics2D.Raycast(origin, direction, distance, blockLayer);
+    }
+
     public float ClampHeightAboveFloor(Vector2 referencePosition, float maxDistance)
     {
         var floor = RaycastEnvironment(referencePosition + Vector2.up * 0.1f, Vector2.down, maxDistance);

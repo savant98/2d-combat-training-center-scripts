@@ -37,6 +37,9 @@ public abstract class WeaponBaseSO : ScriptableObject
     public Action<CharacterController2D, Vector2> OnHitEnemy;
     public abstract IEnumerator WeaponUseSequence(CharacterController2D controller, Action forceRecover = null);
 
+    // 준비 단계가 시작될 때 불린다. 실행 코루틴이 시작되기 전에 보여 줄 것(예: 예고선)이 있는 무기가 재정의한다.
+    public virtual void OnWindupStarted(CharacterController2D controller) { }
+
     [Serializable]
     public struct DamageInfo
     {

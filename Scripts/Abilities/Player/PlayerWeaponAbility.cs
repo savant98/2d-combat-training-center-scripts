@@ -851,6 +851,7 @@ public class PlayerWeaponAbility : PlayerAbility
         {
             controller.ApplyWeaponAnimation(selectedWeapon.animationSet, selectedWeapon.weaponAnim);
             timer = selectedWeapon.windupTime; 
+            selectedWeapon.OnWindupStarted(controller);
         }
 
         feedbackPlayer.Play(selectedWeapon.windupFeedback, transform);

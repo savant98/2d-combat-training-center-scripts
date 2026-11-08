@@ -1,12 +1,9 @@
-using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
 public class LaserBeam : WorldEntityBase
 {
-    public Action<CharacterController2D, Vector2> OnHitEnemy;
-
     // 자동 반환 뒤 같은 풀 개체가 재대여됐는지 효과를 추적하는 쪽에서 구분한다.
     public uint SpawnVersion { get; private set; }
 
@@ -79,8 +76,6 @@ public class LaserBeam : WorldEntityBase
         base.OnSpawnedFromPool();
         SpawnVersion++;
         ResetBeamState();
-
-        OnHitEnemy = null;
     }
 
     public override void ForceReturnToPool()
@@ -250,17 +245,7 @@ public class LaserBeam : WorldEntityBase
 
             Vector2 hitPoint = hits[i].point;
 
-            if (ownerFaction == Faction.Player && health is EnemyHealth enemy)
-            {
-                if (enemy.enemyShieldSystem == null)
-                    enemy.TakeDamage(damageInfo, hitPoint);
-                else
-                    enemy.enemyShieldSystem.TakeDamage(damageInfo, hitPoint);
-
-                OnHitEnemy?.Invoke(owner, hitPoint);
-                PlayHitFeedback(hitPoint);
-            }
-            else if (ownerFaction == Faction.Enemy && health is PlayerHealth player)
+            if (ownerFaction == Faction.Enemy && health is PlayerHealth player)
             {
                 PlayerHitSource = this;
                 try
