@@ -5,6 +5,15 @@ using System.Collections.Generic;
 
 public class EnemyHealth : HealthBase
 {
+    [Header("체력 SO")]
+    [SerializeField] private EnemyHealthDataSO healthData;
+    public EnemyHealthDataSO HealthData => healthData;
+
+    private void ApplyHealthData()
+    {
+        if (healthData != null) maxHP = Mathf.Max(1f, healthData.maxHP);
+    }
+
     [Header("Ai Brain")]
     [SerializeField] private AiBrain brain;
 
@@ -48,6 +57,7 @@ public class EnemyHealth : HealthBase
     private Coroutine coroutine;
     protected override void Awake()
     {
+        ApplyHealthData();
         base.Awake();
         if (enemyShieldSystem != null)
             enemyShieldSystem.SetShieldSystem(this, enemyUI, brain);
@@ -96,6 +106,7 @@ public class EnemyHealth : HealthBase
     }
     public override void ResetHealth()
     {
+        ApplyHealthData();
         base.ResetHealth();
 
         foreach (var sprite in hitSprites)

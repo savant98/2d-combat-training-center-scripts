@@ -7,6 +7,9 @@ public abstract class AiPatternRuleSO : ScriptableObject
     [SerializeField] private bool isEnabled = true;
     public bool IsEnabled => isEnabled;
 
+    /// <summary>후보 평가 전 필요한 준비 패턴의 사용 가능 여부를 부작용 없이 검사한다.</summary>
+    public virtual bool IsCandidateAvailable(AiPatternContext context, AiAbility candidate) => true;
+
     /// <summary>
     /// candidate를 이 룰이 처리할 대상인지 먼저 판단.
     /// 관련 없으면 그대로 false 반환.

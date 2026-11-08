@@ -25,7 +25,7 @@ public class TrainingDummyHealth : EnemyHealth
 
     protected override void Awake()
     {
-        maxHP = TrainingHealth;
+        if (HealthData == null) maxHP = TrainingHealth;
         base.Awake();
         controller = GetComponentInParent<EnemyController>(true);
         CaptureSpawnPose();
@@ -81,7 +81,7 @@ public class TrainingDummyHealth : EnemyHealth
 
     public override void ResetHealth()
     {
-        maxHP = TrainingHealth;
+        if (HealthData == null) maxHP = TrainingHealth;
         base.ResetHealth();
     }
 

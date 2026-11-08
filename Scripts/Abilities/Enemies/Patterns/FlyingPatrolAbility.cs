@@ -42,7 +42,7 @@ public class FlyingPatrolAbility : FlyingAbility
     // 유지 시간이 지났고 대상이 있으며, 무리의 동시 추적 수에 여유가 있고 다음 패턴이 시작할 수 있을 때 끝난다.
     protected override bool CanFinishExecute(float elapsed)
     {
-        if (nextAbility == null || !HasTarget || elapsed < holdDuration)
+        if (nextAbility == null || !nextAbility.IsReady() || !HasTarget || elapsed < holdDuration)
             return false;
 
         EnemyFlock flock = Flock;

@@ -20,6 +20,33 @@ public class AiPatternDirector : MonoBehaviour
         context.Initialize(brain, controller, playerTr);
     }
 
+    public void ResetForSpawn() => Initialize(brain, controller);
+
+    private bool RefreshContext()
+    {
+        if (!enableDirector || profile == null || context == null) return false;
+        RefreshPlayerTransform();
+        context.SetPlayerTransform(playerTr);
+        return true;
+    }
+
+    public bool IsCandidateAvailable(AiAbility ability)
+        => !RefreshContext() || profile.IsCandidateAvailable(context, ability);
+
+    public float EvaluateScore(AiAbility ability)
+        => RefreshContext() ? profile.EvaluateScore(context, ability) : ability.CurrentWeight;
+
+    public AiAbility GetAbsoluteAbility(out bool ignoreCooldown)
+    {
+        ignoreCooldown = false;
+        return RefreshContext() ? profile.GetAbsoluteAbility(context, out ignoreCooldown) : null;
+    }
+
+    public void NotifyAbilityStarted(AiAbility ability)
+    {
+        if (RefreshContext()) profile.NotifyAbilityStarted(context, ability);
+    }
+
     public AiAbility ResolveNextAbility(AiAbility candidate)
     {
         if (!enableDirector)

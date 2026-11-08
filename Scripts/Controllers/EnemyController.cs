@@ -149,6 +149,7 @@ public class EnemyController : CharacterController2D
             animator.Update(0f);
         }
         EnterFreeze();
+        brain.ResetForSpawn();
 
         enemyHealth.ResetHealth();
         if (shieldSystem != null)

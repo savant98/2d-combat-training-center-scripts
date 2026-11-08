@@ -1,9 +1,14 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 [Serializable]
 public class AiPatternContext
 {
+    private readonly HashSet<AiPatternScoreRuleSO> consumedRules = new HashSet<AiPatternScoreRuleSO>();
+    public bool IsConsumed(AiPatternScoreRuleSO rule) => consumedRules.Contains(rule);
+    public void Consume(AiPatternScoreRuleSO rule) => consumedRules.Add(rule);
+
     public AiBrain Brain { get; private set; }
     public EnemyController Controller { get; private set; }
     public Transform PlayerTransform { get; private set; }

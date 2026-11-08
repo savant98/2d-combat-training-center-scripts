@@ -10,7 +10,10 @@ public abstract class AiAbility : MonoBehaviour
 
     [Header("Pattern")]
     [SerializeField] private bool allowRandomSelection = true;
+    // 기존 Prefab 직렬화 이름은 유지하며 이제 일반 가중치 선택의 참가 여부를 뜻한다.
     public bool AllowRandomSelection => allowRandomSelection;
+    public bool AllowWeightedSelection => allowRandomSelection;
+    public EnemyAbilityDataSO Data => data;
     public string AbilityKey => data != null ? data.abilityKey : string.Empty;
 
     [Header("EnemyAbilityData")]
@@ -22,7 +25,15 @@ public abstract class AiAbility : MonoBehaviour
     [SerializeField] protected Transform recoverPoint;
 
     private int abilityAnimHash;
-    private float lastUseTime = -999f;
+    // 기존 검증 도구의 필드 연결을 보존한다. 값은 이제 마지막 종료 시각이다.
+    private float lastUseTime = float.NegativeInfinity;
+    private float storedWeight;
+    private float weightTimestamp;
+    public long LastSelectionOrder { get; private set; }
+    public float CurrentWeight => storedWeight + (data != null && !IsRunning
+        ? Mathf.Max(0f, data.weightRecoveryPerSecond) * Mathf.Max(0f, Time.time - weightTimestamp) : 0f);
+    public float CooldownRemaining => data == null ? 0f
+        : Mathf.Max(0f, lastUseTime + Mathf.Max(0f, data.cooldown) - Time.time);
     private float stateStartTime;
 
     public AbilityState State { get; private set; } = AbilityState.None;
@@ -40,8 +51,9 @@ public abstract class AiAbility : MonoBehaviour
         animator = controller.animator;
 
         abilityAnimHash = Animator.StringToHash("Attack0");
+        ResetForSpawn();
 
-        if (data.forceRecoverOnLand)
+        if (data != null && data.forceRecoverOnLand)
         {
             controller.OnLanded += ForceRecover;
         } 
@@ -49,13 +61,17 @@ public abstract class AiAbility : MonoBehaviour
 
     public bool IsReady()
     {
-        return Time.time >= lastUseTime + data.cooldown;
+        return isActiveAndEnabled && data != null && !IsRunning && CooldownRemaining <= 0f;
     }
 
     public void StartAbility()
     {
+        if (IsRunning || data == null || !isActiveAndEnabled)
+            return;
+        storedWeight = CurrentWeight;
+        weightTimestamp = Time.time;
+        brain.NotifyAbilityStarted(this);
         controller.ApplyAttackAnimation(data.animationSet);
-        lastUseTime = Time.time;
         ChangeState(AbilityState.Windup);
     }
     public void ForceRecover()
@@ -78,19 +94,19 @@ public abstract class AiAbility : MonoBehaviour
         {
             case AbilityState.Windup:
                 OnWindup(elapsed);
-                if (CanFinishWindup(elapsed))
+                if (State == AbilityState.Windup && CanFinishWindup(elapsed))
                     ChangeState(AbilityState.Execute);
                 break;
 
             case AbilityState.Execute:
                 OnExecute(elapsed);
-                if (CanFinishExecute(elapsed))
+                if (State == AbilityState.Execute && CanFinishExecute(elapsed))
                     ChangeState(AbilityState.Recover);
                 break;
 
             case AbilityState.Recover:
                 OnRecover(elapsed);
-                if (CanFinishRecover(elapsed))
+                if (State == AbilityState.Recover && CanFinishRecover(elapsed))
                     StopAbility();
                 break;
         }
@@ -98,10 +114,27 @@ public abstract class AiAbility : MonoBehaviour
 
     public void StopAbility()
     {
+        if (!IsRunning)
+            return;
+        // OnStop에서 후속 패턴을 예약해도 이번 실행의 종료는 한 번만 기록한다.
+        storedWeight += data.weightChangeOnUse;
+        lastUseTime = Time.time;
+        weightTimestamp = Time.time;
         State = AbilityState.None;
-        animator.SetInteger(abilityAnimHash, 0);
+        if (animator != null) animator.SetInteger(abilityAnimHash, 0);
         OnStop();
     }
+    public void ResetForSpawn()
+    {
+        State = AbilityState.None;
+        lastUseTime = float.NegativeInfinity;
+        storedWeight = data != null ? data.baseWeight : 0f;
+        weightTimestamp = Time.time;
+        LastSelectionOrder = 0;
+    }
+
+    internal void RecordSelection(long order) => LastSelectionOrder = order;
+
     private void ChangeState(AbilityState newState)
     {
         State = newState;

@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.3.28f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **298개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **302개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -85,11 +85,13 @@ Lobby의 손목 단말기 UI 시안은 홈에서 저장된 수료 비율·Gold�
 
 ### 02. 선택 규칙과 패턴 실행을 분리한 전투 구조
 
-`AiBrain`은 실행할 후보를 선택하고 `AiPatternDirector`는 프로필·규칙을 적용합니다. `AiAbility`는 **Windup → Execute → Recover** 단계에서 실제 패턴을 실행합니다. 거리·상태에 따른 선택과 돌진·레이저 등의 동작을 나눠 읽을 수 있습니다.
+`AiBrain`은 준비된 패턴의 점수를 비교해 가장 높은 패턴을 고릅니다. 스폰 때 기본 점수로 시작하고, 사용을 마치면 점수를 증감해 반복 사용 빈도를 조절합니다. 동점이면 가장 오래 선택하지 않은 패턴이 먼저이며, 쿨타임은 **Recover까지 종료한 시점부터** 셉니다.
+
+`AiPatternDirector`는 `AiPatternProfileSO`의 조건별 점수 보정과 절대 우선순위를 적용합니다. 체력·거리·직전 행동으로 페이즈 전환 같은 예외를 지정하고, 스폰당 한 번 실행할 규칙을 개체별로 관리합니다. `AiAbility`는 **Windup → Execute → Recover** 단계에서 실제 패턴을 실행하며, 기존 거리·감지·순환 규칙도 최종 후보에 적용합니다. 각 패턴은 고유 키로 연결하며, Stomper의 일반 점프와 중앙 지뢰 준비 점프도 별도 SO로 조절합니다.
 
 플레이어도 `AbilityManager`와 `PlayerStateMachine.CanPerform`으로 행동 가능 여부를 확인하고, `PlayerWeaponAbility`와 `WeaponBaseSO`로 무기·공격 단계를 연결합니다.
 
-→ [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs)
+→ [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) · [AiPatternScoreRuleSO](Scripts/Abilities/Enemies/Selection/Rules/AiPatternScoreRuleSO.cs)
 
 Constructor의 동작과 설정은 [보스 패턴 상세 문서](https://capable-shade-0e8.notion.site/401f11a67c9c81c7b841cab7d9752dd4)에서 확인할 수 있습니다.
 
@@ -112,7 +114,7 @@ flowchart TD
     Abilities --> Weapon["PlayerWeaponAbility → WeaponBaseSO<br/>무기·공격 단계"]
     Abilities --> Velocity["PlayerController / EnemyController<br/>Velocity"]
 
-    Brain["AiBrain<br/>실행할 패턴 선택"] --> Director["AiPatternDirector<br/>프로필·규칙 적용"]
+    Brain["AiBrain<br/>최고 점수·예약 선택"] --> Director["AiPatternDirector<br/>점수 보정·절대 우선순위·전환 규칙"]
     Director --> AI["AiAbility<br/>준비 → 실행 → 회복"]
     Brain -->|실행 중 갱신| AI
     AI --> Velocity
@@ -130,7 +132,7 @@ flowchart TD
     Health -.-> Feedback
 ```
 
-플레이어는 입력 이벤트를 Ability에 전달하고, `AbilityManager`가 현재 행동을 정리합니다. 각 Ability는 `PlayerStateMachine.CanPerform`을 통해 행동 가능 여부를 확인합니다. 적은 `AiBrain`이 실행 가능한 후보를 선택하고, `AiPatternDirector`가 프로필과 규칙을 적용합니다. 강제 지정한 적 행동은 후보 선택 경로를 건너뜁니다. 순찰처럼 시간으로 끝나지 않는 패턴은 실행 중에 자리를 넘길 수 있다고 알리고, `AiBrain`은 매 프레임 같은 규칙으로 다음 패턴을 확인해 준비되면 바로 전환합니다.
+플레이어는 입력 이벤트를 Ability에 전달하고, `AbilityManager`가 현재 행동을 정리합니다. 각 Ability는 `PlayerStateMachine.CanPerform`을 통해 행동 가능 여부를 확인합니다. 적은 **절대 우선 규칙 → 예약 → 최고 점수 후보 → 기존 전환 규칙** 순서로 선택합니다. 예약은 쿨타임이 끝날 때까지 유지하며, 예외적인 우회는 명시적으로 지정합니다. 순찰처럼 실행 중 양보를 허용한 패턴은 절대 우선 규칙과 기존 전환 규칙을 확인해 준비된 패턴으로 바뀝니다. 일반 공격은 실행을 마친 뒤 다음 패턴을 선택합니다. 새 스폰에서 점수·쿨타임·규칙 기록을 초기화하고, 쉴드 Break 복귀에서는 유지합니다.
 
 플레이어와 적의 일반적인 속도 기반 이동은 `CharacterController2D`의 공통 경로를 사용합니다. `RaycastMotor2D`가 충돌을 계산한 이동량을 반환하면 컨트롤러가 위치와 충돌 상태를 반영합니다. 정사각형 적(Jumper)의 구르기 순찰도 같은 경로를 씁니다. 물리 단계마다 아래 모서리를 축으로 넘어간 각도에서 다음 중심 위치를 계산해 `Velocity`로 넘기고, 외형은 실제 이동 거리에서 각도를 거꾸로 구해 돌리므로 축 모서리가 바닥에서 미끄러지지 않습니다.
 
@@ -175,7 +177,8 @@ flowchart TD
 | 무기와 전투 | [PlayerWeaponAbility](Scripts/Abilities/Player/PlayerWeaponAbility.cs) · [WeaponBaseSO](Scripts/Weapons/Definitions/WeaponBaseSO.cs) · [Weapons](Scripts/Weapons/Definitions) | 무기 선택, 공격 단계, 콤보·카운터·투사체 |
 | 발사체 판정 | [ProjectileBase](Scripts/Weapons/Projectiles/ProjectileBase.cs) · [Projectiles](Scripts/Weapons/Projectiles) | 이동 경로 검사, 관통·반복 피해, 풀 반환 |
 | 소환·대기·유도 창(StarSpear) | [StarSpearWeaponSO](Scripts/Weapons/Definitions/StarSpearWeaponSO.cs) · [StarSpearVolley](Scripts/Weapons/Projectiles/StarSpearVolley.cs) · [StarSpear](Scripts/Weapons/Projectiles/StarSpear.cs) | 머리 위 발사점에 창 5개를 한 번에 소환해 Player를 남은 거리 비례로 살짝 늦게 따라가고, 주변에 적이 없으면 최대 5초 기다렸다가 소환 순서대로 조준·발사. 선회 속도를 제한한 초당 150칸 유도, 고정 단계마다 지나간 점을 궤적·연기·불꽃에 직접 기록, 적·벽에 닿으면 모터 범위 질의로 폭발 |
-| 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) | 행동 선택, 프로필·규칙, 단계별 패턴 실행, 실행 중 패턴의 자리 넘김 |
+| 적 행동 | [AiBrain](Scripts/Abilities/Enemies/Core/AiBrain.cs) · [AiPatternDirector](Scripts/Abilities/Enemies/Core/AiPatternDirector.cs) · [AiAbility](Scripts/Abilities/Enemies/Core/AiAbility.cs) · [AiPatternScoreRuleSO](Scripts/Abilities/Enemies/Selection/Rules/AiPatternScoreRuleSO.cs) | 최고 점수 선택, 사용 후 점수 증감·미사용 회복, 조건별 점수 보정·절대 우선순위, 종료 기준 쿨타임과 예약, 단계별 실행·양보 |
+| 적 밸런스 설정 | [EnemyBalanceWindow](Scripts/Editor/EnemyBalanceWindow.cs) · [EnemyBalanceVisuals](Scripts/Editor/EnemyBalanceVisuals.cs) · [EnemyHealthDataSO](Scripts/Health/Data/EnemyHealthDataSO.cs) · [EnemyShieldDataSO](Scripts/Health/Data/EnemyShieldDataSO.cs) · [EnemyAbilityDataSO](Scripts/Abilities/Enemies/Data/EnemyAbilityDataSO.cs) | 실제 Enemy 미리보기와 패턴 아이콘 카드에서 공통 AI 수치를 편집, 고유 설정은 연결된 SO의 Inspector에서 수정, 체력·쉴드 SO는 Enemy별 독립 관리 |
 | 순찰·돌진 적(Roller) | [GroundPatrolAbility](Scripts/Abilities/Enemies/Patterns/GroundPatrolAbility.cs) · [BurstChargeAbility](Scripts/Abilities/Enemies/Patterns/BurstChargeAbility.cs) · [PlayerDetectionSwapRuleSO](Scripts/Abilities/Enemies/Selection/Rules/PlayerDetectionSwapRuleSO.cs) · [EnemyRollVisual](Scripts/Abilities/Enemies/Support/EnemyRollVisual.cs) | 벽에 막히거나 발판 끝에 닿으면(모터의 진행 방향 발밑 질의) 돌아서는 바닥 순찰, 시야 안 플레이어 감지 시 순찰에서 돌진으로 전환, 공회전 준비 뒤 플레이어 대시 속도 비율로 돌진하고 남은 제동 거리까지 계산해 목표 거리에서 멈춤, 돌진 뒤 플레이어 쪽 순찰, 이동 거리에 맞춘 바퀴 회전 |
 | 구르기 순찰·점프 적(Jumper) | [TumblePatrolAbility](Scripts/Abilities/Enemies/Patterns/TumblePatrolAbility.cs) · [TumblePatrolDataSO](Scripts/Abilities/Enemies/Data/TumblePatrolDataSO.cs) · [EnemyTumbleVisual](Scripts/Abilities/Enemies/Support/EnemyTumbleVisual.cs) · [ParabolicDashAbility](Scripts/Abilities/Enemies/Patterns/ParabolicDashAbility.cs) · [AnimationFeedbackReceiver](Scripts/Animation/AnimationFeedbackReceiver.cs) | 정사각형이 아래 모서리를 축으로 한 면씩 넘어가는 순찰(들어 올린 뒤 모서리 축 중력 회전으로 떨어지고, 각도에서 계산한 위치로 이동해 축 모서리 고정), 한 칸이 남지 않은 벽 앞에서 기울었다 돌아섬, 시야 안 플레이어 감지 시 포물선 점프, 점프 뒤 플레이어 쪽 순찰, 준비 Clip 이벤트로 단계마다 달아오르는 색·불씨·차지 소리 |
 | 비행 적 최초 감지·군집 | [EnemyFlockMember](Scripts/Abilities/Enemies/Support/EnemyFlockMember.cs) · [EnemyFlock](Scripts/Abilities/Enemies/Support/EnemyFlock.cs) | Swarmer·Bomber·Drone·Sniper가 최초 범위 진입 때 교전을 시작하고 재생성 전까지 감지 상태 유지, 미감지 시 기존 순찰을 최초 공중 위치 기준으로 실행하며 공격 제외, 코스 군집별 감지 원점·대형 격리 |
@@ -183,7 +186,7 @@ flowchart TD
 | 쉴드 벽 순찰 적(Bulwark) | [TumblePatrolAbility](Scripts/Abilities/Enemies/Patterns/TumblePatrolAbility.cs) · [TumblePatrolDataSO](Scripts/Abilities/Enemies/Data/TumblePatrolDataSO.cs) · [EnemyTumbleVisual](Scripts/Abilities/Enemies/Support/EnemyTumbleVisual.cs) · [BulwarkLandingFeedback](Scripts/Abilities/Enemies/Support/BulwarkLandingFeedback.cs) | 상하·좌우·90도 회전 대칭인 사각 벽체가 기존 모터로 한 면씩 굴러가는 순찰 전용 적. 면 회전 약1.84초 뒤1.5초 대기, HP250·쉴드300. 면 접촉 알림 뒤 모터의 실제 도착 위치와 접지를 확인해 저음 착지음·카메라 진동·먼지를 한 번만 재생하며, 벽 회귀·반동·정지·Pool 재사용에서 중복을 방지 |
 | 비행 포격 적(Drone) | [FlyingShootAbility](Scripts/Abilities/Enemies/Patterns/FlyingShootAbility.cs) · [FlyingShootDataSO](Scripts/Abilities/Enemies/Data/FlyingShootDataSO.cs) · [FlyingPatrolAbility](Scripts/Abilities/Enemies/Patterns/FlyingPatrolAbility.cs) · [DroneEnemyBullet](Scripts/Weapons/Projectiles/DroneEnemyBullet.cs) · [EnemyFlightSound](Scripts/Abilities/Enemies/Support/EnemyFlightSound.cs) | 군집의 좌우 전환·고리 대형·분리로 거리를 유지하다가 공중에 멈춰 쏘는 순환(사격 사이에 반드시 거리 유지), 사거리·사격 각도·사격선(RaycastMotor2D)을 확인한 뒤 같은 사격 각도로 탄 방향을 제한, 외부 힘으로 주는 반동, Swarmer보다 낮은 비행 반복음 |
 | 군집 비행 폭격 적(Bomber) | [FlyingBombDropAbility](Scripts/Abilities/Enemies/Patterns/FlyingBombDropAbility.cs) · [FlyingPatrolAbility](Scripts/Abilities/Enemies/Patterns/FlyingPatrolAbility.cs) · [BomberFallingBomb](Scripts/Weapons/Projectiles/BomberFallingBomb.cs) | 최초 감지 후 군집 순찰 중 플레이어와 수직 정렬되면 급감속하여 폭탄 투하, 재장착 중 비행 재개, 기존 모터로 낙하·지형 충돌·폭발 판정 |
-| 군집 비행 저격 적(Sniper) | [SniperPatrolAbility](Scripts/Abilities/Enemies/Patterns/SniperPatrolAbility.cs) · [SniperLaserAbility](Scripts/Abilities/Enemies/Patterns/SniperLaserAbility.cs) · [SniperPatrolDataSO](Scripts/Abilities/Enemies/Data/SniperPatrolDataSO.cs) · [SniperLaserDataSO](Scripts/Abilities/Enemies/Data/SniperLaserDataSO.cs) · [LaserBeam](Scripts/Weapons/Projectiles/LaserBeam.cs) | 최초 감지 이후 플레이어 옆·위의 편별 고리 대형과 분리로 비행 순찰, 좌우 전환과 재장전 완료 뒤 반대편 Teleport, 거리와 무관하게 플레이어 주변 월드 좌표를 정속 추적하는 4초 조준, Admin 예고선·발사 직전 Flash와 LaserRain의 확장·수축을 재사용하는 0.25초 단발 레이저, 10초 공격 시작 간격과 풀 대여 세대 확인으로 재사용 간섭 방지 |
+| 군집 비행 저격 적(Sniper) | [SniperPatrolAbility](Scripts/Abilities/Enemies/Patterns/SniperPatrolAbility.cs) · [SniperLaserAbility](Scripts/Abilities/Enemies/Patterns/SniperLaserAbility.cs) · [SniperPatrolDataSO](Scripts/Abilities/Enemies/Data/SniperPatrolDataSO.cs) · [SniperLaserDataSO](Scripts/Abilities/Enemies/Data/SniperLaserDataSO.cs) · [LaserBeam](Scripts/Weapons/Projectiles/LaserBeam.cs) | 최초 감지 이후 플레이어 옆·위의 편별 고리 대형과 분리로 비행 순찰, 좌우 전환과 재장전 완료 뒤 반대편 Teleport, 거리와 무관하게 플레이어 주변 월드 좌표를 정속 추적하는 4초 조준, Admin 예고선·발사 직전 Flash와 LaserRain의 확장·수축을 재사용하는 0.25초 단발 레이저, 공격 종료 후 10초 쿨타임과 풀 대여 세대 확인으로 재사용 간섭 방지 |
 | 추적 내려찍기·중앙 지뢰 살포(Stomper) | [TrackingSlamAbility](Scripts/Abilities/Enemies/Patterns/TrackingSlamAbility.cs) · [TrackingSlamDataSO](Scripts/Abilities/Enemies/Data/TrackingSlamDataSO.cs) · [StomperMinePreparationRuleSO](Scripts/Abilities/Enemies/Selection/Rules/StomperMinePreparationRuleSO.cs) · [ParabolicDashAbility](Scripts/Abilities/Enemies/Patterns/ParabolicDashAbility.cs) · [MineScatterAbility](Scripts/Abilities/Enemies/Patterns/MineScatterAbility.cs) | 정지 충전 후 상승·1.5초 가속 추적·수직 내려찍기를 3회 반복하고 예고선·착지 충격파를 연결, 지뢰 살포 전에는 기존 해머·잔상을 쓰는 ParabolicDash로 방 중앙에 이동, 설치·비행 중인 지뢰 위치를 피한 착지점으로 좌우 균등 살포 |
 | 잡기·회전 내려찍기와 공통 포박 | [StomperWrestlingGrabAbility](Scripts/Abilities/Enemies/Patterns/StomperWrestlingGrabAbility.cs) · [PlayerGrabController](Scripts/Abilities/Player/PlayerGrabController.cs) · [PlayerGrabVisual](Scripts/Abilities/Player/PlayerGrabVisual.cs) · [CinematicLetterbox](Scripts/UI/Effects/CinematicLetterbox.cs) · [GrabCinematicPresentation](Scripts/UI/Effects/GrabCinematicPresentation.cs) · [GrabCinematicOrbitView](Scripts/UI/Effects/GrabCinematicOrbitView.cs) · [GrabCinematicBackdropView](Scripts/UI/Effects/GrabCinematicBackdropView.cs) · [GrabCinematicThrusterView](Scripts/UI/Effects/GrabCinematicThrusterView.cs) · [StomperGrabLandingPlan](Scripts/Abilities/Enemies/Support/StomperGrabLandingPlan.cs) · [GrabGameplayCameraView](Scripts/UI/Effects/GrabGameplayCameraView.cs) | 반경9 고정 포획팔·즉시 손끝 정렬·보스 이동을 따르는 코어 중심 원형 Trail, Cinemachine 블렌드로 Player→보스 확대와 최고점까지 회전 줌아웃 연결, 로켓 분사 때 하단 절반에서 화면 중단 위까지 상승·유지 후 회전 구도로 연결, 하강 시작의 화면 중앙부터 흑백 직전의 상단 절반까지 연속 보간, 빠른 하강 배경 유지→충돌0.3초 전 흑백 실루엣·집중선0.15초→원래 화면 즉시 복귀→중앙 충돌, 화면 하한·중앙 구도 유지 뒤 Player 추적 복구, 공용 불꽃·분사기 분리·반동·폭발과 소유권 기반 보호 |
 | 사각형 보스 표현(Stomper) | [StomperCoreCrossVisual](Scripts/Abilities/Enemies/Support/StomperCoreCrossVisual.cs) · [StomperCoreLink](Scripts/Abilities/Enemies/Support/StomperCoreLink.cs) · [StomperHammerVisual](Scripts/Abilities/Enemies/Support/StomperHammerVisual.cs) · [StomperHammerAfterimage](Scripts/Abilities/Enemies/Support/StomperHammerAfterimage.cs) · [StomperMineVisual](Scripts/Abilities/Enemies/Support/StomperMineVisual.cs) | 본체와 함께 움직이고 회전하는 X자 장식(ForwardDash의 선행 코어만 예외), 코어 예고선·고정 축 해머·타격 잔상, 전용 Override Clip으로 펼쳐지는 구형 기계 지뢰, StomperMineVisual의 Trail·경고 무늬 동기화 |
