@@ -35,6 +35,8 @@ public sealed class PlayerGrabController : MonoBehaviour
         if (IsActive || !player.isActiveAndEnabled || !player.CanReceiveInput || attacker == null || settings == null || settings.presentationPrefab == null || settings.restrainedLoop == null || settings.wireMaterial == null
             || settings.letterboxPrefab == null || player.Health.currentHP <= 0
             || (RoomTransitionManager.Instance != null && RoomTransitionManager.Instance.IsTransitioning)) return false;
+        // 반격 창이 열려 있으면 잡기도 다른 공격처럼 반격으로 받아낸다. 잡기는 실패하고 공격자는 빗나간 경로로 간다.
+        if (player.PlayerCounterState != null && player.PlayerCounterState.TryCounter(AttackerPosition(attacker))) return false;
         player.AbilityManager.InterruptAllAbilities();
         // 이전 공격의 자식 표시 키를 중립으로 돌린 뒤 타격 Collider를 정리한다.
         if (player.animator.enabled) { player.animator.Rebind(); player.animator.Update(0); }
@@ -54,6 +56,12 @@ public sealed class PlayerGrabController : MonoBehaviour
         Presentation.Acquire(attacker);
         letterbox = CinematicLetterbox.Acquire(settings.letterboxPrefab, attacker);
         return true;
+    }
+    private Vector3 AttackerPosition(Object attacker)
+    {
+        if (attacker is Component component) return component.transform.position;
+        if (attacker is GameObject go) return go.transform.position;
+        return player.transform.position;
     }
     public bool IsOwnedBy(Object attacker, uint session) => IsActive && attacker != null && owner != null && owner == attacker && version == session;
     public bool SetVelocity(Object attacker, uint session, Vector2 velocity)
