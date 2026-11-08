@@ -16,6 +16,8 @@ public sealed class CourseEnemySpawner : WorldEntityBase
     private float respawnDelay = 0.3f;
     [SerializeField, Min(0f), Tooltip("0보다 크면 플레이어가 이 거리(칸) 안에 들어올 때 꺼냅니다. 0이면 생성되자마자 꺼냅니다.")]
     private float activationDistance;
+    [SerializeField, Min(0f), Tooltip("군집 생성 지점 기준 감지 반경(칸)입니다. 0이면 적의 기본 감지 거리를 사용합니다.")]
+    private float groupDetectionDistance;
 
     private readonly List<EnemyController> spawned = new List<EnemyController>();
     private PlayerHealth subscribedHealth;
@@ -74,6 +76,9 @@ public sealed class CourseEnemySpawner : WorldEntityBase
         foreach (var offset in offsets)
         {
             var enemy = EnemyPool.Instance.Spawn(enemyPrefab, transform.position + (Vector3)offset);
+            if (enemy.TryGetComponent<EnemyFlockMember>(out var member))
+                member.ConfigureCourseGroup("Course:" + GetInstanceID(), transform.position,
+                    groupDetectionDistance > 0f ? groupDetectionDistance : member.DetectionDistance);
             enemy.Health.IsBossEnemy = false;
             enemy.SetWaveDeathHandler(() => HandleEnemyDeath(enemy));
             spawned.Add(enemy);

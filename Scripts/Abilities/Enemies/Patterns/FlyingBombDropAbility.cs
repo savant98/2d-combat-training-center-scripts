@@ -37,7 +37,7 @@ public class FlyingBombDropAbility : FlyingAbility
     protected override void OnExecuteStart()
     {
         animator.Play("Base Layer.Execute", 0, 0f);
-        if (Released || WorldEntityPool.Instance == null || dropData.bombPrefab == null) return;
+        if (!HasTarget || Released || WorldEntityPool.Instance == null || dropData.bombPrefab == null) return;
         LastReleasePosition = dropPoint != null ? dropPoint.position : transform.position + Vector3.down * .65f;
         LastBomb = WorldEntityPool.Instance.Spawn(dropData.bombPrefab, LastReleasePosition, Quaternion.identity);
         LastBomb.Initialize(controller, dropData.damageInfo, 0f, 0, dropData.bombCollideLayer);

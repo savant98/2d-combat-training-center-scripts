@@ -124,6 +124,7 @@ public sealed class TrainingCourseStage : MonoBehaviour
     private Vector3[] keptWorld = new Vector3[0];
     private bool relocated;
     private bool holdingPlayer;
+    private bool returnOnFinish;
 
     public string CourseKey => courseKey;
     public bool IsOpen { get; private set; }
@@ -182,9 +183,11 @@ public sealed class TrainingCourseStage : MonoBehaviour
         cached = true;
     }
 
-    public void Begin()
+    public void Begin(bool resetPlayerToStart = false, bool returnPlayerOnFinish = false)
     {
         Cache();
+        returnOnFinish = returnPlayerOnFinish;
+        if (resetPlayerToStart) ReturnPlayer();
         IsOpen = true;
         HandedOff = false;
         CurrentStep = FinishStep.None;
@@ -385,7 +388,14 @@ public sealed class TrainingCourseStage : MonoBehaviour
             if (vanishInterval > 0f) yield return new WaitForSeconds(vanishInterval);
         }
 
-        if (finishMode == FinishMode.FallToFloor)
+        if (returnOnFinish)
+        {
+            // 웨이브 정리에서 지형이 닫히기 전에 공중 체류와 외부 힘을 없앤다.
+            CurrentStep = FinishStep.ForcedReturn;
+            HoldPlayer(true);
+            ReturnPlayer();
+        }
+        else if (finishMode == FinishMode.FallToFloor)
         {
             CurrentStep = FinishStep.Falling;
             float limit = Time.time + landingTimeout;
@@ -450,8 +460,14 @@ public sealed class TrainingCourseStage : MonoBehaviour
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
         if (player == null || playerReturnPoint == null) return;
         Vector3 delta = playerReturnPoint.position - player.transform.position;
-        player.transform.position = playerReturnPoint.position;
-        player.Velocity = Vector2.zero;
+        if (player.AbilityManager != null)
+        {
+            player.AbilityManager.InterruptAllAbilities();
+            player.AbilityManager.JumpAbility.ClearPendingInput();
+            player.AbilityManager.DashAbility.ClearPendingInput();
+        }
+        player.ResetPlayerPosition(playerReturnPoint.position);
+        player.externalForce = Vector2.zero;
         // 카메라가 먼 거리를 끌려오지 않고 옮긴 위치로 바로 따라가게 한다.
         CinemachineCore.OnTargetObjectWarped(player.transform, delta);
         if (!string.IsNullOrEmpty(playerTransitionTriggerName) && player.animator != null)

@@ -58,18 +58,24 @@ public sealed class ChasingLaserWall : WorldEntityBase
     private float maxTravel = 84f;
     [SerializeField, Min(0f), Tooltip("줄지어 따라오는 레이저 사이 간격(칸)입니다. 0이면 앞장선 레이저 하나만 쫓아옵니다.")]
     private float trailSpacing = 2f;
+    [SerializeField, Min(0f), Tooltip("화면 밖에서 따라붙는 최대 속도(칸/초)입니다. 화면 경계까지의 이동량만 가속합니다.")]
+    private float catchUpSpeed = 80f;
+    [SerializeField, Min(0f), Tooltip("화면에 살짝 들어올 거리(칸)입니다. 여기부터 기본 추격 속도를 사용합니다.")]
+    private float visibleInset = .1f;
 
     private LaserBeam lead;
     private readonly List<LaserBeam> trail = new List<LaserBeam>();
     private PlayerHealth subscribedHealth;
     private float travel;
     private float timer;
+    private TrainingCourseStage[] courseStages;
     // 맞힌 다음 프레임에 처음부터 다시 기다린다. 같은 피해 알림을 받는 다른 쪽(위치 초기화·코스 적)이 출처를 확인하기 전에
     // 맞힌 레이저를 거두면 IsCourseLaserHit가 거짓이 되고, 피해 판정 도중에 그 레이저를 풀로 돌려보내게 되기 때문이다.
     private bool holdRequested;
 
     public Phase CurrentPhase { get; private set; }
     public float CurrentTravel => travel;
+    public float CurrentSpeed { get; private set; }
     public bool IsHolding => CurrentPhase == Phase.Holding;
     public bool IsHalted => CurrentPhase == Phase.Halted;
     public LaserBeam LeadLaser => lead != null && lead.gameObject.activeInHierarchy ? lead : null;
@@ -88,6 +94,8 @@ public sealed class ChasingLaserWall : WorldEntityBase
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
+        var room = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
+        courseStages = room != null ? room.GetComponentsInChildren<TrainingCourseStage>(true) : null;
         if (!ActiveWalls.Contains(this)) ActiveWalls.Add(this);
         Subscribe();
         Hold();
@@ -111,6 +119,7 @@ public sealed class ChasingLaserWall : WorldEntityBase
         holdRequested = false;
         ClearTrail();
         travel = 0f;
+        CurrentSpeed = 0f;
         StopLead();
         lead = Fire(leadLaserPrefab, OriginAt(0f));
         CurrentPhase = Phase.Holding;
@@ -133,7 +142,9 @@ public sealed class ChasingLaserWall : WorldEntityBase
                 break;
             case Phase.Chasing:
                 if (LeadLaser == null) return;
-                travel = Mathf.Min(maxTravel, travel + speed * Time.deltaTime);
+                float advance = ChaseAdvance(Time.deltaTime);
+                CurrentSpeed = Time.deltaTime > 0f ? advance / Time.deltaTime : 0f;
+                travel = Mathf.Min(maxTravel, travel + advance);
                 lead.SetOrigin(OriginAt(travel));
                 // 시작 위치에 다음 자리가 생기면 새 레이저가 나와 줄 끝에 붙는다.
                 while (trailSpacing > 0f && travel - (trail.Count + 1) * trailSpacing >= 0f)
@@ -147,6 +158,35 @@ public sealed class ChasingLaserWall : WorldEntityBase
                     if (trail[i] != null && trail[i].gameObject.activeInHierarchy) trail[i].SetOrigin(OriginAt(travel - (i + 1) * trailSpacing));
                 break;
         }
+    }
+
+    // 실제 출력 카메라의 뒤쪽 경계까지는 빠르게 따라붙되, 가속 이동이 화면 안으로 지나치지 않게 제한한다.
+    // 길을 보여 주는 연출 카메라가 플레이어를 벗어나 비출 때는 가속하지 않는다.
+    private float ChaseAdvance(float deltaTime)
+    {
+        float normal = speed * deltaTime;
+        Camera camera = Camera.main;
+        var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+        if (camera == null || player == null || !player.CanReceiveInput) return normal;
+        if (courseStages != null)
+            foreach (var stage in courseStages)
+                if (stage != null && stage.IsRevealing) return normal;
+        Vector3 viewport = camera.WorldToViewportPoint(player.transform.position);
+        if (viewport.z <= 0f || viewport.x < 0f || viewport.x > 1f || viewport.y < 0f || viewport.y > 1f) return normal;
+
+        Vector2 axis = TravelDirection;
+        float boundary = float.PositiveInfinity;
+        float depth = camera.WorldToViewportPoint(transform.position).z;
+        for (int i = 0; i < 4; i++)
+        {
+            Vector3 corner = camera.ViewportToWorldPoint(new Vector3(i % 2, i / 2, depth));
+            boundary = Mathf.Min(boundary, Vector2.Dot(corner, axis));
+        }
+        float wanted = boundary + visibleInset - Vector2.Dot(transform.position, axis);
+        float safeLimit = Vector2.Dot((Vector2)player.transform.position - (Vector2)transform.position, axis) - 1.5f;
+        wanted = Mathf.Min(wanted, safeLimit, maxTravel);
+        float catchUp = Mathf.Min(catchUpSpeed * deltaTime, Mathf.Max(0f, wanted - travel));
+        return Mathf.Max(normal, catchUp);
     }
 
     private LaserBeam Fire(LaserBeam prefab, Vector2 origin)

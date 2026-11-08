@@ -43,12 +43,13 @@ public sealed class GrabCinematicBackdropView
             textures[i].Create(); material.SetTexture(i == 0 ? "_FarTex" : i == 1 ? "_MidTex" : "_NearTex", textures[i]);
             if (group != null)
                 {
-                    foreach (var renderer in group.GetComponentsInChildren<Renderer>(true)) CopyRenderer(renderer, root, source.transform);
+                    // 시차 배경은 먼 아레나에서 그룹마다 이동한다. 각 그룹의 원점을 기준으로 구워 캡처 범위를 유지한다.
+                    foreach (var renderer in group.GetComponentsInChildren<Renderer>(true)) CopyRenderer(renderer, root, group);
                     foreach (var mask in group.GetComponentsInChildren<SpriteMask>(true))
                     {
                         if (!mask.enabled || !ActiveToRoot(mask.transform, source.transform)) continue;
                         var copy = new GameObject(mask.name).AddComponent<SpriteMask>(); copy.gameObject.layer = LayerMask.NameToLayer("UI");
-                        copy.transform.SetParent(root, false); copy.transform.localPosition = mask.transform.position - source.transform.position;
+                        copy.transform.SetParent(root, false); copy.transform.localPosition = mask.transform.position - group.position;
                         copy.transform.localRotation = mask.transform.rotation; copy.transform.localScale = mask.transform.lossyScale;
                         copy.sprite = mask.sprite; copy.alphaCutoff = mask.alphaCutoff; copy.isCustomRangeActive = mask.isCustomRangeActive;
                         copy.frontSortingLayerID = mask.frontSortingLayerID; copy.frontSortingOrder = mask.frontSortingOrder;

@@ -6,7 +6,8 @@ public enum EnemyFlockRole
 {
     None,       // 등장 중이거나 정지한 상태다. 대형과 분리 계산에서 빠진다.
     Formation,  // 거리 유지 대형에 참여한다.
-    Chase       // 플레이어에게 접근 중이다. 대형에서는 빠지지만 다른 구성원과는 계속 서로 밀어낸다.
+    Chase,      // 플레이어에게 접근 중이다. 대형에서는 빠지지만 다른 구성원과는 계속 서로 밀어낸다.
+    LocalPatrol // 최초 위치 주변 순찰이다. 대형·동시 추적 수에는 포함하지 않고 분리만 적용한다.
 }
 
 // 같은 무리(EnemyFlockMember)의 좌우 전환, 거리 유지 대형, 분리를 계산한다. 이동과 물리 질의는 하지 않는다.
@@ -77,7 +78,7 @@ public sealed class EnemyFlock
             return;
 
         members.Add(member);
-        layoutDirty = true;
+        MarkLayoutDirty();
     }
 
     public void Leave(EnemyFlockMember member)
@@ -86,7 +87,7 @@ public sealed class EnemyFlock
         slotOffsets.Remove(member);
         if (leader == member)
             leader = null;
-        layoutDirty = true;
+        MarkLayoutDirty();
 
         // 무리가 비면 다음에 생성되는 무리는 처음부터 좌우를 다시 정한다.
         if (members.Count == 0)
@@ -96,7 +97,12 @@ public sealed class EnemyFlock
         }
     }
 
-    public void MarkLayoutDirty() => layoutDirty = true;
+    public void MarkLayoutDirty()
+    {
+        layoutDirty = true;
+        solvedFrame = -1;
+        holdPointFrame = -1;
+    }
 
     public int CountRole(EnemyFlockRole role)
     {

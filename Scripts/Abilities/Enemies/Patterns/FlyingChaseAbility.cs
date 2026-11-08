@@ -15,6 +15,12 @@ public class FlyingChaseAbility : FlyingAbility
     public float ChaseDuration => chaseDuration;
     public bool HasTouched => contactTime >= 0f;
 
+    public override bool CanBegin()
+    {
+        AcquireTarget();
+        return HasTarget;
+    }
+
     protected override void Awake()
     {
         base.Awake();

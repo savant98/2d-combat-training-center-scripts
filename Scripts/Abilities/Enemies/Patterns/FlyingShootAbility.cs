@@ -108,7 +108,7 @@ public class FlyingShootAbility : FlyingAbility
     private void Fire()
     {
         firedCount++;
-        if (shootData.projectilePrefab == null || WorldEntityPool.Instance == null)
+        if (!HasTarget || shootData.projectilePrefab == null || WorldEntityPool.Instance == null)
             return;
 
         // 탄 방향은 탄(DroneEnemyBullet)이 적의 바라보는 방향 기준 발사 각도 안에서 정한다.

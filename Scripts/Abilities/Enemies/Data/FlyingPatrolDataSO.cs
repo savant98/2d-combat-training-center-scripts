@@ -4,7 +4,7 @@ using UnityEngine;
 public class FlyingPatrolDataSO : FlyingAbilityDataSO
 {
     [Header("Group")]
-    [Tooltip("켜면 무리 전체가 좌우를 함께 바꾸고 대형을 이루며 동시 추적 수를 제한합니다(Swarmer). 끄면 개체마다 좌우를 정해 각자 유지 지점으로 가고, 같은 flockId끼리는 가까워질 때 서로 밀어내기만 합니다(Drone).")]
+    [Tooltip("켜면 무리 전체가 좌우를 함께 바꾸고 감지 후 대형을 이루며 동시 공격 수를 제한합니다. 끄면 개체마다 좌우를 정하고 분리만 적용합니다.")]
     public bool moveAsFlock = true;
 
     [Header("Hold Point")]

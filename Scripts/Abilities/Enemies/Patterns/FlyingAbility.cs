@@ -20,7 +20,8 @@ public abstract class FlyingAbility : AiAbility
     private float nextWanderTime;
 
     protected EnemyFlock Flock => flockMember != null ? flockMember.Flock : null;
-    protected bool HasTarget => target != null && target.gameObject.activeInHierarchy;
+    protected bool HasTarget => target != null && target.gameObject.activeInHierarchy
+        && (flockMember == null || flockMember.TryDetectPlayer(target.position));
 
     // 최고 비행 속도(칸/초)다. 플레이어 이동 속도를 따라가며, 읽을 수 없으면 데이터의 기본 속도를 쓴다.
     public float MaxSpeed => playerMove != null

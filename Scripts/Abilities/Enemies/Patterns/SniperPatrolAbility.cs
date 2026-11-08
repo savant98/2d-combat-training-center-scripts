@@ -23,7 +23,9 @@ public class SniperPatrolAbility : AiAbility
     private bool holdSideAfterReload;
     private EnemyFlockMember flockMember;
     private EnemyFlock formationFlock;
-    private int formationSide;
+    private string formationKey;
+    private bool HasTarget => target != null && target.gameObject.activeInHierarchy
+        && (flockMember == null || flockMember.TryDetectPlayer(target.position));
 
     private SniperPatrolDataSO PatrolData => (SniperPatrolDataSO)data;
     public bool IsTeleporting => teleporting;
@@ -43,26 +45,28 @@ public class SniperPatrolAbility : AiAbility
     {
         teleporter = GetComponent<EnemyTeleporter>();
         flockMember = GetComponent<EnemyFlockMember>();
+        flockMember?.RememberSpawnPosition();
         AcquireTarget();
         steerVelocity = controller.Velocity;
         wanderOffset = wanderGoal = Vector2.zero;
         nextWanderTime = 0f;
         if (!TryRequestedTeleport())
         {
-            if (side == 0 && target != null)
+            if (side == 0 && flockMember != null)
             {
-                side = transform.position.x >= target.position.x ? 1 : -1;
+                Vector2 anchor = HasTarget ? (Vector2)target.position : flockMember.SpawnPosition;
+                side = transform.position.x >= anchor.x ? 1 : -1;
                 ScheduleSwitch();
             }
             JoinFormation();
-            SetFlockRole(EnemyFlockRole.Formation);
+            SetFlockRole(HasTarget ? EnemyFlockRole.Formation : EnemyFlockRole.LocalPatrol);
         }
     }
 
     protected override void OnWindup(float t) => Patrol();
     protected override void OnExecute(float t) => Patrol();
     protected override bool CanFinishExecute(float elapsed) =>
-        !teleporting && target != null && target.gameObject.activeInHierarchy && elapsed >= PatrolData.patrolDuration
+        !teleporting && HasTarget && elapsed >= PatrolData.patrolDuration
         && nextAbility != null && (nextAbility is SniperLaserAbility shot ? shot.CanBeginShot : nextAbility.IsReady());
 
     protected override void OnRecoverStart() => controller.Velocity = Vector2.zero;
@@ -79,8 +83,8 @@ public class SniperPatrolAbility : AiAbility
         }
         else if (nextAbility != null)
         {
-            SetFlockRole(EnemyFlockRole.Chase); // 조준 중인 개체도 다른 순찰 개체의 분리 대상이다.
-            brain.ForceNextAbility(nextAbility);
+            SetFlockRole(HasTarget ? EnemyFlockRole.Chase : EnemyFlockRole.LocalPatrol);
+            brain.ForceNextAbility(HasTarget ? nextAbility : this);
         }
     }
 
@@ -90,7 +94,7 @@ public class SniperPatrolAbility : AiAbility
         SetFlockRole(EnemyFlockRole.None);
         formationFlock?.Leave(flockMember);
         formationFlock = null;
-        formationSide = 0;
+        formationKey = null;
         side = 0;
         ClearPostReloadTeleport();
     }
@@ -107,18 +111,20 @@ public class SniperPatrolAbility : AiAbility
         // Teleporter가 한 FixedUpdate에 적용하는 Velocity를 여기서 덮어쓰면 순간이동이 취소된다.
         if (teleporting) return;
         if (target == null || !target.gameObject.activeInHierarchy) AcquireTarget();
-        if (target == null)
+        bool detected = HasTarget;
+        if (!detected && flockMember == null)
         {
             controller.Velocity = Vector2.zero;
             return;
         }
         if (TryRequestedTeleport()) return;
 
-        float dx = target.position.x - transform.position.x;
+        Vector2 anchor = detected ? (Vector2)target.position : flockMember.SpawnPosition;
+        float dx = anchor.x - transform.position.x;
         if (Mathf.Abs(dx) > 0.01f) controller.FacingUpdate(dx > 0f ? 1 : -1);
         if (side == 0)
         {
-            side = transform.position.x >= target.position.x ? 1 : -1;
+            side = transform.position.x >= anchor.x ? 1 : -1;
             ScheduleSwitch();
         }
 
@@ -137,7 +143,8 @@ public class SniperPatrolAbility : AiAbility
         }
         if (Time.time >= nextSwitchTime) ScheduleSwitch();
         JoinFormation();
-        if (PatrolData.moveAsFlock && formationFlock != null)
+        SetFlockRole(detected ? EnemyFlockRole.Formation : EnemyFlockRole.LocalPatrol);
+        if (detected && PatrolData.moveAsFlock && formationFlock != null)
             point = formationFlock.GetFormationPoint(flockMember, point, PatrolData.formationSpacing, PatrolData.formationHeightRatio);
 
         if (Time.time >= nextWanderTime)
@@ -161,15 +168,18 @@ public class SniperPatrolAbility : AiAbility
 
     private void JoinFormation()
     {
-        if (flockMember == null || side == 0 || (formationFlock != null && formationSide == side)) return;
+        if (flockMember == null || side == 0) return;
+        string key = flockMember.EffectiveFlockId + (side < 0 ? ".Formation.Left" : ".Formation.Right");
+        if (formationFlock != null && formationKey == key) return;
         formationFlock?.Leave(flockMember);
-        formationSide = side;
-        formationFlock = EnemyFlock.Join(flockMember.FlockId + (side < 0 ? ".Formation.Left" : ".Formation.Right"), flockMember);
+        formationKey = key;
+        formationFlock = EnemyFlock.Join(key, flockMember);
     }
 
     private void SetFlockRole(EnemyFlockRole role)
     {
-        flockMember?.SetRole(role);
+        if (flockMember == null || flockMember.Role == role) return;
+        flockMember.SetRole(role);
         formationFlock?.MarkLayoutDirty();
     }
 
@@ -177,7 +187,7 @@ public class SniperPatrolAbility : AiAbility
 
     private bool TryRequestedTeleport()
     {
-        if (!teleportRequested || target == null || !target.gameObject.activeInHierarchy) return false;
+        if (!teleportRequested || !HasTarget) return false;
         teleportRequested = false;
         // 오래된 순찰 쪽 대신 현재 Player와의 위치로 반대편을 고른다.
         int nextSide = transform.position.x >= target.position.x ? -1 : 1;
@@ -191,8 +201,9 @@ public class SniperPatrolAbility : AiAbility
 
     private Vector2 HoldPoint(ref int wantedSide, bool allowSideFallback = true)
     {
-        Vector2 player = target.position;
-        float height = AvailableDistance(player, Vector2.up, PatrolData.playerOffset.y);
+        bool detected = HasTarget;
+        Vector2 player = detected ? (Vector2)target.position : flockMember.SpawnPosition;
+        float height = detected ? AvailableDistance(player, Vector2.up, PatrolData.playerOffset.y) : 0f;
         Vector2 anchor = player + Vector2.up * height;
         float width = AvailableDistance(anchor, Vector2.right * wantedSide, PatrolData.playerOffset.x);
         if (allowSideFallback && width < PatrolData.minSideSpace)
@@ -231,7 +242,7 @@ public class SniperPatrolAbility : AiAbility
 
     private void BeginAfterTeleport()
     {
-        SetFlockRole(EnemyFlockRole.Formation);
+        SetFlockRole(HasTarget ? EnemyFlockRole.Formation : EnemyFlockRole.LocalPatrol);
         wanderOffset = wanderGoal = Vector2.zero;
         nextWanderTime = 0f;
     }

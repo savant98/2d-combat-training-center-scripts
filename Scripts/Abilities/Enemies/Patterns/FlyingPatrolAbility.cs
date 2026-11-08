@@ -3,7 +3,7 @@ using UnityEngine;
 // 플레이어 옆 위의 유지 지점(기본 좌우 5칸·위 5칸)에서 거리를 두고 파리처럼 맴도는 비행 순찰이다.
 // - 무리로 움직이면(moveAsFlock, Swarmer) 무리 전체가 sideSwitchInterval마다 플레이어의 왼쪽·오른쪽을 바꾼다.
 //   여러 마리면 무리 중심의 구성원이 유지 지점으로 가고, 나머지는 그 구성원을 둘러싼 고리 칸으로 간다(EnemyFlock).
-// - 무리로 움직이지 않으면(Drone) 개체마다 좌우를 정해 각자 유지 지점으로 간다. 대형·동시 추적 제한은 쓰지 않고,
+// - 무리 이동을 끄면 개체마다 좌우를 정해 각자 유지 지점으로 간다. 대형·동시 추적 제한은 쓰지 않고,
 //   같은 flockId끼리는 가까워질 때 서로 밀어내기만 한다(FlyingAbility의 분리).
 // - 천장·벽은 RaycastMotor2D.RaycastEnvironment로 확인해 유지 지점을 방 안쪽으로 당긴다.
 // - 유지 시간이 끝나면 다음 패턴(Swarmer 추적, Drone 사격)을 예약한다. 무리의 동시 추적 수가 가득 찼거나
@@ -31,8 +31,9 @@ public class FlyingPatrolAbility : FlyingAbility
     {
         AcquireTarget();
         BeginFlight();
+        if (flockMember != null) flockMember.RememberSpawnPosition();
         holdDuration = Random.Range(patrolData.holdDuration.x, patrolData.holdDuration.y);
-        SetFlockRole(EnemyFlockRole.Formation);
+        SetFlockRole(HasTarget ? EnemyFlockRole.Formation : EnemyFlockRole.LocalPatrol);
     }
 
     protected override void OnWindup(float t) => Fly();
@@ -64,46 +65,45 @@ public class FlyingPatrolAbility : FlyingAbility
             soloSide = 0;   // 등장·사망(Pool 반환)·Freeze 뒤에는 쪽을 처음부터 다시 정한다.
         }
 
-        ReserveNext(nextAbility);
+        ReserveNext(HasTarget ? nextAbility : this);
     }
 
     private void Fly()
     {
-        if (!HasTarget)
-        {
-            AcquireTarget();
-            if (!HasTarget)
-            {
-                Hover();
-                return;
-            }
-        }
+        if (target == null || !target.gameObject.activeInHierarchy) AcquireTarget();
+        bool detected = HasTarget;
+        if (flockMember == null && !detected) { Hover(); return; }
 
-        FaceTarget();
-        Vector2 holdPoint = ResolveHoldPoint();
+        SetFlockRole(!detected ? EnemyFlockRole.LocalPatrol
+            : State == AbilityState.Recover ? EnemyFlockRole.Chase : EnemyFlockRole.Formation);
+        if (detected) FaceTarget();
+        // 이미 공중에 있는 최초 위치를 중심으로 같은 좌우 순찰을 한다. 미감지 개체는 교전 대형에 끌려가지 않는다.
+        Vector2 anchor = detected ? (Vector2)target.position : flockMember.SpawnPosition;
+        Vector2 holdPoint = ResolveHoldPoint(anchor, detected);
         EnemyFlock flock = Flock;
-        Vector2 point = patrolData.moveAsFlock && flock != null
+        Vector2 point = detected && patrolData.moveAsFlock && flock != null
             ? flock.GetFormationPoint(flockMember, holdPoint, patrolData.formationSpacing, patrolData.formationHeightRatio)
             : holdPoint;
+        if (!detected && Mathf.Abs(point.x - transform.position.x) > .05f)
+            controller.FacingUpdate(point.x > transform.position.x ? 1 : -1);
         SteerTowards(point + UpdateWander(), MaxSpeed);
     }
 
     // 플레이어 기준 유지 지점이다. 정한 쪽(왼쪽·오른쪽)으로 playerOffset.x, 위로 playerOffset.y만큼 떨어진다.
     // 천장·벽이 가까우면 wallMargin만큼 안쪽으로 당기고, 정한 쪽 공간이 minSideSpace보다 좁으면 이번에는 반대쪽을 쓴다.
     // 질의는 이 적의 RaycastMotor2D(충돌 Layer: Platform)로 한다. 무리로 움직이면 같은 프레임의 다른 구성원이 계산 결과를 다시 쓴다.
-    private Vector2 ResolveHoldPoint()
+    private Vector2 ResolveHoldPoint(Vector2 anchor, bool detected)
     {
         EnemyFlock flock = patrolData.moveAsFlock ? Flock : null;
-        if (flock != null && flock.TryGetHoldPoint(out Vector2 cached))
+        if (detected && flock != null && flock.TryGetHoldPoint(out Vector2 cached))
             return cached;
 
-        Vector2 player = target.position;
         Vector2 offset = patrolData.playerOffset;
-        int preferredSide = transform.position.x >= player.x ? 1 : -1;
+        int preferredSide = transform.position.x >= anchor.x ? 1 : -1;
         int side = flock != null ? flock.ResolveSide(preferredSide, patrolData.sideSwitchInterval) : ResolveSoloSide(preferredSide);
 
-        float height = AvailableDistance(player, Vector2.up, offset.y);
-        Vector2 basePoint = player + Vector2.up * height;
+        float height = detected ? AvailableDistance(anchor, Vector2.up, offset.y) : 0f;
+        Vector2 basePoint = anchor + Vector2.up * height;
         float width = AvailableDistance(basePoint, Vector2.right * side, offset.x);
         if (width < patrolData.minSideSpace)
         {
@@ -116,7 +116,7 @@ public class FlyingPatrolAbility : FlyingAbility
         }
 
         Vector2 point = basePoint + Vector2.right * (side * width);
-        if (flock != null)
+        if (detected && flock != null)
             flock.SetHoldPoint(point);
         return point;
     }

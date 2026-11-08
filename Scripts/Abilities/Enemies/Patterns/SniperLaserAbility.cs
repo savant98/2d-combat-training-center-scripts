@@ -24,7 +24,16 @@ public class SniperLaserAbility : AiAbility
     private Vector2 Origin => muzzle != null ? (Vector2)muzzle.position : executePoint != null ? (Vector2)executePoint.position : (Vector2)transform.position;
     public Vector2 AimPoint => aimPoint;
     public Vector2 FiredDirection => firedDirection;
-    public bool CanBeginShot => !usedSinceSpawn || IsReady();
+    private bool HasDetectedTarget
+    {
+        get
+        {
+            var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+            return player != null && player.gameObject.activeInHierarchy
+                && GetComponent<EnemyFlockMember>().TryDetectPlayer(player.transform.position);
+        }
+    }
+    public bool CanBeginShot => HasDetectedTarget && (!usedSinceSpawn || IsReady());
 
     // 자동 반환된 빔이 재대여된 경우 총구 추종·중단 정리가 새 발사에 간섭하지 않게 한다.
     private LaserBeam OwnedLaser => laser != null && laser.gameObject.activeInHierarchy
@@ -39,7 +48,7 @@ public class SniperLaserAbility : AiAbility
         controller.Velocity = Vector2.zero;
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
         target = player != null ? player.transform : null;
-        hasTarget = target != null && target.gameObject.activeInHierarchy;
+        hasTarget = target != null && target.gameObject.activeInHierarchy && HasDetectedTarget;
         aimPoint = hasTarget ? (Vector2)target.position : Origin;
         if (aimReticle != null) aimReticle.gameObject.SetActive(hasTarget);
         if (!hasTarget) return;
@@ -57,7 +66,7 @@ public class SniperLaserAbility : AiAbility
     protected override void OnWindup(float t)
     {
         controller.Velocity = Vector2.zero;
-        hasTarget = target != null && target.gameObject.activeInHierarchy;
+        hasTarget = target != null && target.gameObject.activeInHierarchy && HasDetectedTarget;
         if (!hasTarget) { ReturnEffects(); return; }
         aimPoint = Vector2.MoveTowards(aimPoint, target.position, LaserData.aimPointSpeed * Time.deltaTime);
         float dx = aimPoint.x - Origin.x;
@@ -84,7 +93,7 @@ public class SniperLaserAbility : AiAbility
     {
         if (State == AbilityState.Windup && previewRenderer != null && previewRenderer.enabled && aimReticle != null)
             aimReticle.position = previewRenderer.GetPosition(1);
-        if (State == AbilityState.None && target != null && brain != null && !brain.IsPaused)
+        if (State == AbilityState.None && target != null && brain != null && !brain.IsPaused && HasDetectedTarget)
             OrientMount(target.position);
     }
 
