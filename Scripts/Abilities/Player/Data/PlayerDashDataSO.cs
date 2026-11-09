@@ -11,5 +11,6 @@ public class PlayerDashDataSO : PlayerAbilityDataSO
 
     [Header("Feedback")]
     public FeedbackDataSO dashFeedback;
-    public TrailRenderer dashTrail;
+    public FeedbackDataSO dashBrakeFeedback;
+    public PlayerDashVisual dashVisual;
 }

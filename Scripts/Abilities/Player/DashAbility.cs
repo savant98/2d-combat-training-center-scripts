@@ -12,7 +12,8 @@ public class DashAbility : PlayerAbility
 
     // Feedbacks
     private FeedbackDataSO dashFeedback;
-    private TrailRenderer dashTrail;
+    private FeedbackDataSO dashBrakeFeedback;
+    private PlayerDashVisual dashVisual;
 
     private bool isDashing = false;
     private float timer = 0f;
@@ -28,11 +29,11 @@ public class DashAbility : PlayerAbility
         dashForce = dashData.dashForce;
         dashDuration = dashData.dashDuration;
         dashFeedback = dashData.dashFeedback;
-        dashTrail = Instantiate(dashData.dashTrail, controller.facingModel.transform);
+        dashBrakeFeedback = dashData.dashBrakeFeedback;
+        dashVisual = Instantiate(dashData.dashVisual, transform);
+        dashVisual.Initialize();
 
         controller.OnDashInput += () => buffer.RegisterInput();
-
-        dashTrail.emitting = false;
     }
     private void TryDash()
     {
@@ -62,6 +63,8 @@ public class DashAbility : PlayerAbility
             if (timer <= 0f)
             {
                 EndDash();
+                // 끝까지 달렸을 때만 제동 효과를 낸다(중간에 끊기면 다음 동작의 효과가 바로 이어진다).
+                feedbackPlayer.Play(dashBrakeFeedback, dashVisual.transform);
             }
             return;
         }
@@ -86,8 +89,8 @@ public class DashAbility : PlayerAbility
 
         // 피드백
         controller.animator.SetBool("Dash", true);
-        feedbackPlayer.Play(dashFeedback, transform);
-        dashTrail.emitting = true;
+        dashVisual.Begin(controller.Facing, dashDuration);
+        feedbackPlayer.Play(dashFeedback, dashVisual.transform);
     }
     public void ClearPendingInput() => buffer.Reset();
     public override void Interrupt()
@@ -102,7 +105,7 @@ public class DashAbility : PlayerAbility
         controller.IgnoreExternalForces = false;
         controller.GravityOn = true;
         controller.Velocity = Vector2.zero;
-        dashTrail.emitting = false;
+        dashVisual.End();
 
         controller.animator.SetBool("Dash", false);
     }
