@@ -81,9 +81,15 @@ public class JumpAbility : PlayerAbility
         controller.Velocity.y = jumpForce;
 
         if (currentJumpCount == maxJumpCount - 1)
+        {
             feedbackPlayer.Play(startJumpFeedback, transform);
+            controller.animator.SetTrigger("Jump");
+        }
         else
+        {
             feedbackPlayer.Play(extraJumpFeedback, transform);
+            controller.animator.SetTrigger("DoubleJump");
+        }
     }
     private void StopLongJump()
     {
@@ -94,6 +100,10 @@ public class JumpAbility : PlayerAbility
         currentJumpCount = maxJumpCount;
 
         controller.Gravity = highGravity;
+
+        // Warp 등 전이가 없는 상태에서 소비되지 못한 점프 Trigger가 착지 뒤 늦게 재생되지 않게 지운다.
+        controller.animator.ResetTrigger("Jump");
+        controller.animator.ResetTrigger("DoubleJump");
     }
     private void BeginFall()
     {

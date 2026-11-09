@@ -65,6 +65,9 @@ public class PlayerController : CharacterController2D
     }
     public void ApplyWeaponAnimation(AnimationSetSO set, string animName)
     {
+        // Clip을 바꾸면 Animator가 다시 바인딩하면서 그 순간 자세를 Write Defaults 기본값으로 잡는다.
+        // 이동·점프 Animation 도중 공격해도 몸의 위치·배율이 Idle에 남지 않도록 바꾸기 전에 기본 자세로 되돌린다.
+        animator.WriteDefaultValues();
         animatorOverride["Player_" + animName + "1"] = set.windup;
         animatorOverride["Player_" + animName + "2"] = set.execute;
         animatorOverride["Player_" + animName + "3"] = set.recover;
