@@ -36,12 +36,7 @@ public static class LaserLineUtility
         maxLength = Mathf.Max(0f, maxLength);
         radius = Mathf.Max(0f, radius);
 
-        return Physics2D.CircleCast(
-            origin,
-            radius,
-            direction,
-            maxLength,
-            blockMask);
+        return RaycastMotor2D.CircleCastEnvironment(origin, radius, direction, maxLength, blockMask);
     }
 
     public static void UpdateCaps(

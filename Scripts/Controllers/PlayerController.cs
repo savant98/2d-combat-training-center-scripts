@@ -53,6 +53,7 @@ public class PlayerController : CharacterController2D
     public void ResetPlayerPosition(Vector3 spawnPos)
     {
         if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
+        motor.ResetOneWayState();
         transform.position = spawnPos;
         Velocity = Vector2.zero;
     }

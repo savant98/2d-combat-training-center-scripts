@@ -33,6 +33,7 @@ public class TumblePatrolAbility : AiAbility
     [SerializeField] private EnemyTumbleVisual tumbleVisual;
 
     private TumblePatrolDataSO patrolData;
+    private AiPatternDirector patternDirector;
     private int patrolDirection = 1;
     private bool wallHitSubscribed;
     private bool returningFromOtherPattern;
@@ -46,6 +47,10 @@ public class TumblePatrolAbility : AiAbility
     private float stepStartX;
     private int stepDirection = 1;
     private int stepsCompleted;
+    private bool awaitingFaceDirection;
+    private bool hasFaceDirection;
+    private float expectedFaceX;
+    private int sampledFaceDirection;
 
     public int PatrolDirection => patrolDirection;
     public int StepsCompleted => stepsCompleted;
@@ -61,6 +66,7 @@ public class TumblePatrolAbility : AiAbility
     private void Awake()
     {
         patrolData = (TumblePatrolDataSO)data;
+        patternDirector = GetComponent<AiPatternDirector>();
     }
 
     protected override void OnWindupStart()
@@ -68,7 +74,7 @@ public class TumblePatrolAbility : AiAbility
         // 처음 순찰할 때는 바라보던 방향으로 간다. 다른 패턴을 마치고 돌아오면 플레이어 쪽으로 출발한다.
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
         int direction = controller.Facing >= 0 ? 1 : -1;
-        if (returningFromOtherPattern && patrolData.facePlayerAfterOtherPattern && player != null)
+        if ((patrolData.facePlayerAfterEachStep || returningFromOtherPattern && patrolData.facePlayerAfterOtherPattern) && player != null)
         {
             float deltaX = player.transform.position.x - transform.position.x;
             if (Mathf.Abs(deltaX) > 0.01f)
@@ -145,6 +151,17 @@ public class TumblePatrolAbility : AiAbility
     {
         float size = patrolData.tumbleSize;
         float gap = MeasureWallGap(patrolDirection, size);
+        // 벽 기울기·회귀를 우선하고, 이동 가능한 면에서만 Profile의 동종 회피를 적용한다.
+        if (gap >= size && patternDirector != null)
+        {
+            int direction = patternDirector.ResolvePatrolDirection(this, patrolDirection);
+            if (direction != patrolDirection && MeasureWallGap(direction, size) >= size)
+            {
+                patrolDirection = direction;
+                controller.FacingUpdate(patrolDirection);
+                gap = MeasureWallGap(patrolDirection, size);
+            }
+        }
 
         ResetStepState();
         stepStartX = transform.position.x;
@@ -198,7 +215,9 @@ public class TumblePatrolAbility : AiAbility
                     return false;
                 angle = 90f;
                 angularSpeed = 0f;
-                OnFaceLanded?.Invoke(stepStartX + stepDirection * patrolData.tumbleSize);
+                expectedFaceX = stepStartX + stepDirection * patrolData.tumbleSize;
+                awaitingFaceDirection = patrolData.facePlayerAfterEachStep;
+                OnFaceLanded?.Invoke(expectedFaceX);
                 if (patrolData.landingBounceAngle <= 0f)
                     return true;
                 phase = Phase.Bounce;
@@ -241,12 +260,40 @@ public class TumblePatrolAbility : AiAbility
         return false;
     }
 
+    // 모터 적용 이후의 물리 단계에서만 호출한다. 한 면마다 플레이어 위치를 한 번만 읽는다.
+    public void SamplePlayerAfterFaceMove()
+    {
+        if (!awaitingFaceDirection || brain == null || brain.IsPaused || !IsRunning) return;
+        if (Mathf.Abs(transform.position.x - expectedFaceX) > .03f)
+        {
+            awaitingFaceDirection = false;
+            return;
+        }
+        if (!controller.IsGrounded) return;
+        awaitingFaceDirection = false;
+        var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+        float deltaX = player != null ? player.transform.position.x - transform.position.x : 0f;
+        sampledFaceDirection = Mathf.Abs(deltaX) > .01f ? (deltaX > 0f ? 1 : -1) : patrolDirection;
+        hasFaceDirection = true;
+        if (phase == Phase.Rest)
+        {
+            patrolDirection = sampledFaceDirection;
+            controller.FacingUpdate(patrolDirection);
+            hasFaceDirection = false;
+        }
+    }
+
     private void FinishStep()
     {
         bool completedTumble = phase == Phase.Fall || phase == Phase.Bounce;
         if (completedTumble)
         {
             stepsCompleted++;
+            if (hasFaceDirection)
+            {
+                patrolDirection = sampledFaceDirection;
+                controller.FacingUpdate(patrolDirection);
+            }
         }
         else
         {
@@ -254,7 +301,9 @@ public class TumblePatrolAbility : AiAbility
             TurnAround();
         }
 
+        bool preservePending = completedTumble && awaitingFaceDirection;
         ResetStepState();
+        awaitingFaceDirection = preservePending;
         if (tumbleVisual != null)
             tumbleVisual.EndStep();
     }
@@ -333,6 +382,8 @@ public class TumblePatrolAbility : AiAbility
 
     private void ResetStepState()
     {
+        awaitingFaceDirection = false;
+        hasFaceDirection = false;
         phase = Phase.Rest;
         phaseTime = 0f;
         restTime = 0f;

@@ -21,4 +21,11 @@ public abstract class AiPatternRuleSO : ScriptableObject
     /// null 반환은 하지 않는 걸 기본 원칙으로 권장.
     /// </summary>
     public abstract AiAbility Resolve(AiPatternContext context, AiAbility candidate);
+
+    // 선택 평가와 분리된 순수 방향 조회다. 기존 전환 규칙은 순찰 방향에 관여하지 않는다.
+    public virtual bool TryResolvePatrolDirection(AiPatternContext context, AiAbility ability, int proposedDirection, out int direction)
+    {
+        direction = proposedDirection;
+        return false;
+    }
 }

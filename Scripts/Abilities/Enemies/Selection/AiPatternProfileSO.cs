@@ -51,6 +51,14 @@ public class AiPatternProfileSO : ScriptableObject
             if (rule != null && rule.oncePerSpawn && rule.Matches(context, ability)) context.Consume(rule);
     }
 
+    public int ResolvePatrolDirection(AiPatternContext context, AiAbility ability, int proposedDirection)
+    {
+        foreach (var rule in rules)
+            if (rule != null && rule.IsEnabled && rule.TryResolvePatrolDirection(context, ability, proposedDirection, out int direction))
+                return direction >= 0 ? 1 : -1;
+        return proposedDirection;
+    }
+
     public AiAbility Resolve(AiPatternContext context, AiAbility candidate)
     {
         if (candidate == null)

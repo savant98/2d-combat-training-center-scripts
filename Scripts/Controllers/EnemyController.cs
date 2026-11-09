@@ -140,6 +140,7 @@ public class EnemyController : CharacterController2D
     }
     public IEnumerator OnSpawn()
     {
+        motor.ResetOneWayState();
         spawnController.ResetSpawnSequence();
         if (enemyHealth is TrainingDummyHealth trainingDummy)
         {

@@ -29,7 +29,7 @@
 | --- | --- |
 | 형태 | 개발 중인 개인 Unity 2D 전투·훈련 프로젝트 |
 | 기준 환경 | Unity **6000.3.28f1** · **C#** |
-| 공개 내용 | 게임·개발 지원 스크립트 **306개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
+| 공개 내용 | 게임·개발 지원 스크립트 **311개**, 입력 생성 코드 포함 · 설계 구조도 · 대표 이미지·게임 캡처 |
 | 상세 문서 | Notion에서 시스템 개요 → 기능별 상세 설계 → 관련 코드 순서로 탐색 |
 
 <a id="features"></a>
@@ -100,6 +100,8 @@ Constructor의 동작과 설정은 [보스 패턴 상세 문서](https://capable
 `WaveDataSO`는 웨이브 설정을, `TrainingRunTracker`는 시간·피격·사망 등의 진행 기록을 담당합니다. `TrainingDefinitionSO`로 등급·보상을 계산한 뒤 `DataManager`가 결과와 재화를 반영합니다. 적과 월드 오브젝트는 Pool을 통해 대여·반환합니다.
 
 → [WaveManager](Scripts/Waves/WaveManager.cs) · [TrainingRunTracker](Scripts/Training/TrainingRunTracker.cs) · [DataManager](Scripts/Persistence/DataManager.cs)
+
+정식 훈련은 종합훈련-기본기 확립-과 관리자 평가입니다. 관리자 평가는 [TrainingRoomLayoutController](Scripts/Training/TrainingRoomLayoutController.cs)가 웨이브마다 생성 발판·벽·천장과 카메라 범위를 바꾸며, 전환 중에도 플레이어의 이동과 중력을 유지합니다. 얇은 [OneWayPlatform](Scripts/World/Platforms/OneWayPlatform.cs)은 상면 착지와 아래키+점프 하강을 지원합니다.
 
 <details>
 <summary><strong>전투·이동 전체 구조도 펼치기</strong></summary>

@@ -39,7 +39,9 @@ public class TrainingScoreboardUI : MonoBehaviour
             yield return loopValue;
 
             hitText.text = (tracker.TrainingDefinition.rules[2].maxHits - tracker.CurrentHItCount).ToString();
-            timeText.text = TrainingScoreFormatHelper.FormatTime(tracker.TrainingDefinition.rules[2].maxTimeSeconds - tracker.CurrentTimeSeconds);
+            float timeLimit = tracker.TrainingDefinition.rules[2].maxTimeSeconds;
+            timeText.text = TrainingScoreFormatHelper.FormatTime(timeLimit < 0f
+                ? tracker.CurrentTimeSeconds : timeLimit - tracker.CurrentTimeSeconds);
             TrainingScoreFormatHelper.GradeToText(tracker.CurrentPredictedGrade, gradeText);
         }
     }

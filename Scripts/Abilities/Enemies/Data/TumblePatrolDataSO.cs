@@ -30,6 +30,8 @@ public class TumblePatrolDataSO : EnemyAbilityDataSO
     [Header("Direction")]
     [Tooltip("플레이어를 발견해 다른 패턴(Jumper는 점프)으로 넘어갔다가 순찰로 돌아올 때 플레이어 쪽으로 출발합니다. 끄면 마지막으로 바라본 방향으로 이어 갑니다.")]
     public bool facePlayerAfterOtherPattern = true;
+    [Tooltip("새 면으로 이동한 직후 플레이어 방향을 한 번 기록하고 다음 면 이동에 적용합니다.")]
+    public bool facePlayerAfterEachStep = false;
     [Tooltip("순찰을 시작한 뒤 다른 패턴에 자리를 넘기기 전에 끝까지 넘어가야 하는 최소 횟수입니다. 점프 직후 다시 점프하지 않고 플레이어 쪽으로 한 번 이상 굴러간 뒤 공격합니다.")]
     [Min(0)] public int minStepsBeforeYield = 1;
 }

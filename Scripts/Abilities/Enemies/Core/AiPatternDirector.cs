@@ -47,6 +47,9 @@ public class AiPatternDirector : MonoBehaviour
         if (RefreshContext()) profile.NotifyAbilityStarted(context, ability);
     }
 
+    public int ResolvePatrolDirection(AiAbility ability, int proposedDirection)
+        => RefreshContext() ? profile.ResolvePatrolDirection(context, ability, proposedDirection) : proposedDirection;
+
     public AiAbility ResolveNextAbility(AiAbility candidate)
     {
         if (!enableDirector)

@@ -48,13 +48,85 @@ public class RaycastMotor2D : MonoBehaviour
     // Shared environment and combat queries use the same motor as character movement.
     public RaycastHit2D RaycastEnvironment(Vector2 origin, Vector2 direction, float distance)
     {
-        return Physics2D.Raycast(origin, direction, distance, collisionLayer);
+        return RaycastMovement(origin, direction, distance, direction.y < -.5f);
     }
 
     // 이동 충돌 레이어와 다른 지형만 막는 공격(Player 레이저는 통과 발판을 지나간다)이 쓰는 벽 찾기.
     public RaycastHit2D RaycastEnvironment(Vector2 origin, Vector2 direction, float distance, LayerMask blockLayer)
     {
-        return Physics2D.Raycast(origin, direction, distance, blockLayer);
+        return CircleCastEnvironment(origin, 0f, direction, distance, blockLayer);
+    }
+
+    private static readonly System.Collections.Generic.List<RaycastHit2D> environmentCastHits = new();
+    private readonly System.Collections.Generic.List<RaycastHit2D> movementHits = new();
+    private Collider2D groundCollider;
+    private Collider2D ignoredOneWay;
+    private float ignoreOneWayUntil;
+    private static int OneWayLayer => 1 << LayerMask.NameToLayer("TransparentPlatform");
+    public bool SupportsOneWayPlatforms { get; set; }
+
+    // 모든 투사체는 OneWay를 통과하고 일반 지형의 가장 가까운 차단점만 사용한다.
+    public static RaycastHit2D CircleCastEnvironment(Vector2 origin, float radius, Vector2 direction,
+        float distance, LayerMask blockLayer)
+    {
+        if ((blockLayer.value & OneWayLayer) == 0)
+            return Physics2D.CircleCast(origin, radius, direction, distance, blockLayer);
+        var filter = new ContactFilter2D();
+        filter.SetLayerMask(blockLayer); filter.useTriggers = Physics2D.queriesHitTriggers;
+        environmentCastHits.Clear();
+        Physics2D.CircleCast(origin, radius, direction, filter, environmentCastHits, distance);
+        RaycastHit2D nearest = default;
+        float nearestDistance = float.PositiveInfinity;
+        foreach (var hit in environmentCastHits)
+        {
+            if (hit.collider == null || OneWayPlatform.IsSurface(hit.collider)) continue;
+            if (hit.distance >= nearestDistance) continue;
+            nearest = hit; nearestDistance = hit.distance;
+        }
+        environmentCastHits.Clear();
+        return nearest;
+    }
+
+    public void ResetOneWayState()
+    {
+        groundCollider = ignoredOneWay = null;
+        ignoreOneWayUntil = 0f;
+    }
+
+    public bool TryDropThroughOneWay()
+    {
+        if (!SupportsOneWayPlatforms || groundCollider == null
+            || !OneWayPlatform.IsSurface(groundCollider)) return false;
+        ignoredOneWay = groundCollider;
+        ignoreOneWayUntil = Time.time + .4f;
+        groundCollider = null;
+        return true;
+    }
+
+    private RaycastHit2D RaycastMovement(Vector2 origin, Vector2 direction, float distance, bool allowOneWay)
+    {
+        int mask = collisionLayer.value | (allowOneWay && SupportsOneWayPlatforms ? OneWayLayer : 0);
+        var filter = new ContactFilter2D();
+        filter.SetLayerMask(mask); filter.useTriggers = Physics2D.queriesHitTriggers;
+        movementHits.Clear();
+        Physics2D.Raycast(origin, direction, filter, movementHits, distance);
+        RaycastHit2D nearest = default;
+        float nearestDistance = float.PositiveInfinity;
+        foreach (var hit in movementHits)
+        {
+            if (hit.collider == null) continue;
+            bool oneWay = OneWayPlatform.IsSurface(hit.collider);
+            if (oneWay)
+            {
+                if (!allowOneWay || !SupportsOneWayPlatforms || hit.collider == ignoredOneWay) continue;
+                if (col == null || col.bounds.min.y < hit.collider.bounds.max.y - skinWidth * 2f) continue;
+            }
+            else if ((collisionLayer.value & (1 << hit.collider.gameObject.layer)) == 0) continue;
+            if (hit.distance >= nearestDistance) continue;
+            nearest = hit; nearestDistance = hit.distance;
+        }
+        movementHits.Clear();
+        return nearest;
     }
 
     public float ClampHeightAboveFloor(Vector2 referencePosition, float maxDistance)
@@ -79,6 +151,7 @@ public class RaycastMotor2D : MonoBehaviour
     public int OverlapAttackBox(Vector2 center, Vector2 size, float angle,
         Collider2D[] results, LayerMask targetLayer)
     {
+        PrepareAttackQueries();
         var filter = new ContactFilter2D();
         filter.SetLayerMask(targetLayer);
         filter.useTriggers = true;
@@ -141,7 +214,11 @@ public class RaycastMotor2D : MonoBehaviour
     }
     public RaycastMoveResult2D Move(Vector2 desiredMove)
     {
+        if (ignoredOneWay != null && (Time.time >= ignoreOneWayUntil || !ignoredOneWay.enabled
+            || !ignoredOneWay.gameObject.activeInHierarchy || col.bounds.max.y < ignoredOneWay.bounds.min.y))
+            ignoredOneWay = null;
         CalculateRaySpacing();
+        groundCollider = null;
 
         RaycastCollisionInfo2D collisionInfo = new();
         collisionInfo.Reset();
@@ -171,8 +248,8 @@ public class RaycastMotor2D : MonoBehaviour
         for (int i = 0; i < verticalRayCount; i++)
         {
             Vector2 origin = new Vector2(bounds.min.x + verticalRaySpacing * i + horizontalMove, bounds.min.y);
-            if (Physics2D.Raycast(origin, Vector2.down, distance, collisionLayer))
-                return true;
+            var hit = RaycastMovement(origin, Vector2.down, distance, true);
+            if (hit.collider != null) { groundCollider = hit.collider; return true; }
         }
         return false;
     }
@@ -190,11 +267,7 @@ public class RaycastMotor2D : MonoBehaviour
 
             rayOrigin += Vector2.up * (horizontalRaySpacing * i);
 
-            RaycastHit2D hit = Physics2D.Raycast(
-                rayOrigin,
-                Vector2.right * direction,
-                distance,
-                collisionLayer);
+            RaycastHit2D hit = RaycastMovement(rayOrigin, Vector2.right * direction, distance, false);
 
             if (!hit) continue;
 
@@ -221,18 +294,14 @@ public class RaycastMotor2D : MonoBehaviour
 
             rayOrigin += Vector2.right * (verticalRaySpacing * i + move.x);
 
-            RaycastHit2D hit = Physics2D.Raycast(
-                rayOrigin,
-                Vector2.up * direction,
-                distance,
-                collisionLayer);
+            RaycastHit2D hit = RaycastMovement(rayOrigin, Vector2.up * direction, distance, direction < 0f);
 
             if (!hit) continue;
 
             move.y = (hit.distance - skinWidth) * direction;
 
             if (direction == 1) info.up = true;
-            else info.down = true;
+            else { info.down = true; groundCollider = hit.collider; }
 
             break;
         }

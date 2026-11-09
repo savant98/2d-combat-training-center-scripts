@@ -15,6 +15,8 @@ public class RoomTrigger : MonoBehaviour, IInteractable
     [Header("UI")]
     [SerializeField] private CanvasGroup interactUI;
 
+    public Transform TeleportPoint => teleportPoint;
+
     private bool playerInside;
     private void OnDrawGizmos()
     {
@@ -86,8 +88,12 @@ public class RoomTrigger : MonoBehaviour, IInteractable
     public void HandleEnterRoom()
     {
         menuController.OnConfirmEnterRoom -= HandleEnterRoom;
-        EnterRoom();
-        
+        RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest
+        {
+            targetRoom = menuController.SelectedRoom != null ? menuController.SelectedRoom : room,
+            teleportPoint = menuController.SelectedSpawnPoint != null ? menuController.SelectedSpawnPoint : teleportPoint,
+            transitionEffect = transitionEffect
+        });
     }
     private void EnterRoom()
     {

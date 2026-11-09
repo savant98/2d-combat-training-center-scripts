@@ -31,7 +31,7 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField, Tooltip("목록 순서별 제목·설명과 진행 기록을 보여 줄 훈련입니다. 손목 단말기의 훈련 목표 순서와 맞춥니다.")]
     private TrainingListEntry[] listEntries;
 
-    // 목록 한 줄에 대응하는 표시 정보다. 입장은 currentTrainingListIndex 항목만 허용한다.
+    // 목록별 훈련 기록과 입장 대상을 연결한다.
     [System.Serializable]
     private struct TrainingListEntry
     {
@@ -39,6 +39,8 @@ public class TrainingMenuController : MonoBehaviour
         [TextArea] public string summary;
         [Tooltip("진행 기록을 표시할 훈련입니다. 비우면 잠긴 훈련으로 표시합니다.")]
         public TrainingDefinitionSO recordTraining;
+        public Room targetRoom;
+        public Transform spawnPoint;
     }
 
     [Header("Training Menu Animation")]
@@ -48,6 +50,10 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField] private Image projectorRayLeft;
     [SerializeField] private Image projectorRayRight;
 
+    [SerializeField] private TextMeshProUGUI detailTitleText;
+    [SerializeField] private TextMeshProUGUI detailDescriptionText;
+    public Room SelectedRoom { get; private set; }
+    public Transform SelectedSpawnPoint { get; private set; }
     public event Action OnConfirmEnterRoom;
 
     private bool isOpen;
@@ -153,9 +159,12 @@ public class TrainingMenuController : MonoBehaviour
         if (HasList) ShowList();
         else menu.Open();
 
-        if (currentTraining == null)
-            return;
+        RefreshUI();
+    }
 
+    private void RefreshUI()
+    {
+        if (currentTraining == null) return;
         TrainingRoomSaveData best = DataManager.Instance.GetTrainingRoomRecord(currentTraining.trainingId);
         if (best != null)
         {
@@ -238,7 +247,22 @@ public class TrainingMenuController : MonoBehaviour
 
     private void HandleListSelect(int index)
     {
-        if (isTransitioning || index != currentTrainingListIndex || currentTraining == null) return;
+        if (isTransitioning) return;
+        bool registered = listEntries != null && index >= 0 && index < listEntries.Length
+            && listEntries[index].recordTraining != null && listEntries[index].targetRoom != null
+            && listEntries[index].spawnPoint != null;
+        if (!registered && (index != currentTrainingListIndex || currentTraining == null)) return;
+        if (registered)
+        {
+            var entry = listEntries[index];
+            currentTraining = entry.recordTraining;
+            SelectedRoom = entry.targetRoom;
+            SelectedSpawnPoint = entry.spawnPoint;
+            if (detailTitleText != null) detailTitleText.text = entry.title;
+            if (detailDescriptionText != null) detailDescriptionText.text = entry.summary;
+        }
+        else { SelectedRoom = null; SelectedSpawnPoint = null; }
+        RefreshUI();
         if (!HasPresentation)
         {
             listMenu.Close(); listPanel.SetActive(false); detailPanel.SetActive(true); menu.Open();
@@ -313,7 +337,7 @@ public class TrainingMenuController : MonoBehaviour
         TrainingListEntry entry = hasEntry ? listEntries[index] : default;
         string title = string.IsNullOrEmpty(entry.title) ? $"TRAINING {index + 1:00}" : entry.title;
 
-        if (index == currentTrainingListIndex && currentTraining != null)
+        if (index == currentTrainingListIndex && entry.recordTraining == null && currentTraining != null)
         {
             if (listTitleText != null) listTitleText.text = string.IsNullOrEmpty(entry.title) ? currentTraining.displayName : entry.title;
             if (listSummaryText != null) listSummaryText.text = $"{listDescription}\n\nREWARD  {currentTraining.baseRewardGold} G";
@@ -324,7 +348,7 @@ public class TrainingMenuController : MonoBehaviour
         if (listTitleText != null) listTitleText.text = title;
         if (entry.recordTraining != null)
         {
-            if (listSummaryText != null) listSummaryText.text = entry.summary;
+            if (listSummaryText != null) listSummaryText.text = $"{entry.summary}\n\nREWARD  {entry.recordTraining.baseRewardGold} G";
             if (listCompletionText != null) listCompletionText.text = IsCompleted(entry.recordTraining) ? "COMPLETED" : "NOT CLEARED";
             return;
         }

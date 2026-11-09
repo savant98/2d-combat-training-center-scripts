@@ -44,6 +44,7 @@ public abstract class CharacterController2D : MonoBehaviour
     {
         motor = gameObject.AddComponent<RaycastMotor2D>();
         motor.SetRaycastMotor2D(col, collisionLayer, skinWidth, horizontalRayCount, verticalRayCount);
+        motor.SupportsOneWayPlatforms = this is PlayerController || this is EnemyController enemy && enemy.GravityOn;
     }
     public void AddRecoil(float power, int facing)
     {

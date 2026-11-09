@@ -46,6 +46,13 @@ public class JumpAbility : PlayerAbility
         if (!jumpBuffer.ConsumeIfValid())
             return;
 
+        if (controller.IsGrounded && InputManager.Instance != null && InputManager.Instance.Move.y < -.5f
+            && controller.Motor.TryDropThroughOneWay())
+        {
+            controller.Velocity.y = -4f;
+            releasedThisJump = true;
+            return;
+        }
         Jump();
     }
     public override void Tick()

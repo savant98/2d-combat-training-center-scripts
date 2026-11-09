@@ -15,6 +15,8 @@ public class SniperPatrolAbility : AiAbility
     private Vector2 wanderGoal;
     private float nextWanderTime;
     private float nextSwitchTime;
+    private float attackWait;
+    private float retreatDistance;
     private int side;
     private bool teleporting;
     private bool[] rendererStates;
@@ -39,6 +41,7 @@ public class SniperPatrolAbility : AiAbility
     {
         teleportRequested = false;
         holdSideAfterReload = false;
+        retreatDistance = 0f;
     }
 
     protected override void OnWindupStart()
@@ -50,6 +53,10 @@ public class SniperPatrolAbility : AiAbility
         steerVelocity = controller.Velocity;
         wanderOffset = wanderGoal = Vector2.zero;
         nextWanderTime = 0f;
+        float baseline = Mathf.Max(PatrolData.patrolDuration, nextAbility != null ? nextAbility.CooldownRemaining : 0f);
+        // 기본 쿨타임보다 일찍 쏘지 않으며 개체마다 매 회 최대 1초의 시차를 만든다.
+        attackWait = baseline > 0f ? baseline * Random.Range(1f, 1f + PatrolData.attackStartJitter / baseline)
+            : Random.Range(0f, PatrolData.attackStartJitter);
         if (!TryRequestedTeleport())
         {
             if (side == 0 && flockMember != null)
@@ -66,7 +73,7 @@ public class SniperPatrolAbility : AiAbility
     protected override void OnWindup(float t) => Patrol();
     protected override void OnExecute(float t) => Patrol();
     protected override bool CanFinishExecute(float elapsed) =>
-        !teleporting && HasTarget && elapsed >= PatrolData.patrolDuration
+        !teleporting && HasTarget && elapsed >= attackWait
         && nextAbility != null && (nextAbility is SniperLaserAbility shot ? shot.CanBeginShot : nextAbility.IsReady());
 
     protected override void OnRecoverStart() => controller.Velocity = Vector2.zero;
@@ -128,14 +135,24 @@ public class SniperPatrolAbility : AiAbility
             ScheduleSwitch();
         }
 
-        bool switchDue = Time.time >= nextSwitchTime;
-        if (switchDue) holdSideAfterReload = false;
-        int wantedSide = switchDue ? -side : side;
+        if (Time.time >= nextSwitchTime)
+        {
+            teleportRequested = true;
+            if (TryRequestedTeleport()) return;
+        }
+        int wantedSide = side;
         // 재장전 후 좁은 쪽으로 이동했더라도 곧바로 기존 쪽으로 되돌아가지 않는다.
         Vector2 point = HoldPoint(ref wantedSide, !holdSideAfterReload);
         // 공간 부족으로 반대편을 선택한 경우도 가로질러 비행하지 않고 순간이동한다.
         if (wantedSide != side)
         {
+            if (detected)
+            {
+                teleportRequested = true;
+                controller.Velocity = Vector2.zero;
+                TryRequestedTeleport();
+                return;
+            }
             side = wantedSide;
             ScheduleSwitch();
             BeginTeleport(point);
@@ -189,9 +206,23 @@ public class SniperPatrolAbility : AiAbility
     {
         if (!teleportRequested || !HasTarget) return false;
         teleportRequested = false;
-        // 오래된 순찰 쪽 대신 현재 Player와의 위치로 반대편을 고른다.
-        int nextSide = transform.position.x >= target.position.x ? -1 : 1;
-        Vector2 point = HoldPoint(ref nextSide, false);
+        ScheduleSwitch();
+        int nextSide = Random.value < .5f ? -1 : 1;
+        Vector2 player = target.position;
+        Vector2 anchor = player + Vector2.up * AvailableDistance(player, Vector2.up, PatrolData.playerOffset.y);
+        float wantedDistance = Mathf.Max(PatrolData.playerOffset.x,
+            Mathf.Abs(transform.position.x - player.x) + PatrolData.playerOffset.x * .5f);
+        float distance = AvailableDistance(anchor, Vector2.right * nextSide, wantedDistance);
+        float otherDistance = AvailableDistance(anchor, Vector2.right * -nextSide, wantedDistance);
+        Vector2 point = anchor + Vector2.right * (nextSide * distance);
+        Vector2 otherPoint = anchor + Vector2.right * (-nextSide * otherDistance);
+        float currentDistance = Vector2.Distance(transform.position, player);
+        bool retreat = Vector2.Distance(point, player) > currentDistance + .1f;
+        bool otherRetreat = Vector2.Distance(otherPoint, player) > currentDistance + .1f;
+        if (!retreat && otherRetreat)
+        { nextSide = -nextSide; distance = otherDistance; point = otherPoint; }
+        else if (!retreat) return false;
+        retreatDistance = distance;
         side = nextSide;
         holdSideAfterReload = true;
         ScheduleSwitch();
@@ -205,7 +236,7 @@ public class SniperPatrolAbility : AiAbility
         Vector2 player = detected ? (Vector2)target.position : flockMember.SpawnPosition;
         float height = detected ? AvailableDistance(player, Vector2.up, PatrolData.playerOffset.y) : 0f;
         Vector2 anchor = player + Vector2.up * height;
-        float width = AvailableDistance(anchor, Vector2.right * wantedSide, PatrolData.playerOffset.x);
+        float width = AvailableDistance(anchor, Vector2.right * wantedSide, holdSideAfterReload ? retreatDistance : PatrolData.playerOffset.x);
         if (allowSideFallback && width < PatrolData.minSideSpace)
         {
             float other = AvailableDistance(anchor, Vector2.right * -wantedSide, PatrolData.playerOffset.x);

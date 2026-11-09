@@ -9,6 +9,8 @@ public class WaveManager : MonoBehaviour
     [SerializeField] private Transform spawnRoot;
     [SerializeField] private TrainingDefinitionSO currentTrainingDef;
 
+    [SerializeField] private TrainingRoomLayoutController roomLayout;
+
     public static WaveManager ActiveInstance { get; private set; }
     public Action OnAllWavesCleared;
     public event Action<EnemyController> EnemySpawned;
@@ -41,7 +43,7 @@ public class WaveManager : MonoBehaviour
             TrainingRunTracker.Instance.Begin(currentTrainingDef);
 
         if (showWaveIntro) coroutine = StartCoroutine(NextWaveDelay());
-        else SpawnWave(waveData.waves[currentWaveIndex]);
+        else coroutine = StartCoroutine(PrepareAndSpawn());
     }
     public void RestartWaves()
     {
@@ -75,6 +77,11 @@ public class WaveManager : MonoBehaviour
         yield return new WaitForSeconds(2f);
 
         UIManager.Instance.ShowBossHP(false);
+        yield return PrepareAndSpawn();
+    }
+    private IEnumerator PrepareAndSpawn()
+    {
+        if (roomLayout != null) yield return roomLayout.PrepareWave(currentWaveIndex);
         SpawnWave(waveData.waves[currentWaveIndex]);
     }
     private void SpawnWave(Wave wave)
@@ -169,6 +176,8 @@ public class WaveManager : MonoBehaviour
         }
 
         isSpawnActive = false;
+        if (isWaveActive && wave.clearType == WaveClearType.DefeatAllTargets && aliveTargets == 0)
+            CompleteWave();
     }
 
     private void HandleEnemyDeath(EnemyController deadEnemy)
