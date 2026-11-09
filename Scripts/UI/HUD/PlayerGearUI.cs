@@ -68,10 +68,46 @@ public class PlayerGearUI : MonoBehaviour
 
     [Header("Motion")]
     [SerializeField] private float bigGearRotationSpeed = 240f;
-    [SerializeField] private float smallGearRotationSpeed = 420f;
-    [SerializeField] private float waitingRotationMultiplier = 0.65f;
     [SerializeField] private float moveLerpSpeed = 35f;
     [SerializeField] private bool instantMoveOnStageUp = true;
+
+    [Header("Motion - Shift")]
+    [Tooltip("준비를 시작할 때 / 다 찼을 때의 톱니 회전 배율(모터가 올라가듯 빨라진다)")]
+    [SerializeField] private float chargeSpinStart = 0.4f;
+    [SerializeField] private float chargeSpinEnd = 1.7f;
+
+    [Tooltip("대기 시간을 나누는 칸 수. 칸마다 톱니가 시계처럼 한 칸씩 끊어 돈다")]
+    [SerializeField] private int waitTickCount = 8;
+    [SerializeField] private float waitTickDegrees = 30f;
+    [SerializeField] private float waitTickSharpness = 45f;
+
+    [Tooltip("준비 완료 순간 단계 숫자와 무기 아이콘이 찍히는 동작")]
+    [SerializeField] private float chargingTextAlpha = 0.6f;
+    [SerializeField] private float stageStampScale = 1.7f;
+    [SerializeField] private float stageStampDuration = 0.16f;
+    [SerializeField] private float weaponIconPopScale = 0.6f;
+    [SerializeField] private float weaponIconPopDuration = 0.14f;
+
+    [Header("Gear Rack")]
+    [Tooltip("작은 톱니의 피치 반지름. 게이지의 톱니 레일을 따라 구르는 각도를 정한다")]
+    [SerializeField] private float pinionRollRadius = 19.9f;
+
+    [Tooltip("대기 중 게이지가 한 칸 줄어드는 속도(초당 전체 길이)")]
+    [SerializeField] private float waitFillSpeed = 2.5f;
+
+    [Header("Stage Pips")]
+    [Tooltip("지금까지 물린 단계를 보여 주는 표시 3개")]
+    [SerializeField] private Image[] stagePips;
+    [SerializeField] private Color stagePipOffColor = new Color(0.16f, 0.2f, 0.26f, 1f);
+
+    [Header("Appear / Warning")]
+    [SerializeField] private float appearScaleFrom = 0.86f;
+    [SerializeField] private float appearDuration = 0.07f;
+
+    [Tooltip("남은 시간이 이 비율보다 적으면 게이지가 깜빡인다")]
+    [SerializeField, Range(0f, 1f)] private float warningFill = 0.3f;
+    [SerializeField] private float warningBlinkInterval = 0.1f;
+    [SerializeField, Range(0f, 1f)] private float warningBlinkLevel = 0.45f;
 
     [Header("Stage Punch")]
     [SerializeField] private float punchScalePower = 0.18f;
@@ -91,6 +127,12 @@ public class PlayerGearUI : MonoBehaviour
     [SerializeField] private float sparkInterval = 0.08f;
     [SerializeField] private bool playSparkOnlyWhenActive = true;
 
+    [Tooltip("다 찼을 때 불꽃 간격이 이 배율만큼 짧아진다")]
+    [SerializeField] private float chargeSparkRateMax = 1.6f;
+
+    [Tooltip("대기 중 불꽃 간격 배율(맞물린 뒤에는 드문드문 튄다)")]
+    [SerializeField] private float waitingSparkIntervalMultiplier = 3f;
+
     private bool isActive;
     private bool isWaiting;
     private int currentStage;
@@ -104,6 +146,11 @@ public class PlayerGearUI : MonoBehaviour
     private Vector2 smallGearEndPos;
 
     private float sparkTimer;
+    private int waitTick;
+    private float tickAngle;
+    private float tickAngleTarget;
+    private Graphic smallGearGraphic;
+    private Vector3 rootBaseScale = Vector3.one;
 
     private Material bigGearMaterial;
     private Material smallGearMaterial;
@@ -119,6 +166,7 @@ public class PlayerGearUI : MonoBehaviour
     {
         CacheReferences();
         CachePositions();
+        rootBaseScale = RootTransform.localScale;
         CreateMaterialInstances();
 
         SetVisible(false);
@@ -143,6 +191,7 @@ public class PlayerGearUI : MonoBehaviour
         RotateGears();
         UpdateSpark();
         RotateStageWeaponCircle();
+        UpdateWarningBlink();
     }
     public void SetStageWeaponCooldown(Sprite icon, float remaining, float duration, bool ready)
     {
@@ -218,8 +267,8 @@ public class PlayerGearUI : MonoBehaviour
 
                     stageWeaponCirclePulseTween = stageWeaponCircle.rectTransform
                         .DOScale(readyPulseScale, readyPulseDuration)
-                        .SetLoops(-1, LoopType.Yoyo)
-                        .SetEase(Ease.InOutSine)
+                        .SetLoops(2, LoopType.Yoyo)
+                        .SetEase(Ease.OutQuad)
                         .SetUpdate(true);
                 }
             }
@@ -271,7 +320,12 @@ public class PlayerGearUI : MonoBehaviour
             return;
         }
 
+        bool appearing = !isActive;
+
         SetVisible(true);
+
+        if (appearing)
+            PlayAppear();
 
         bool wasWaiting = this.isWaiting;
         int previousStage = currentStage;
@@ -289,7 +343,8 @@ public class PlayerGearUI : MonoBehaviour
         this.isWaiting = isWaiting;
         currentStage = stage;
 
-        targetFill = fill;
+        // 대기 중에는 남은 시간을 칸 단위로 끊어 보여 준다(톱니가 한 칸씩 돌아오는 시각과 같다).
+        targetFill = isWaiting ? QuantizeWaitFill(fill) : fill;
 
         if (shouldPlayStageEffect && instantMoveOnStageUp)
         {
@@ -300,7 +355,11 @@ public class PlayerGearUI : MonoBehaviour
         }
 
         UpdateTexts();
-        ApplyBaseEmission();
+        UpdateStagePips(fill);
+
+        // 매 프레임 덮어쓰면 체결 순간의 번쩍임과 경쟁하므로 상태가 바뀔 때만 적용한다.
+        if (stage != previousStage || isWaiting != wasWaiting)
+            ApplyBaseEmission();
 
         if (shouldPlayStageEffect)
             PlayStageUpEffect();
@@ -340,6 +399,9 @@ public class PlayerGearUI : MonoBehaviour
         if (bigGearGraphic == null && bigGear != null)
             bigGearGraphic = bigGear.GetComponent<Graphic>();
 
+        if (smallGear != null)
+            smallGearGraphic = smallGear.GetComponent<Graphic>();
+
         if (lineGraphic == null && lineFillImage != null)
             lineGraphic = lineFillImage;
     }
@@ -360,6 +422,7 @@ public class PlayerGearUI : MonoBehaviour
     private void CreateMaterialInstances()
     {
         bigGearMaterial = CreateGraphicMaterialInstance(bigGearGraphic);
+        smallGearMaterial = CreateGraphicMaterialInstance(smallGearGraphic);
         lineMaterial = CreateGraphicMaterialInstance(lineGraphic);
 
         ApplyInactiveEmission();
@@ -408,7 +471,7 @@ public class PlayerGearUI : MonoBehaviour
         currentFill = Mathf.MoveTowards(
             currentFill,
             targetFill,
-            moveLerpSpeed * Time.unscaledDeltaTime);
+            (isWaiting ? waitFillSpeed : moveLerpSpeed) * Time.unscaledDeltaTime);
 
         ApplyLineFill(currentFill);
     }
@@ -429,23 +492,107 @@ public class PlayerGearUI : MonoBehaviour
         if (smallGear == null)
             return;
 
-        smallGear.anchoredPosition = Vector2.Lerp(
+        Vector2 position = Vector2.Lerp(
             smallGearStartPos,
             smallGearEndPos,
             Mathf.Clamp01(fill));
+
+        smallGear.anchoredPosition = position;
+
+        // 톱니 레일 아래를 미끄러지지 않고 구른다(오른쪽으로 갈수록 반시계 방향).
+        float rolled = (position.x - smallGearStartPos.x) / Mathf.Max(1f, pinionRollRadius) * Mathf.Rad2Deg;
+        smallGear.localRotation = Quaternion.Euler(0f, 0f, rolled);
+    }
+
+    private float QuantizeWaitFill(float fill)
+    {
+        int ticks = Mathf.Max(1, waitTickCount);
+        return Mathf.Ceil(fill * ticks - 0.0001f) / ticks;
+    }
+
+    private Transform RootTransform => root != null ? root.transform : transform;
+
+    private void PlayAppear()
+    {
+        Transform rootTransform = RootTransform;
+        rootTransform.DOKill();
+        rootTransform.localScale = rootBaseScale * appearScaleFrom;
+        rootTransform
+            .DOScale(rootBaseScale, appearDuration)
+            .SetEase(Ease.OutQuad)
+            .SetUpdate(true);
+    }
+
+    private void UpdateStagePips(float fill)
+    {
+        if (stagePips == null)
+            return;
+
+        Color stageColor = GetStageEmission(currentStage);
+        stageColor.a = 1f;
+
+        for (int i = 0; i < stagePips.Length; i++)
+        {
+            if (stagePips[i] == null)
+                continue;
+
+            bool locked = i < (isWaiting ? currentStage : currentStage - 1);
+            bool charging = !isWaiting && i == currentStage - 1;
+
+            stagePips[i].color = locked
+                ? stageColor
+                : charging
+                    ? Color.Lerp(stagePipOffColor, stageColor, fill)
+                    : stagePipOffColor;
+        }
+    }
+
+    private void UpdateWarningBlink()
+    {
+        if (!isWaiting || lineMaterial == null)
+            return;
+
+        if (lineEmissionTween != null && lineEmissionTween.IsActive())
+            return;
+
+        bool dim = targetFill <= warningFill
+            && Mathf.Repeat(Time.unscaledTime, warningBlinkInterval * 2f) >= warningBlinkInterval;
+
+        SetEmission(
+            lineMaterial,
+            GetStageEmission(currentStage) * waitingEmissionIntensity * (dim ? warningBlinkLevel : 1f));
     }
 
     private void RotateGears()
     {
-        float direction = isWaiting ? -1f : 1f;
-        float multiplier = isWaiting ? waitingRotationMultiplier : 1f;
         float dt = Time.unscaledDeltaTime;
 
-        if (bigGear != null)
-            bigGear.Rotate(0f, 0f, -direction * bigGearRotationSpeed * multiplier * dt);
+        if (isWaiting)
+        {
+            // 대기: 남은 시간이 한 칸 줄 때마다 시계처럼 한 칸씩 끊어 돈다(준비 때와 반대 방향).
+            int tick = Mathf.FloorToInt((1f - targetFill) * Mathf.Max(1, waitTickCount));
 
-        if (smallGear != null)
-            smallGear.Rotate(0f, 0f, direction * smallGearRotationSpeed * multiplier * dt);
+            if (tick > waitTick)
+            {
+                tickAngleTarget += waitTickDegrees * (tick - waitTick);
+                waitTick = tick;
+            }
+
+            float next = Mathf.Lerp(tickAngle, tickAngleTarget, 1f - Mathf.Exp(-waitTickSharpness * dt));
+            float step = next - tickAngle;
+            tickAngle = next;
+
+            if (bigGear != null)
+                bigGear.Rotate(0f, 0f, step);
+
+            return;
+        }
+
+        // 준비: 채울수록 모터가 올라가듯 빨라진다.
+        float spinUp = Mathf.Lerp(chargeSpinStart, chargeSpinEnd, currentFill);
+
+        if (bigGear != null)
+            bigGear.Rotate(0f, 0f, -bigGearRotationSpeed * spinUp * dt);
     }
 
     private void UpdateSpark()
@@ -461,7 +608,11 @@ public class PlayerGearUI : MonoBehaviour
         if (sparkTimer > 0f)
             return;
 
-        sparkTimer = sparkInterval;
+        // 준비 중에는 작은 톱니가 게이지를 긁으며 나아가 찰수록 불꽃이 잦아지고,
+        // 대기 중에는 맞물린 큰 톱니에서 드문드문 튄다.
+        sparkTimer = isWaiting
+            ? sparkInterval * waitingSparkIntervalMultiplier
+            : sparkInterval / Mathf.Lerp(1f, chargeSparkRateMax, currentFill);
 
         FeedbackPlayer feedbackPlayer = GameManager.Instance != null
             ? FeedbackPlayer.Instance
@@ -470,11 +621,10 @@ public class PlayerGearUI : MonoBehaviour
         if (feedbackPlayer == null)
             return;
 
-        if (bigGearSparkPoint != null)
-            feedbackPlayer.Play(sparkFeedback, bigGearSparkPoint);
+        Transform point = isWaiting ? bigGearSparkPoint : smallGearSparkPoint;
 
-        if (smallGearSparkPoint != null)
-            feedbackPlayer.Play(sparkFeedback, smallGearSparkPoint);
+        if (point != null)
+            feedbackPlayer.Play(sparkFeedback, point);
     }
 
     private void UpdateTexts()
@@ -482,8 +632,16 @@ public class PlayerGearUI : MonoBehaviour
         if (stageText != null)
         {
             stageText.text = currentStage <= 0 ? "0" : $"{currentStage}";
-            stageText.color = GetTextColor();
+
+            // 아직 물리지 않은 단계(준비 중)는 흐리게, 준비 완료면 또렷하게 찍는다.
+            Color textColor = GetTextColor();
+            textColor.a = isWaiting ? 1f : chargingTextAlpha;
+            stageText.color = textColor;
         }
+    }
+    public Color GetStageColor(int stage)
+    {
+        return GetStageEmission(stage);
     }
     private Color GetTextColor()
     {
@@ -536,6 +694,10 @@ public class PlayerGearUI : MonoBehaviour
     {
         KillTweens();
 
+        waitTick = 0;
+        tickAngle = 0f;
+        tickAngleTarget = 0f;
+
         if (bigGear != null)
         {
             bigGear.DOKill();
@@ -549,6 +711,39 @@ public class PlayerGearUI : MonoBehaviour
                 .SetUpdate(true);
         }
 
+        if (smallGear != null)
+        {
+            smallGear.DOKill();
+            smallGear.localScale = Vector3.one;
+            smallGear
+                .DOPunchScale(
+                    Vector3.one * punchScalePower,
+                    punchDuration,
+                    punchVibrato,
+                    0.8f)
+                .SetUpdate(true);
+        }
+
+        if (stageText != null)
+        {
+            stageText.transform.localScale = Vector3.one * stageStampScale;
+            stageText.transform
+                .DOScale(1f, stageStampDuration)
+                .SetEase(Ease.OutBack)
+                .SetUpdate(true);
+        }
+
+        if (stageWeaponIcon != null)
+        {
+            RectTransform icon = stageWeaponIcon.rectTransform;
+            icon.DOKill();
+            icon.localScale = Vector3.one * weaponIconPopScale;
+            icon
+                .DOScale(1f, weaponIconPopDuration)
+                .SetEase(Ease.OutBack)
+                .SetUpdate(true);
+        }
+
         FlashMaterialEmission(bigGearMaterial, ref bigEmissionTween);
         FlashMaterialEmission(smallGearMaterial, ref smallEmissionTween);
         FlashMaterialEmission(lineMaterial, ref lineEmissionTween);
@@ -557,8 +752,9 @@ public class PlayerGearUI : MonoBehaviour
             ? FeedbackPlayer.Instance
             : null;
 
+        // 체결 효과와 소리는 PlayerGearVisual이 몸에서 재생하고, 여기서는 게이지의 큰 톱니에서 튀는 불꽃만 낸다.
         if (feedbackPlayer != null && stageUpFeedback != null)
-            feedbackPlayer.Play(stageUpFeedback, transform);
+            feedbackPlayer.Play(stageUpFeedback, bigGear != null ? bigGear : transform);
     }
     private void FlashMaterialEmission(Material mat, ref Tween tween)
     {
@@ -620,7 +816,21 @@ public class PlayerGearUI : MonoBehaviour
         lineEmissionTween = null;
 
         if (stageText != null)
+        {
             stageText.transform.DOKill();
+            stageText.transform.localScale = Vector3.one;
+        }
 
+        if (smallGear != null)
+        {
+            smallGear.DOKill();
+            smallGear.localScale = Vector3.one;
+        }
+
+        if (stageWeaponIcon != null)
+        {
+            stageWeaponIcon.rectTransform.DOKill();
+            stageWeaponIcon.rectTransform.localScale = Vector3.one;
+        }
     }
 }

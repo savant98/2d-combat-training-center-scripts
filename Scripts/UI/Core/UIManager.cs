@@ -388,9 +388,9 @@ public class UIManager : MonoBehaviour
     {
         screenEffect.OnTrainingCompletePanel();
     }
-    public void StartWeaponSwap(WeaponSet weaponSet, float value)
+    public void StartWeaponSwap(WeaponSet weaponSet, float value, bool animate = false)
     {
-        hud.SwapWeaponSetImage(weaponSet, value);
+        hud.SwapWeaponSetImage(weaponSet, value, animate);
     }
     public void ShowBossHP(bool value)
     {

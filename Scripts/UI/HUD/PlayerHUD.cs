@@ -63,6 +63,12 @@ public class PlayerHUD : MonoBehaviour
     [SerializeField] private float readyIconAlpha = 1f;
     [SerializeField] private float preparingIconAlpha = 0.35f;
 
+    [Header("Weapon Swap Motion")]
+    [SerializeField] private float weaponSwapSlotScale = -0.4f;
+    [SerializeField] private float weaponSwapSlotDegrees = -40f;
+    [SerializeField] private float weaponSwapSlotDuration = 0.24f;
+    [SerializeField] private float weaponSwapSlotStagger = 0.025f;
+
     private static readonly int EmissionColorID = Shader.PropertyToID("_EmissionColor");
 
     private Material skillGaugeBarMaterial;
@@ -164,7 +170,7 @@ public class PlayerHUD : MonoBehaviour
             slot.cooldownText.gameObject.SetActive(false);
         }
     }
-    public void SwapWeaponSetImage(WeaponSet weaponSet, float value)
+    public void SwapWeaponSetImage(WeaponSet weaponSet, float value, bool animate = false)
     {
         if (weaponSwapAnimator != null)
         {
@@ -180,6 +186,32 @@ public class PlayerHUD : MonoBehaviour
 
         UpdateWeaponSetImage(weaponSet, value);
         UpdateNormalSlotStatic();
+
+        if (animate)
+            PlayWeaponSwapSlotMotion();
+    }
+
+    // 무기를 바꾸면 슬롯 아이콘이 왼쪽부터 차례로 돌며 튄다(실린더가 돌아 새 무기가 들어오는 느낌).
+    private void PlayWeaponSwapSlotMotion()
+    {
+        PunchSlotIcon(normalSlot, 0);
+        PunchSlotIcon(gearStage1Slot, 1);
+        PunchSlotIcon(gearStage2Slot, 2);
+        PunchSlotIcon(gearStage3Slot, 3);
+        PunchSlotIcon(secondarySlot, 4);
+    }
+
+    private void PunchSlotIcon(WeaponHudSlot slot, int order)
+    {
+        if (slot == null || slot.icon == null)
+            return;
+
+        RectTransform icon = slot.icon.rectTransform;
+        icon.DOKill(true);
+
+        float delay = order * weaponSwapSlotStagger;
+        icon.DOPunchScale(Vector3.one * weaponSwapSlotScale, weaponSwapSlotDuration, 6, 0.5f).SetDelay(delay);
+        icon.DOPunchRotation(new Vector3(0f, 0f, weaponSwapSlotDegrees), weaponSwapSlotDuration, 6, 0.5f).SetDelay(delay);
     }
     public void UpdateWeaponSetImage(WeaponSet weaponSet, float value)
     {
@@ -382,6 +414,9 @@ public class PlayerHUD : MonoBehaviour
             return;
 
         slot.circle.rectTransform.DOKill();
+
+        if (slot.icon != null)
+            slot.icon.rectTransform.DOKill();
     }
 
     #region Skill Effect

@@ -60,6 +60,10 @@ public class PlayerWeaponAbility : PlayerAbility
     private float gearTimer = 0f;
     private bool isGearHeld = false;
 
+    // Gear·무기 변경의 몸 둘레 표시. DashAbility처럼 실행 중에 Player 아래에 만든다.
+    private PlayerGearVisual gearVisual;
+    private PlayerWeaponSwapVisual weaponSwapVisual;
+
     public override void Initialize(AbilityManager manager)
     {
         base.Initialize(manager);
@@ -78,6 +82,18 @@ public class PlayerWeaponAbility : PlayerAbility
         // 다음 단계에서 PlayerController에 추가할 이벤트
         controller.OnGearPressed += HandleGearPressed;
         controller.OnGearReleased += HandleGearReleased;
+
+        if (weaponData.gearVisual != null)
+        {
+            gearVisual = Instantiate(weaponData.gearVisual, transform);
+            gearVisual.Initialize(weaponData, gearUI, feedbackPlayer);
+        }
+
+        if (weaponData.weaponSwapVisual != null)
+        {
+            weaponSwapVisual = Instantiate(weaponData.weaponSwapVisual, transform);
+            weaponSwapVisual.Initialize(controller.model.transform.Find("Circle"));
+        }
 
         ApplyWeaponSet(0, true);
 
@@ -265,7 +281,7 @@ public class PlayerWeaponAbility : PlayerAbility
             maxSkillGauge,
             weaponData.weaponSets[currentSetIndex]);
 
-        CancelGear();
+        CancelGear(PlayerGearVisual.EndReason.Fired);
         StartWindup();
     }
 
@@ -357,6 +373,9 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void ApplyWeaponSet(int setIndex, bool firstInit = false)
     {
+        // 바꾸기 전 세트의 기본 무기(교체 아이콘에 나가는 쪽으로 표시)
+        WeaponBaseSO previousWeapon = firstInit ? null : normalWeapon;
+
         if (!firstInit)
         {
             UnBindWeaponEvents();
@@ -389,10 +408,21 @@ public class PlayerWeaponAbility : PlayerAbility
 
         weaponModels[currentSetIndex].SetActive(true);
 
-        UIManager.Instance.StartWeaponSwap(set, skillGauge);
+        UIManager.Instance.StartWeaponSwap(set, skillGauge, !firstInit);
 
         if (!firstInit)
+        {
             FeedbackPlayer.Instance.Play(weaponData.swapFeedback, transform);
+
+            if (weaponSwapVisual != null)
+            {
+                weaponSwapVisual.Play(
+                    previousWeapon != null ? previousWeapon.weaponSprite : null,
+                    normalWeapon != null ? normalWeapon.weaponSprite : null,
+                    set.swapColor,
+                    weaponModels[currentSetIndex]);
+            }
+        }
     }
     private void BindWeaponEvents()
     {
@@ -524,7 +554,7 @@ public class PlayerWeaponAbility : PlayerAbility
         // 충전 중 키를 떼면 어떤 단계든 Gear 전체 취소.
         if (gearState == GearState.Charging)
         {
-            CancelGear();
+            CancelGear(PlayerGearVisual.EndReason.Disengaged);
         }
 
         // Waiting 중 Release는 허용.
@@ -576,7 +606,7 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (!isGearHeld)
         {
-            CancelGear();
+            CancelGear(PlayerGearVisual.EndReason.Disengaged);
             return;
         }
 
@@ -607,7 +637,7 @@ public class PlayerWeaponAbility : PlayerAbility
         // 대기 시간이 끝나면 해제.
         if (gearStage >= 3)
         {
-            CancelGear();
+            CancelGear(PlayerGearVisual.EndReason.Disengaged);
             return;
         }
 
@@ -620,10 +650,10 @@ public class PlayerWeaponAbility : PlayerAbility
         }
 
         // 키를 누르고 있지 않다면 기존처럼 Gear 해제.
-        CancelGear();
+        CancelGear(PlayerGearVisual.EndReason.Disengaged);
     }
 
-    private void CancelGear()
+    private void CancelGear(PlayerGearVisual.EndReason reason = PlayerGearVisual.EndReason.Silent)
     {
         gearState = GearState.Inactive;
         gearStage = 0;
@@ -635,11 +665,16 @@ public class PlayerWeaponAbility : PlayerAbility
         // Gear 해제 후 기본공격으로 발동되는 것을 방지
         normalWeaponBuffer.Clear();
 
+        if (gearVisual != null)
+            gearVisual.End(reason);
+
         UpdateGearUI();
     }
 
     private void UpdateGearUI()
     {
+        UpdateGearVisual();
+
         if (gearUI == null)
             return;
 
@@ -669,6 +704,28 @@ public class PlayerWeaponAbility : PlayerAbility
             gearUI.SetGearUI(true, gearStage, fill, true);
             UpdateGearStageCooldownUI();
         }
+    }
+    private void UpdateGearVisual()
+    {
+        if (gearVisual == null)
+            return;
+
+        if (gearState == GearState.Charging)
+        {
+            float chargeTime = Mathf.Max(0.0001f, weaponData.gearStageChargeTime);
+            gearVisual.SetCharging(chargingTargetStage, Mathf.Clamp01(gearTimer / chargeTime), IsGearWeaponReady(chargingTargetStage));
+        }
+        else if (gearState == GearState.Waiting)
+        {
+            float waitTime = Mathf.Max(0.0001f, weaponData.gearWaitTime);
+            gearVisual.SetWaiting(gearStage, Mathf.Clamp01(gearTimer / waitTime), IsGearWeaponReady(gearStage));
+        }
+    }
+
+    private bool IsGearWeaponReady(int stage)
+    {
+        WeaponBaseSO weapon = weaponData.weaponSets[currentSetIndex].GetGearWeapon(stage);
+        return weapon != null && skillGauge >= weapon.skillGauge && IsWeaponCooldownReady(weapon);
     }
     #endregion
 
