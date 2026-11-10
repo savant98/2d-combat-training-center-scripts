@@ -15,6 +15,10 @@ public class EnemyShieldSystem : MonoBehaviour
     public event Action OnBreakEnd;
 
     public event Action<WeaponBaseSO.DamageInfo> OnShieldDamaged;
+    // 쉴드가 실제로 잃은 양(남은 쉴드를 넘는 피해는 뺀다). 훈련 기록이 읽기만 한다.
+    public static event Action<EnemyHealth, WeaponBaseSO.DamageInfo, float> ShieldDamageApplied;
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetShieldDamageApplied() => ShieldDamageApplied = null;
     public float MaximumShield => data.maxShield;
     private EnemyShieldDataSO trainingData;
 
@@ -172,6 +176,8 @@ public class EnemyShieldSystem : MonoBehaviour
     private void ApplyShieldDamage(WeaponBaseSO.DamageInfo dmgInfo, Vector3 hitPosition)
     {
         OnShieldDamaged?.Invoke(dmgInfo);
+        float shieldApplied = Mathf.Clamp(dmgInfo.damage, 0f, Mathf.Max(0f, CurrentShield));
+        if (shieldApplied > 0f) ShieldDamageApplied?.Invoke(health, dmgInfo, shieldApplied);
         CurrentShield -= dmgInfo.damage;
         regenTimer = data.regenDelay;
 

@@ -9,7 +9,6 @@ public static class WaveRoomBinding
 {
     public static void Apply(object target, string path, UnityEngine.Object value)
     {
-        if (target is Canvas canvas && path == "m_Camera") { canvas.worldCamera = value as Camera; return; }
         if (target is IConstraint constraint && path.StartsWith("m_Sources.Array.data[") && path.EndsWith(".sourceTransform"))
         {
             int start = path.IndexOf('[') + 1;

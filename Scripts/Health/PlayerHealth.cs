@@ -12,6 +12,15 @@ public class PlayerHealth : HealthBase
 
     public event Action OnPlayerDeath;
     public event Action<WeaponBaseSO.DamageInfo> OnDamaged;
+    // 실제로 잃은 체력(남은 체력을 넘는 피해는 뺀다)과 실제로 회복한 체력. 훈련 기록이 읽기만 한다.
+    public event Action<WeaponBaseSO.DamageInfo, float> OnDamageApplied;
+    public event Action<WeaponBaseSO.DamageInfo, float> OnHealed;
+    // 사망 처리부터 ResetHealth까지 true다. 사망 이벤트는 사망 한 번에 한 번만 나간다.
+    public bool IsDead { get; private set; }
+    // 지금 처리 중인 피격이 끝나면 사망한다(피격 이벤트 안에서 ForceDeath가 요청됨). 같은 피격을 듣는 쪽이 회복·되돌림을 건너뛸 때 본다.
+    public bool IsDeathPending => deathRequested;
+    private bool applyingDamage;
+    private bool deathRequested;
 
     private Material hitMaterial;
     private Coroutine coroutine;
@@ -32,6 +41,7 @@ public class PlayerHealth : HealthBase
     }
     public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
+        if (IsDead) return;
         var grab = GetComponentInParent<PlayerController>().AbilityManager.Grab;
         // 잡기 보호는 반격 판정보다 먼저 적용하고 전역 무적 상태와 분리한다.
         if (grab != null && grab.BlocksOtherDamage) return;
@@ -46,15 +56,27 @@ public class PlayerHealth : HealthBase
     }
     private void ApplyDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition, bool grabbed)
     {
+        float before = currentHP;
         currentHP -= damageInfo.damage;
-        OnDamaged?.Invoke(damageInfo);
+        applyingDamage = true;
+        try
+        {
+            OnDamageApplied?.Invoke(damageInfo, Mathf.Clamp(damageInfo.damage, 0f, Mathf.Max(0f, before)));
+            OnDamaged?.Invoke(damageInfo);
+        }
+        finally { applyingDamage = false; }
+        // 이 피격으로 패배가 확정됐으면(ForceDeath 요청) 피격 경직·히트스톱 없이 이 자리에서 사망 처리한다.
+        // 피격 히트스톱이 걸리면 그것이 끝나면서 사망 연출의 시간 정지를 풀어 버린다.
+        bool forced = deathRequested;
+        deathRequested = false;
+        if (forced) currentHP = 0;
         if (UIManager.Instance != null) UIManager.Instance.UpdateHP(currentHP, maxHP);
         if (FloatingTextManager.Instance != null)
             FloatingTextManager.Instance.ShowDamage(damageInfo, transform.position + Vector3.up * .5f, Color.red);
         if (currentHP <= 0)
         {
             currentHP = 0;
-            if (grabbed) CompleteDeath(); else Die();
+            if (grabbed || forced) CompleteDeath(); else Die();
             return;
         }
         if (!grabbed) hitAbility.Hit();
@@ -67,7 +89,9 @@ public class PlayerHealth : HealthBase
     // 회복 순간 본체 톱니가 초록빛으로 번쩍였다가 원래 발광색으로 돌아온다. 피격 번쩍임과 같은 경로라 서로 끊어 준다.
     public override void Heal(WeaponBaseSO.DamageInfo damageInfo)
     {
+        float before = currentHP;
         base.Heal(damageInfo);
+        OnHealed?.Invoke(damageInfo, Mathf.Max(0f, currentHP - before));
         if (hitSprite == null) return;
         if (coroutine != null) StopCoroutine(coroutine);
         coroutine = StartCoroutine(HealSpriteFeedback());
@@ -110,6 +134,7 @@ public class PlayerHealth : HealthBase
         base.ResetHealth();
         UIManager.Instance.UpdateHP(maxHP, maxHP);
         IsInvincible = false;
+        IsDead = false;
         hitMaterial.SetColor("_EmissionColor", initialColor);
     }
     protected override void Die()
@@ -119,8 +144,26 @@ public class PlayerHealth : HealthBase
 
         CompleteDeath();
     }
+    // 무적·잡기 보호·반격 창·피격 무적과 무관하게 한 번만 사망 처리한다(훈련 성적이 미흡이 됐을 때 TrainingRunTracker가 부른다).
+    // 이미 사망했으면 false. 피격 이벤트(OnDamaged) 안에서 부르면 그 피격 처리가 끝나는 자리에서 사망한다.
+    public bool ForceDeath()
+    {
+        if (IsDead) return false;
+        if (applyingDamage)
+        {
+            deathRequested = true;
+            return true;
+        }
+        currentHP = 0;
+        if (UIManager.Instance != null) UIManager.Instance.UpdateHP(currentHP, maxHP);
+        hitAbility.CancelForGrab();     // 피격 경직 중이면 Hit 자세를 끈다
+        CompleteDeath();
+        return true;
+    }
     private void CompleteDeath()
     {
+        if (IsDead) return;
+        IsDead = true;
         IsInvincible = true;
         if (coroutine != null) StopCoroutine(coroutine);
         Debug.Log("Player Dead");

@@ -15,6 +15,8 @@ public class StageHUD : MonoBehaviour
     [SerializeField] private GameObject warningEffect;
 
     //private Tween hideHPTween;
+    // 보스 HP 바 자리(훈련 코너 상황판이 겹치지 않게 피할 때 쓴다).
+    public RectTransform BossBarRect => hpBar != null ? hpBar.rectTransform : null;
     public void ShowWarningLine()
     {
         warningEffect.SetActive(false);

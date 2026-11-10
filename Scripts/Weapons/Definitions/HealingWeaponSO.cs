@@ -34,7 +34,7 @@ public class HealingWeaponSO : WeaponBaseSO
         {
             case Faction.Player:
                 PlayerController playerController = controller as PlayerController;
-                playerController.Health.Heal(damageInfo);
+                playerController.Health.Heal(WithSource(damageInfo));
                 yield break;
             case Faction.Enemy: 
                 EnemyController enemyController = controller as EnemyController;

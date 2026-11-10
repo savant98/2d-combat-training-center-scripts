@@ -27,13 +27,34 @@ public class Room : MonoBehaviour
     private float waitForBossEntryTime = 3.5f;
     private Tween bossEntryCameraTween;
     private Vector3 currentSpawnPoint;
+    private Coroutine waveCompleteRoutine;
     public void ReleaseContent()
     {
-        if (waveManager != null) waveManager.OnAllWavesCleared -= HandleWavesCleared;
+        if (waveManager != null)
+        {
+            waveManager.OnAllWavesCleared -= HandleWavesCleared;
+            waveManager.WavesReset -= CancelWaveComplete;
+        }
         StopAllCoroutines();
+        waveCompleteRoutine = null;
         if (virtualCamera != null) ResetBossEntryCamera();
     }
-    private void HandleWavesCleared() => StartCoroutine(WaveCompleteRoutine());
+    private void HandleWavesCleared()
+    {
+        CancelWaveComplete();
+        waveCompleteRoutine = StartCoroutine(WaveCompleteRoutine());
+    }
+    // Wave가 다시 시작되거나 강제로 끝나면(재도전·로비 복귀) 진행 중이던 완료 연출을 멈춘다.
+    private void CancelWaveComplete()
+    {
+        if (waveCompleteRoutine != null) StopCoroutine(waveCompleteRoutine);
+        waveCompleteRoutine = null;
+    }
+    // 완료 연출 도중 플레이어가 패배(사망·훈련 성적 미흡)했으면 패배 연출만 진행한다.
+    private static bool IsPlayerDefeated()
+    {
+        return GameManager.Instance != null && GameManager.Instance.Player != null && GameManager.Instance.Player.Health.IsDead;
+    }
     public void BindContent(TrainingRoomContent content)
     {
         rootObject = content.gameObject;
@@ -43,6 +64,7 @@ public class Room : MonoBehaviour
         defaultOrthographicSize = virtualCamera.Lens.OrthographicSize;
         virtualCamera.enabled = false;
         waveManager.OnAllWavesCleared += HandleWavesCleared;
+        waveManager.WavesReset += CancelWaveComplete;
     }
     private void Awake()
     {
@@ -53,7 +75,10 @@ public class Room : MonoBehaviour
         virtualCamera.enabled = false;
 
         if (waveManager != null)
+        {
             waveManager.OnAllWavesCleared += HandleWavesCleared;
+            waveManager.WavesReset += CancelWaveComplete;
+        }
 
         rootObject.SetActive(false);
     }
@@ -134,10 +159,12 @@ public class Room : MonoBehaviour
     {
         // Wave Clear이후 여유 시간
         yield return new WaitForSeconds(2f);
+        if (IsPlayerDefeated()) yield break;
         UIManager.Instance.ShowBossHP(false);
         UIManager.Instance.StartTrainingCompletePanelEffect();
 
         yield return new WaitForSeconds(2f);
+        if (IsPlayerDefeated()) yield break;
 
         if (TrainingRunTracker.Instance != null && TrainingRunTracker.Instance.LastRunResult.cleared)
         {
@@ -147,6 +174,7 @@ public class Room : MonoBehaviour
         }
 
         yield return new WaitForSeconds(1f);
+        if (IsPlayerDefeated()) yield break;
 
         var terrain = waveManager != null ? waveManager.GetComponentInParent<WaveCellTerrain>(true) : null;
         WaveCompletionPortal.Apply(waveManager != null ? waveManager.Data : null, clearPortalPrefab,

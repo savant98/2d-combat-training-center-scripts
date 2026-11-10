@@ -21,6 +21,7 @@ public class TutorialPositionResetter : WorldEntityBase
     private bool blocking;
     private bool resetting;
     private bool holdingForces;
+    private Coroutine returnRoutine;
 
     public bool IsResetting => resetting;
     public bool CourseLaserOnly => courseLaserOnly;
@@ -31,6 +32,7 @@ public class TutorialPositionResetter : WorldEntityBase
         Unsubscribe();
         subscribedHealth = GameManager.Instance.Player.Health;
         subscribedHealth.OnDamaged += HandleTutorialFail;
+        subscribedHealth.OnPlayerDeath += HandlePlayerDeath;
     }
 
     public override void ForceReturnToPool()
@@ -44,10 +46,21 @@ public class TutorialPositionResetter : WorldEntityBase
     {
         // 코스 레이저만 되돌리는 경우, 다른 피해(코스 적)는 회복하지 않고 그 자리에서 이어 간다.
         if (courseLaserOnly && !ChasingLaserWall.IsCourseLaserHit) return;
+        // 이 피격으로 패배가 확정됐으면(훈련 성적 미흡 자동 사망) 회복·되돌림을 하지 않는다. 사망 연출과 겹치지 않게 한다.
+        if (subscribedHealth != null && (subscribedHealth.IsDead || subscribedHealth.IsDeathPending)) return;
         // 받은 데미지 복구
         GameManager.Instance.Player.Health.Heal(damageInfo);
         if (resetting || !isActiveAndEnabled) return;
-        StartCoroutine(ReturnBasePointTransition());
+        returnRoutine = StartCoroutine(ReturnBasePointTransition());
+    }
+
+    // 되돌리는 도중 플레이어가 사망하면(제한 시간 초과 등) 되돌림을 멈추고 화면과 입력을 돌려준다.
+    private void HandlePlayerDeath()
+    {
+        if (!resetting) return;
+        if (returnRoutine != null) StopCoroutine(returnRoutine);
+        returnRoutine = null;
+        RecoverScreen();
     }
 
     private IEnumerator ReturnBasePointTransition()
@@ -98,7 +111,11 @@ public class TutorialPositionResetter : WorldEntityBase
 
     private void Unsubscribe()
     {
-        if (subscribedHealth != null) subscribedHealth.OnDamaged -= HandleTutorialFail;
+        if (subscribedHealth != null)
+        {
+            subscribedHealth.OnDamaged -= HandleTutorialFail;
+            subscribedHealth.OnPlayerDeath -= HandlePlayerDeath;
+        }
         subscribedHealth = null;
     }
 

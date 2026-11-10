@@ -1,5 +1,4 @@
 using DG.Tweening;
-using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 public class ScreenEffect : MonoBehaviour
@@ -11,11 +10,6 @@ public class ScreenEffect : MonoBehaviour
     [Header("Break Effect")]
     [SerializeField] private GameObject shieldBreakPanel;
     [SerializeField] private GameObject breakPanel;
-
-    [Header("Wave Effect")]
-    [SerializeField] private GameObject wavePanel;
-    [SerializeField] private GameObject trainingCompletePanel;
-    [SerializeField] private TextMeshProUGUI waveText;
 
     [Header("Wireframe Effect")]
     [SerializeField] private Image wireframe;
@@ -29,9 +23,6 @@ public class ScreenEffect : MonoBehaviour
 
         if (breakPanel != null)
             breakPanel.SetActive(false);
-
-        if (wavePanel != null)
-            wavePanel.SetActive(false);
 
         if (wireframe != null)
         {
@@ -56,18 +47,6 @@ public class ScreenEffect : MonoBehaviour
     public void OnScreenFadeEffect(float value, float duration)
     {
         fadePanel.DOFade(value, duration);
-    }
-    public void OnWavePanelEffect(int value)
-    {
-        wavePanel.SetActive(false);
-        wavePanel.SetActive(true);
-
-        waveText.text = "훈련 : " + value.ToString();
-    }
-    public void OnTrainingCompletePanel()
-    {
-        trainingCompletePanel.SetActive(false);
-        trainingCompletePanel.SetActive(true);
     }
     public void OnWireframeEffect(float fadeValue, Color colorValue, float duration)
     {

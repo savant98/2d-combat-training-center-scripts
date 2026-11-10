@@ -22,9 +22,6 @@ public class UIManager : MonoBehaviour
     [SerializeField] private TrainingScoreboardUI trainingScoreboardUI;
     [SerializeField] private TrainingCompleteBoardUI completeScoreBoardUI;
 
-    [Header("DeathUI")]
-    [SerializeField] private DeathMenuController deathMenuController;
-
     [Header("PauseUI")]
     [SerializeField] private PauseMenuController pauseMenuController;
 
@@ -37,6 +34,7 @@ public class UIManager : MonoBehaviour
     [SerializeField] private float moveRepeatInterval = 0.12f;
     public bool IsUIInputBlocked { get; set; }
     public bool IsCompleteBoardOpen => completeScoreBoardUI != null && completeScoreBoardUI.IsOpen;
+    public bool IsDeathUIOpen => completeScoreBoardUI != null && completeScoreBoardUI.IsDefeatOpen;
 
     private readonly List<UIInputEntry> inputStack = new();
     private Vector2 lastMoveInput;
@@ -384,13 +382,17 @@ public class UIManager : MonoBehaviour
     {
         screenEffect.OnWireframeEffect(fadeValue, colorValue, duration);
     }
+    // Wave 전환 패널: TrainingScoreboard Prefab 안의 패널(2026-11-10 리메이크). 옛 ScreenEffect 패널은 2026-11-11에 지웠다.
     public void StartWavePanelEffect(int value)
     {
-        screenEffect.OnWavePanelEffect(value);
+        if (trainingScoreboardUI != null)
+            trainingScoreboardUI.PlayWaveTransition(value);
     }
+    // 모든 Wave 클리어 패널: TrainingCompleteBoard Prefab 안의 패널. 옛 ScreenEffect 패널은 2026-11-11에 지웠다.
     public void StartTrainingCompletePanelEffect()
     {
-        screenEffect.OnTrainingCompletePanel();
+        if (completeScoreBoardUI != null)
+            completeScoreBoardUI.PlayClearPanel();
     }
     public void StartWeaponSwap(WeaponSet weaponSet, float value, bool animate = false)
     {
@@ -406,21 +408,24 @@ public class UIManager : MonoBehaviour
         {
             stageHud.HideBossHP();
         }  
+        // 훈련 코너 상황판이 보스 HP 바와 겹치는 화면비(16:9 등)에서는 바 아래로 비켜 준다.
+        if (trainingScoreboardUI != null)
+            trainingScoreboardUI.SetBossBarArea(value ? stageHud.BossBarRect : null);
     }
     public void ShowWarningLine()
     {
         stageHud.ShowWarningLine();
+        // 보스 등장 경고는 훈련 한도 경고와 같은 자리에 뜬다. 그동안 한도 경고를 흐리게 한다.
+        if (trainingScoreboardUI != null)
+            trainingScoreboardUI.NotifyBossWarning();
     }
+    // 사망 UI: TrainingCompleteBoard Prefab 안의 패배 화면(2026-11-10 개편). 옛 PlayerDeathMenu는 2026-11-11에 지웠다.
     public void ShowDeathUI(bool value)
     {
-        if (value)
-        {
-            deathMenuController.Show();
-        }
-        else
-        {
-            deathMenuController.Hide();
-        }
+        if (completeScoreBoardUI == null || !completeScoreBoardUI.HasDefeatScreen)
+            return;
+        if (value) completeScoreBoardUI.ShowDefeat();
+        else completeScoreBoardUI.HideDefeat();
     }
     public void ShowTrainingScoreBoard(bool value, TrainingRunTracker tracker)
     {

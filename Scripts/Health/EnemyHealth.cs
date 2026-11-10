@@ -28,6 +28,12 @@ public class EnemyHealth : HealthBase
     public bool IsBossEnemy { get; set; }
     public float MinimumHealth => minimumHealth;
 
+    // 적이 실제로 잃은 체력(무적 차단·체력 하한 적용 뒤, 남은 체력을 넘는 피해는 뺀다). 체력이 줄기 직전에 나간다.
+    // 훈련 기록이 읽기만 한다. 구독자는 게임 상태를 바꾸지 않는다.
+    public static event Action<EnemyHealth, WeaponBaseSO.DamageInfo, float> DamageApplied;
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetDamageApplied() => DamageApplied = null;
+
     private readonly Dictionary<int,UnityEngine.Object> invulnerabilityOwners = new Dictionary<int,UnityEngine.Object>();
     private readonly List<int> expiredInvulnerability = new List<int>();
     private int nextInvulnerability;
@@ -87,6 +93,8 @@ public class EnemyHealth : HealthBase
             // Die 호출 전에 양의 피해만 남은 허용량으로 제한한다. 음수 피해는 기존 동작을 유지한다.
             damageInfo.damage = Mathf.Min(damageInfo.damage, Mathf.Max(0f, currentHP - minimumHealth));
         }
+        float applied = Mathf.Clamp(damageInfo.damage, 0f, Mathf.Max(0f, currentHP));
+        if (applied > 0f) DamageApplied?.Invoke(this, damageInfo, applied);
         base.TakeDamage(damageInfo, hitPosition);
 
         enemyUI.ShowHP(currentHP / maxHP, IsBossEnemy);

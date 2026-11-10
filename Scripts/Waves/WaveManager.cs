@@ -148,6 +148,17 @@ public class WaveManager : MonoBehaviour
         playerStartSequence?.Release();
         preparedCourses.Clear();
     }
+    // 플레이어가 패배했을 때(사망·훈련 성적 미흡) Wave 진행을 멈춘다. 그 뒤의 처치·목표 도달은 Wave를 끝내지 않고
+    // 다음 Wave 준비도 진행되지 않는다. 적과 지형은 그대로 두고, 재도전·로비 복귀의 ForceClear·BeginWaves가 정리한다.
+    public void HaltForPlayerDefeat()
+    {
+        StopAllCoroutines();
+        // 보스 등장 카메라(보스를 따라가며 확대)가 도는 중이었으면 그 코루틴도 함께 끊기므로 카메라를 플레이어로 돌려 둔다.
+        if (RoomManager.Instance != null && RoomManager.Instance.CurrentRoom != null) RoomManager.Instance.CurrentRoom.ResetBossEntryCamera();
+        isWaveActive = isSpawnActive = false;
+        playerStartSequence?.Release();
+        preparedCourses.Clear();
+    }
     private void SpawnWave(Wave wave)
     {
         currentWave = wave;
@@ -286,11 +297,15 @@ public class WaveManager : MonoBehaviour
 
     private void HandleEnemyDeath(EnemyController deadEnemy)
     {
-        if (!isWaveActive || currentWave.clearType != WaveClearType.DefeatAllTargets)
+        if (isWaveActive && currentWave.clearType != WaveClearType.DefeatAllTargets)
             return;
 
         EnemyPool.Instance.Despawn(deadEnemy);
         activeEnemies.Remove(deadEnemy);
+
+        // 패배로 Wave가 멈춘 뒤(HaltForPlayerDefeat) 처치된 표적은 회수만 하고 Wave 진행에는 반영하지 않는다.
+        if (!isWaveActive)
+            return;
 
         aliveTargets--;
 
@@ -337,6 +352,8 @@ public class WaveManager : MonoBehaviour
 
     private void CompleteWave()
     {
+        // 사망한 플레이어는 Wave를 끝낼 수 없다(사망 뒤 남은 공격·드론이 마지막 적을 처치해도 훈련 완료로 넘어가지 않는다).
+        if (GameManager.Instance != null && GameManager.Instance.Player != null && GameManager.Instance.Player.Health.IsDead) return;
         // 이전 코스가 닫히는 순간부터 다음 지형·Spawn 완료까지 같은 잠금을 유지한다.
         if (currentWaveIndex + 1 < waveData.waves.Length && currentWaveEntities.Exists(e => e is TrainingCourseActivator)) PlayerStartSequence.Hold();
         else playerStartSequence?.Release();
