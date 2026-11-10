@@ -46,6 +46,7 @@ public sealed class WaveEditorWindow : EditorWindow
     [SerializeField] private float iconSize = 64;
     [SerializeField] private int paletteCategory;
     [SerializeField] private bool editPlayerStart;
+    [SerializeField] private bool editClearPortal;
     private Rect leftSplitter, rightSplitter;
     private readonly WaveGridGeometry geometry = new();
     private Wave Current => data != null && data.waves != null && waveIndex >= 0 && waveIndex < data.waves.Length ? data.waves[waveIndex] : null;
@@ -108,10 +109,10 @@ public sealed class WaveEditorWindow : EditorWindow
                 using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
                 {
                     terrainSession = GUILayout.Toggle(terrainSession, new GUIContent("지형·발판 편집", "Wave 시작 지형 또는 시간별 지형 편집을 선택합니다."), EditorStyles.toolbarButton);
-                    if (middleWidth >= 330) editPlayerStart = GUILayout.Toggle(editPlayerStart, "입장점 이동", EditorStyles.toolbarButton);
+                    if (middleWidth >= 330) PointEditPicker();
                     if (GUILayout.Button("전체 보기", EditorStyles.toolbarButton)) Fit();
                 }
-                if (middleWidth < 330) editPlayerStart = GUILayout.Toggle(editPlayerStart, "입장점 이동", EditorStyles.toolbarButton);
+                if (middleWidth < 330) PointEditPicker();
                 if (terrainSession)
                 {
                     int target = terrainTarget == 1 ? 0 : 1;
@@ -130,6 +131,26 @@ public sealed class WaveEditorWindow : EditorWindow
             rightSplitter = Splitter(false);
             Details();
         }
+    }
+    private Vector2 DefaultPortalPoint()
+    {
+        var template = data.roomTemplate != null ? data.roomTemplate : AssetDatabase.LoadAssetAtPath<TrainingRoomContent>("Assets/Prefabs/Training/TrainingRoomBase.prefab");
+        return template != null && template.clearPortal != null
+            ? (Vector2)template.transform.InverseTransformPoint(template.clearPortal.transform.position)
+            : new Vector2(data.room.bounds.xMax - 3, data.room.bounds.yMin + 1.5f);
+    }
+    private void PointEditPicker()
+    {
+        int current = editClearPortal ? 2 : editPlayerStart ? 1 : 0;
+        int next = EditorGUILayout.Popup(current, new[] { "오브젝트 / 지형", "Wave 시작점 이동", "완료 포탈 이동" }, GUILayout.Width(132));
+        if (next != current) SetPointEditTarget(next);
+    }
+    private void SetPointEditTarget(int target)
+    {
+        editPlayerStart = target == 1;
+        editClearPortal = target == 2;
+        if (target != 0) mode = 1;
+        ResetGesture();
     }
     private void Toolbar()
     {
@@ -222,6 +243,11 @@ public sealed class WaveEditorWindow : EditorWindow
     private void Fit()
     {
         Vector2 min = LayoutBounds.min - Vector2.one * 3, max = LayoutBounds.max + Vector2.one * 3;
+        if (data.overrideClearPortalPosition)
+        {
+            min = Vector2.Min(min, data.clearPortalPosition - Vector2.one * 2);
+            max = Vector2.Max(max, data.clearPortalPosition + Vector2.one * 2);
+        }
         foreach (var spawn in Current.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
         {
             var point = spawn.spawnPosition + Offset;
@@ -303,19 +329,10 @@ public sealed class WaveEditorWindow : EditorWindow
             GUI.Label(new Rect(rect.x - 30, rect.yMax + 2, rect.width + 60, 18), spawn.prefab != null ? spawn.prefab.name : "참조 없음", markerStyle);
             if (spawn.isBossEnemy) GUI.Label(new Rect(rect.xMax - 15, rect.y, 15, 18), "B", markerStyle);
         }
-        DrawSpawnPoint(Local(WaveRoomState.EntryPoint(data)), new Color(.2f, .7f, 1), "훈련 입장점 (첫 Wave)");
-        if (Layout.centerPlayer)
-        {
-            Vector2 point = data.playerStart;
-            var controller = data.customRoom && data.roomTemplate != null ? data.roomTemplate.GetComponent<TrainingRoomLayoutController>() : null;
-            if (controller != null)
-            {
-                var target = new SerializedObject(controller).FindProperty("playerReturnPoint").objectReferenceValue as Transform;
-                if (target != null) point = data.roomTemplate.transform.InverseTransformPoint(target.position);
-            }
-            DrawSpawnPoint(Local(point), new Color(.8f, .5f, 1), "Wave 복귀 기준");
-        }
+        DrawSpawnPoint(Local(WaveRoomState.PlayerStartAt(data, waveIndex)), new Color(.2f, .7f, 1), $"Wave {waveIndex + 1} 시작점" + (Current.teleportAtStart ? " · Spawn" : ""));
         DrawSpawnPoint(Local(Offset), new Color(1, .72f, .2f), "Enemy / 발판 생성 기준");
+        if (data.overrideClearPortalPosition)
+            DrawSpawnPoint(Local(data.clearPortalPosition), new Color(.75f, .9f, .35f), "전체 Wave 완료 · Lobby 포탈");
         GUI.EndClip();
     }
     private Rect MarkerRect(int index)
@@ -335,6 +352,7 @@ public sealed class WaveEditorWindow : EditorWindow
     }
     private void UseBrush(GameObject value)
     {
+        editPlayerStart = editClearPortal = false;
         brush = value;if (WavePrefabVisuals.Classify(value) == WavePrefabVisuals.Category.Enemy) { terrainSession = false;selected = -1;selectedBatch = -1;eventIndex = -1;selectedCell = null; }ResetGesture();
     }
     private void ResetGesture()
@@ -389,7 +407,8 @@ public sealed class WaveEditorWindow : EditorWindow
         lastPaint = cell;
         if (mode == 2) { EraseGrid(point); return; }
         if (mode != 1) return;
-        if (editPlayerStart) Mutate(() => data.playerStart = Vector2Int.RoundToInt(point));
+        if (editClearPortal) Mutate(() => { data.overrideClearPortalPosition = true; data.clearPortalPosition = Vector2Int.RoundToInt(point); });
+        else if (editPlayerStart) Mutate(() => { Current.overridePlayerStart = true; Current.playerStart = Vector2Int.RoundToInt(point); });
         else if (terrainSession) Paint(cell, false);
         else if (!drag || brush != null && brush.GetComponent<WaveTerrainCellView>() != null) Place(point);
     }
@@ -701,7 +720,21 @@ public sealed class WaveEditorWindow : EditorWindow
                     if (mode != 2) EditorGUILayout.HelpBox("배치/예약을 취소하려면 상단 지우기를 선택하세요.",MessageType.None);
                 }
             }
-            EditorGUILayout.PropertyField(serialized.FindProperty("playerStart"), new GUIContent("플레이어 시작점"));
+            var startOverride = wave.FindPropertyRelative("overridePlayerStart");
+            var startPoint = wave.FindPropertyRelative("playerStart");
+            EditorGUI.BeginChangeCheck();
+            Vector2 nextStart = EditorGUILayout.Vector2Field("Wave 시작 좌표", startOverride.boolValue ? startPoint.vector2Value : data.playerStart);
+            if (EditorGUI.EndChangeCheck()) { startOverride.boolValue = true; startPoint.vector2Value = nextStart; }
+            Property(wave, "teleportAtStart", "시작 시 텔레포트 · Spawn 연출");
+            EditorGUILayout.HelpBox("지형 준비 중에는 이동·공격을 잠급니다. 체크하면 준비가 끝난 뒤 시작 좌표로 이동하고 기존 Spawn 연출을 재생한 다음 Wave를 시작합니다. 체크하지 않으면 현재 위치를 유지합니다.", MessageType.None);
+            GUILayout.Space(6);
+            GUILayout.Label("모든 Wave 완료 · Lobby 복귀", EditorStyles.boldLabel);
+            var portalOverride = serialized.FindProperty("overrideClearPortalPosition");
+            bool previousPortalOverride = portalOverride.boolValue;
+            EditorGUILayout.PropertyField(portalOverride, new GUIContent("완료 포탈 위치 직접 지정"));
+            if (!previousPortalOverride && portalOverride.boolValue) serialized.FindProperty("clearPortalPosition").vector2Value = DefaultPortalPoint();
+            if (portalOverride.boolValue) EditorGUILayout.PropertyField(serialized.FindProperty("clearPortalPosition"), new GUIContent("Lobby 복귀 포탈 좌표"));
+            EditorGUILayout.HelpBox("전체 Wave에서 공유하는 완료 포탈 위치입니다. 상단 완료 포탈 이동을 선택하면 격자에서도 옮길 수 있습니다. Lobby 도착 위치는 유지합니다.", MessageType.None);
             EditorGUILayout.LabelField("Enemy / 발판 생성 기준", $"({Offset.x:0.###}, {Offset.y:0.###})");
             Property(wave, "clearType", "클리어 조건");
             if (Current.clearType == WaveClearType.SurviveForTime) Property(wave, "surviveTime", "생존 시간 (초)");
@@ -715,15 +748,19 @@ public sealed class WaveEditorWindow : EditorWindow
             {
                 EditorGUILayout.PropertyField(serialized.FindProperty("roomTemplate"), new GUIContent("Room 콘텐츠 (카메라·진행 포함)"));
                 EditorGUILayout.PropertyField(serialized.FindProperty("customRoom"), new GUIContent("원본 커스텀 Room 보존"));
-                EditorGUILayout.PropertyField(serialized.FindProperty("adaptCameraToRoom"), new GUIContent("카메라 범위를 실내 크기에 맞춤"));
-                EditorGUILayout.HelpBox("기존 카메라의 Lens·Confiner·Follow 값을 보존합니다. 원래 범위가 변하는 관리자 평가에서만 위 설정을 사용합니다.", MessageType.None);
+                if (data.customRoom)
+                {
+                    EditorGUILayout.PropertyField(serialized.FindProperty("adaptCameraToRoom"), new GUIContent("카메라 범위를 실내 크기에 맞춤"));
+                    EditorGUILayout.HelpBox("커스텀 Room은 기존 카메라·코스 연출을 유지합니다. 실내 크기가 변하는 관리자 평가에서 위 설정을 사용합니다.", MessageType.None);
+                }
+                else EditorGUILayout.HelpBox("일반 Room은 일반 Platform으로 둘러싸인 연결 공간에 카메라·배경·통창을 자동으로 맞춥니다. OneWayPlatform은 경계를 막지 않습니다. 외부로 열렸거나 공간을 계산할 수 없으면 저장된 실내 범위를 사용합니다.", MessageType.None);
                 int backgroundIndex = backgrounds.IndexOf(pendingBackground) + 1;
                 int nextBackground = EditorGUILayout.Popup("배경 선택", backgroundIndex, new[] { "원본 배경 유지" }.Concat(backgrounds.Select(p => p.name)).ToArray());
                 if (nextBackground != backgroundIndex) pendingBackground = nextBackground == 0 ? null : backgrounds[nextBackground - 1];
                 pendingBackground = (GameObject)EditorGUILayout.ObjectField("배경 Prefab", pendingBackground, typeof(GameObject), false);
                 if (GUILayout.Button("선택한 배경 적용")) ApplySelectedBackground();
                 EditorGUILayout.PropertyField(serialized.FindProperty("training"), new GUIContent("훈련 기록 / 보상"));
-                EditorGUILayout.PropertyField(serialized.FindProperty("playerStart"), new GUIContent("플레이어 시작점"));
+                EditorGUILayout.PropertyField(serialized.FindProperty("playerStart"), new GUIContent("미지정 Wave의 기본 시작 좌표"));
                 if (data.cellMap.enabled) RoomProperties(serialized.FindProperty("room"));
                 else EditorGUILayout.PropertyField(serialized.FindProperty("room"), new GUIContent("기본 Room"), true);
                 Property(wave, "changeTerrain", "Wave 시작 시 지형 변경");
@@ -740,7 +777,10 @@ public sealed class WaveEditorWindow : EditorWindow
                 var spawn = wave.FindPropertyRelative("spawnObjects").GetArrayElementAtIndex(selected);
                 foreach (var pair in new[] { ("prefab", "Prefab"), ("spawnPosition", "생성 좌표 (원본 보존)"), ("isRequiredToClear", "처치 필수 목표"), ("isBossEnemy", "보스 등장"), ("keepAfterWave", "Wave 종료 후 유지"), ("lifetime", "생성 후 유지 제한 (0=무제한)"), ("goalKeyOverride", "목표 도달 키 (빈 값=원본)") }) Property(spawn, pair.Item1, pair.Item2);
                 float originalTime = WaveAuthoring.Times(Current)[selected];
-                float nextTime = EditorGUILayout.FloatField("실제 생성 시각 (초)", originalTime);
+                bool preparation = Current.spawnObjects[selected].prefab != null && Current.spawnObjects[selected].prefab.GetComponent<TrainingCourseActivator>() != null;
+                float nextTime = originalTime;
+                if (preparation) EditorGUILayout.HelpBox("코스 열림은 Wave 시작 전 지형 준비 이벤트입니다. 개별 시작점 이동은 위의 Wave 시작 좌표·텔레포트 설정을 사용합니다. 아래 대기 시간은 준비가 끝난 뒤 나머지 생성 타임라인에 적용합니다.", MessageType.None);
+                else nextTime = EditorGUILayout.FloatField("실제 생성 시각 (초)", originalTime);
                 Property(spawn, "spawnDelay", "이 항목 생성 후 대기 (초)");
                 serialized.ApplyModifiedProperties();
                 if (nextTime != originalTime) ChangeSpawnTime(selected,nextTime);
@@ -870,7 +910,6 @@ public sealed class WaveEditorWindow : EditorWindow
     {
         Property(room, "bounds", "카메라 실내 범위");
         Property(room, "spawnOffset", "Enemy 생성 기준점");
-        Property(room, "centerPlayer", "Wave 시작 시 중앙 복귀");
         Property(room, "faceCenter", "Enemy 중앙 바라보기");
     }
     private static void Property(SerializedProperty parent, string field, string label) => EditorGUILayout.PropertyField(parent.FindPropertyRelative(field), new GUIContent(label), true);

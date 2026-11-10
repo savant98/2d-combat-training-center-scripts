@@ -14,6 +14,12 @@ public class WaveManager : MonoBehaviour
     public WaveDataSO Data => waveData;
     public IReadOnlyList<WorldEntityBase> WorldEntities => currentWaveEntities;
     public Transform SpawnRoot => spawnRoot;
+    private WavePlayerStart playerStartSequence;
+    private readonly Dictionary<WaveSpawnInfo, WorldEntityBase> preparedCourses = new();
+    private WavePlayerStart PlayerStartSequence => playerStartSequence != null ? playerStartSequence
+        : playerStartSequence = gameObject.GetComponent<WavePlayerStart>() ?? gameObject.AddComponent<WavePlayerStart>();
+    public bool IsPreparingWave => playerStartSequence != null && playerStartSequence.IsHoldingPlayer;
+    public bool NextWaveTeleports => waveData != null && currentWaveIndex + 1 < waveData.waves.Length && waveData.waves[currentWaveIndex + 1].teleportAtStart;
     public event Action<Wave> WaveStarted;
     public event Action WaveEnded;
     private readonly List<GameObject> looseObjects = new();
@@ -44,6 +50,8 @@ public class WaveManager : MonoBehaviour
 
     public void BeginWaves(bool showWaveIntro = true)
     {
+        playerStartSequence?.Release();
+        preparedCourses.Clear();
         if (waveData.cellMap.enabled && GetComponentInParent<WaveCellTerrain>(true) == null)
         {
             var room = GetComponentInParent<Room>(true);
@@ -74,6 +82,8 @@ public class WaveManager : MonoBehaviour
     }
     public void ForceClear()
     {
+        playerStartSequence?.Release();
+        preparedCourses.Clear();
         WavesReset?.Invoke();
         ClearActiveWaveHandlers();
         ClearCurrentWaveEntities();
@@ -102,15 +112,41 @@ public class WaveManager : MonoBehaviour
     }
     private IEnumerator PrepareAndSpawn()
     {
-        var cells = GetComponentInParent<WaveCellTerrain>(true);
-        if (cells != null) yield return cells.Prepare(currentWaveIndex);
-        else
+        var wave = waveData.waves[currentWaveIndex];
+        PlayerStartSequence.Hold();
+        try
         {
-            if (roomLayout != null && roomLayout.isActiveAndEnabled) yield return roomLayout.PrepareWave(currentWaveIndex);
-            var builder = GetComponentInParent<WaveRoomBuilder>();
-            if (builder != null) yield return builder.Prepare(waveData.waves[currentWaveIndex]);
+            var cells = GetComponentInParent<WaveCellTerrain>(true);
+            if (cells != null) yield return cells.Prepare(currentWaveIndex);
+            else
+            {
+                if (roomLayout != null && roomLayout.isActiveAndEnabled) yield return roomLayout.PrepareWave(currentWaveIndex);
+                var builder = GetComponentInParent<WaveRoomBuilder>();
+                if (builder != null) yield return builder.Prepare(waveData.waves[currentWaveIndex]);
+            }
+            // 코스 벽의 열림도 공통 준비 단계에 넣고 나머지 예약 시각은 Wave 시작 이후로 유지한다.
+            foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
+            {
+                if (info.prefab == null || info.prefab.GetComponent<TrainingCourseActivator>() == null) continue;
+                var entity = WorldEntityPool.Instance.Spawn(info.prefab.GetComponent<WorldEntityBase>(), spawnRoot.position + (Vector3)info.spawnPosition, Quaternion.identity);
+                if (!info.keepAfterWave) currentWaveEntities.Add(entity);
+                preparedCourses.Add(info, entity);
+            }
+            var room = GetComponentInParent<Room>(true);
+            if (room != null)
+                while (Array.Exists(room.GetComponentsInChildren<TrainingCourseStage>(true), stage => stage.IsMoving)) yield return null;
+            var coordinates = cells != null ? cells.transform : room != null ? room.transform : transform;
+            yield return PlayerStartSequence.Play(waveData, currentWaveIndex, coordinates);
         }
-        SpawnWave(waveData.waves[currentWaveIndex]);
+        finally { playerStartSequence?.Release(); }
+        SpawnWave(wave);
+    }
+    private void OnDisable()
+    {
+        StopAllCoroutines();
+        isWaveActive = isSpawnActive = false;
+        playerStartSequence?.Release();
+        preparedCourses.Clear();
     }
     private void SpawnWave(Wave wave)
     {
@@ -119,6 +155,7 @@ public class WaveManager : MonoBehaviour
         isWaveActive = true;
         isSpawnActive = true;
         activeEnemies.Clear();
+        foreach (var prepared in preparedCourses) InitializeSpawn(prepared.Value.gameObject, prepared.Key);
         WaveStarted?.Invoke(wave);
 
         // 1. 오브젝트 생성 루틴 시작
@@ -139,6 +176,11 @@ public class WaveManager : MonoBehaviour
         {
             if (!isWaveActive) yield break;
             if (info.prefab == null) continue;
+            if (preparedCourses.ContainsKey(info))
+            {
+                if (info.spawnDelay > 0) yield return new WaitForSeconds(info.spawnDelay);
+                continue;
+            }
             // spawn 위치 설정
             Vector3 spawnPos = new(spawnRoot.position.x + info.spawnPosition.x, spawnRoot.position.y + info.spawnPosition.y, 0);
             GameObject spawnedObj = null;
@@ -203,18 +245,7 @@ public class WaveManager : MonoBehaviour
                 if (!info.keepAfterWave) looseObjects.Add(spawnedObj);
             }
 
-            if (spawnedObj != null)
-            {
-                foreach (var goal in spawnedObj.GetComponentsInChildren<TutorialGoal>(true))
-                {
-                    goal.ConfigureWaveGoal(info.goalKeyOverride);
-                    goal.InitializeGoalSetting();
-                }
-                var lifetime = spawnedObj.GetComponent<WaveSpawnLifetime>();
-                if (lifetime == null) lifetime = spawnedObj.AddComponent<WaveSpawnLifetime>();
-                var item = spawnedObj;
-                lifetime.Arm(info.lifetime, () => Expire(item));
-            }
+            if (spawnedObj != null) InitializeSpawn(spawnedObj, info);
 
             if (info.spawnDelay > 0f)
             {
@@ -230,6 +261,17 @@ public class WaveManager : MonoBehaviour
             CompleteWave();
     }
 
+    private void InitializeSpawn(GameObject item, WaveSpawnInfo info)
+    {
+        foreach (var goal in item.GetComponentsInChildren<TutorialGoal>(true))
+        {
+            goal.ConfigureWaveGoal(info.goalKeyOverride);
+            goal.InitializeGoalSetting();
+        }
+        var lifetime = item.GetComponent<WaveSpawnLifetime>();
+        if (lifetime == null) lifetime = item.AddComponent<WaveSpawnLifetime>();
+        lifetime.Arm(info.lifetime, () => Expire(item));
+    }
     private void Expire(GameObject item)
     {
         if (item == null || !item.activeInHierarchy) return;
@@ -295,6 +337,10 @@ public class WaveManager : MonoBehaviour
 
     private void CompleteWave()
     {
+        // 이전 코스가 닫히는 순간부터 다음 지형·Spawn 완료까지 같은 잠금을 유지한다.
+        if (currentWaveIndex + 1 < waveData.waves.Length && currentWaveEntities.Exists(e => e is TrainingCourseActivator)) PlayerStartSequence.Hold();
+        else playerStartSequence?.Release();
+        preparedCourses.Clear();
         isWaveActive = false;
         StopAllCoroutines();
         if (RoomManager.Instance != null && RoomManager.Instance.CurrentRoom != null) RoomManager.Instance.CurrentRoom.ResetBossEntryCamera();

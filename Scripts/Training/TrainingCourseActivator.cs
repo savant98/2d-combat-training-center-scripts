@@ -26,7 +26,7 @@ public sealed class TrainingCourseActivator : WorldEntityBase
             Debug.LogWarning($"현재 방에 {courseKey} 구간(TrainingCourseStage)이 없어 열지 않습니다.", this);
             return;
         }
-        stage.Begin(resetPlayerToStart, returnPlayerOnFinish);
+        stage.Begin(resetPlayerToStart && (room.WaveManager == null || !room.WaveManager.IsPreparingWave), returnPlayerOnFinish);
     }
 
     public override void ForceReturnToPool()

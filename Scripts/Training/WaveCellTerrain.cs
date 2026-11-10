@@ -46,6 +46,11 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private Transform staticRoot;
     private CinemachineConfiner2D roomConfiner;
     private BoxCollider2D originalCameraBounds;
+    private bool automaticRoomSpace;
+    private WaveRoomBackdrop automaticBackdrop;
+    private HashSet<Vector2Int> roomSolids;
+    private Vector2Int roomSeed;
+    public Rect? ConnectedBounds { get; private set; }
     public bool IsPreloaded { get; private set; }
     public bool IsTransitioning { get; private set; }
     public int PreloadedCount => pool.Count;
@@ -75,6 +80,12 @@ public sealed class WaveCellTerrain : MonoBehaviour
         }
         foreach (var line in GetComponentsInChildren<LineRenderer>(true))
             if (line.name == "PlatformLine" || line.name.StartsWith("PlatformLine (")) line.enabled = false;
+        automaticRoomSpace = !data.customRoom && content != null && originalCameraBounds != null;
+        if (automaticRoomSpace)
+        {
+            automaticBackdrop = gameObject.AddComponent<WaveRoomBackdrop>();
+            automaticBackdrop.Configure(transform, data.room.bounds);
+        }
         var background = gameObject.AddComponent<WaveRoomBackground>(); background.Configure(data);
         staticRoot = new GameObject("CellTerrain").transform; staticRoot.SetParent(transform, false);
         oneWayTile = ScriptableObject.CreateInstance<Tile>();
@@ -225,7 +236,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
             owner.map.SetTransformMatrix(coordinate, Style(cell).transform);
         }
     }
-    private void Rebuild()
+    private void Rebuild(bool resetting = false)
     {
         RefreshOutlines();
         var owned = new HashSet<CompositeCollider2D>(channels.Values.Select(c => c.composite));
@@ -234,6 +245,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         foreach (var channel in channels.Values) if (channel.collider != null && channel.collider.isActiveAndEnabled) channel.collider.ProcessTilemapChanges();
         foreach (var composite in channels.Values.Select(c => c.composite).Distinct())
             if (composite != null && composite.gameObject.activeInHierarchy && composite.generationType == CompositeCollider2D.GenerationType.Manual) composite.GenerateGeometry();
+        RefreshRoomSpace(resetting);
     }
     private void OnEnable() { if (IsPreloaded) Rebuild(); }
     private void Start() { if (IsPreloaded) Rebuild(); }
@@ -242,6 +254,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         StopAllCoroutines(); ClearCustom(); temporary.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
         ApplyBackground();
+        roomSolids = null;
+        ConnectedBounds = null;
         ApplyRoomPresentation(WaveRoomState.LayoutAt(data, 0));
         foreach (var cell in active.ToArray()) { pool[cell].gameObject.SetActive(false); Collision(cell, false); }
         active.Clear(); initial.Clear(); initial.UnionWith(data.cellMap.cells); SetInitialPivots();
@@ -249,7 +263,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         {
             Preload(cell); active.Add(cell); pool[cell].gameObject.SetActive(true); pool[cell].SetAmount(1); pool[cell].transform.localPosition = CellCenter(cell); Collision(cell, true);
         }
-        Rebuild();
+        Rebuild(true);
     }
 
     public IEnumerator Prepare(int index)
@@ -271,16 +285,48 @@ public sealed class WaveCellTerrain : MonoBehaviour
         var layout = WaveRoomState.LayoutAt(data, index);
         if (waves.SpawnRoot != null) waves.SpawnRoot.position = transform.TransformPoint(layout.spawnOffset);
         ApplyRoomPresentation(layout);
-        if (layout.centerPlayer && GameManager.Instance != null)
-        {
-            var player = GameManager.Instance.Player; var before = player.transform.position;
-            player.ResetPlayerPosition(transform.TransformPoint(data.playerStart));
-            CinemachineCore.OnTargetObjectWarped(player.transform, player.transform.position - before);
-        }
         IsTransitioning = false;
+    }
+    public void RefreshPlayerSpace() => RefreshRoomSpace();
+    private void RefreshRoomSpace(bool resetting = false)
+    {
+        if (!automaticRoomSpace) return;
+        // 그룹에 속한 벽도 현재 Transform 위치로 합친다. 셀의 style·group 번호는 경계를 나누지 않는다.
+        var solids = new HashSet<Vector2Int>(active.Where(c => c.kind == WaveCellKind.Platform)
+            .Select(c => Vector2Int.FloorToInt((Vector2)transform.InverseTransformPoint(owners[c].parent.TransformPoint(CellCenter(c))))));
+        Vector2 start = WaveRoomState.PlayerStartAt(data, resetting ? 0 : waves.currentWaveIndex);
+        Vector2 seed = start;
+        var room = GetComponentInParent<Room>();
+        if (!resetting && ConnectedBounds.HasValue && room != null && RoomManager.Instance != null && RoomManager.Instance.CurrentRoom == room
+            && GameManager.Instance != null && GameManager.Instance.Player != null)
+            seed = transform.InverseTransformPoint(GameManager.Instance.Player.transform.position);
+        var seedCell = Vector2Int.FloorToInt(seed);
+        if (roomSolids != null && roomSolids.SetEquals(solids) && roomSeed == seedCell) return;
+        roomSolids = solids;
+        roomSeed = seedCell;
+        var layout = WaveRoomState.LayoutAt(data, resetting ? 0 : waves.currentWaveIndex);
+        if (!WaveCellRoomSpace.TryGetBounds(solids, seed, out var bounds)
+            && !WaveCellRoomSpace.TryGetBounds(solids, start, out bounds)) bounds = layout.bounds;
+        if (ConnectedBounds.HasValue && ConnectedBounds.Value == bounds) return;
+        ConnectedBounds = bounds;
+        SetCameraBounds(bounds);
+        automaticBackdrop.Resize(bounds);
+    }
+    private void SetCameraBounds(Rect bounds)
+    {
+        var frame = originalCameraBounds.transform;
+        var horizontal = frame.InverseTransformVector(transform.TransformVector(Vector3.right * (bounds.width + 2)));
+        var vertical = frame.InverseTransformVector(transform.TransformVector(Vector3.up * (bounds.height + 3)));
+        originalCameraBounds.size = new Vector2(Mathf.Abs(horizontal.x) + Mathf.Abs(vertical.x), Mathf.Abs(horizontal.y) + Mathf.Abs(vertical.y));
+        Vector3 center = transform.TransformPoint(bounds.center + Vector2.down * 1.5f);
+        Vector3 position = center - frame.TransformVector(originalCameraBounds.offset);
+        position.z = frame.position.z;
+        frame.position = position;
+        roomConfiner.InvalidateBoundingShapeCache();
     }
     private void ApplyRoomPresentation(WaveRoomLayout layout)
     {
+        if (automaticRoomSpace) return;
         if (data.adaptCameraToRoom)
         {
             var presentation = GetComponent<TrainingRoomPresentation>();

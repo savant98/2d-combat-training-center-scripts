@@ -31,18 +31,19 @@ public sealed class WaveRoomBackground : MonoBehaviour
                 if (renderer != null) originalRenderers[renderer] = renderer.enabled;
             }
         foreach (Transform child in transform)
-            if (child.name.Contains("Backdrop"))
+            if (child.name.Contains("Backdrop") && child.name != "WaveBackdropTemplate")
                 foreach (var renderer in child.GetComponentsInChildren<Renderer>(true)) originalRenderers[renderer] = renderer.enabled;
         Apply(data.backgroundPrefab);
     }
     public void Apply(GameObject prefab)
     {
-        if (prefab == selectedPrefab && (prefab == null || instance != null)) return;
         if (prefab != null && !IsBackground(prefab))
         {
             Debug.LogError("배경 Prefab에는 카메라·Collider·Room·WaveManager를 포함할 수 없습니다.", prefab);
             return;
         }
+        GetComponent<WaveRoomBackdrop>()?.SetBackgroundVisible(prefab == null);
+        if (prefab == selectedPrefab && (prefab == null || instance != null)) return;
         if (instance != null) { instance.SetActive(false); Destroy(instance); }
         selectedPrefab = prefab;
         foreach (var row in originalRenderers) if (row.Key != null) row.Key.enabled = prefab == null && row.Value;

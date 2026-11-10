@@ -80,17 +80,7 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
         }
 
         IsMoving = true;
-        var player = GameManager.Instance.Player;
-        if (next.centerPlayer)
-        {
-            player.AbilityManager.InterruptAllAbilities();
-            player.AbilityManager.JumpAbility.ClearPendingInput();
-            player.AbilityManager.DashAbility.ClearPendingInput();
-            player.externalForce = Vector2.zero;
-            WarpPlayer(player, playerReturnPoint.position, Vector2.zero);
-        }
-        // 등장 효과와 이동·중력을 분리한다. 안전한 위치에서는 점프와 입력 버퍼도 유지한다.
-        player.animator.SetTrigger("TitleTransition");
+        // 이동 잠금과 준비 완료 뒤 Spawn은 WaveManager의 공통 시작 단계에서 처리한다.
 
         if (next.halfWidth > previous.halfWidth)
         {

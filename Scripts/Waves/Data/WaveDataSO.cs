@@ -9,9 +9,12 @@ public class WaveDataSO : ScriptableObject
     public WaveRoomLayout room = new WaveRoomLayout();
     [Tooltip("기존 훈련의 카메라·목표 마무리·보스 연출을 보존하는 명시적 커스텀 모듈입니다.")]
     public bool customRoom;
-    [Tooltip("기존 카메라는 보존합니다. 원래 범위가 변하던 훈련만 이 설정을 사용합니다.")]
+    [Tooltip("커스텀 Room에서 저장된 실내 크기에 카메라를 맞춥니다. 일반 Room의 셀 연결 공간은 이 설정 없이 자동 적용합니다.")]
     public bool adaptCameraToRoom;
     public GameObject backgroundPrefab;
+    [Tooltip("모든 Wave를 클리어한 뒤 나타나는 Lobby 복귀 포탈의 위치를 Tool에서 지정합니다.")]
+    public bool overrideClearPortalPosition;
+    public Vector2 clearPortalPosition;
     public WaveCellMap cellMap = new WaveCellMap();
     public Wave[] waves;
 }
@@ -27,6 +30,10 @@ public enum WaveClearType
 public class Wave
 {
     public float startDelay;
+    public bool overridePlayerStart;
+    public Vector2 playerStart;
+    [Tooltip("지형 준비가 끝나면 이 Wave 시작 좌표로 이동하며 원본 Spawn 연출을 재생합니다.")]
+    public bool teleportAtStart;
     public bool overrideCellMap;
     public WaveMapCell[] cells = System.Array.Empty<WaveMapCell>();
     public WaveCellBatch[] cellBatches = System.Array.Empty<WaveCellBatch>();

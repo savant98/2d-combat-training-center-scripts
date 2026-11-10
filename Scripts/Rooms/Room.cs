@@ -148,6 +148,9 @@ public class Room : MonoBehaviour
 
         yield return new WaitForSeconds(1f);
 
+        var terrain = waveManager != null ? waveManager.GetComponentInParent<WaveCellTerrain>(true) : null;
+        WaveCompletionPortal.Apply(waveManager != null ? waveManager.Data : null, clearPortalPrefab,
+            terrain != null ? terrain.transform : transform);
         FeedbackPlayer.Instance.Play(spawnPortalFeedback, clearPortalPrefab.transform);
         clearPortalPrefab.gameObject.SetActive(true);
     }

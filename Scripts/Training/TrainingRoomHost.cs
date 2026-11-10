@@ -25,7 +25,12 @@ public sealed class TrainingRoomHost : MonoBehaviour
     public void Load(WaveDataSO data)
     {
         if (data == null) data = defaultData;
-        if (Content != null && Data == data) return;
+        if (Content != null && Data == data)
+        {
+            // Tool에서 첫 Wave 좌표를 바꾼 뒤 같은 데이터로 다시 입장하는 경우도 갱신한다.
+            entryPoint.localPosition = WaveRoomState.EntryPoint(data);
+            return;
+        }
         var owner = GetComponent<Room>();
         owner.ReleaseContent();
         if (Content != null)

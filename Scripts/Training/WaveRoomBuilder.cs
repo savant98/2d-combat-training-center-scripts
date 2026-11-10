@@ -115,8 +115,6 @@ public sealed class WaveRoomBuilder : MonoBehaviour
         }
         RequireBounds(wave.room.bounds);
         moving = true;
-        if (wave.room.centerPlayer && GameManager.Instance != null)
-            GameManager.Instance.Player.ResetPlayerPosition(transform.TransformPoint(data.playerStart));
         Rect previous = bounds, next = wave.room.bounds;
         float duration = Mathf.Max(0f, wave.room.duration);
         for (float time = 0; time < duration; time += Time.fixedDeltaTime)

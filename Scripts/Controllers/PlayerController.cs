@@ -17,6 +17,7 @@ public class PlayerController : CharacterController2D
     {
         get
         {
+            if (WavePlayerStart.IsHolding(this)) return false;
             if (abilityManager != null && abilityManager.Grab != null && abilityManager.Grab.IsActive) return false;
             if (UIManager.Instance != null && UIManager.Instance.BlocksGameplayInput)
                 return false;

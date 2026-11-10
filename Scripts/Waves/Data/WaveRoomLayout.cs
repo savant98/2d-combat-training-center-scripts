@@ -26,10 +26,17 @@ public static class WaveRoomState
         return result;
     }
 
+    public static Vector2 PlayerStartAt(WaveDataSO data, int index)
+    {
+        if (data.waves != null && index >= 0 && index < data.waves.Length && data.waves[index].overridePlayerStart)
+            return data.waves[index].playerStart;
+        return data.playerStart;
+    }
+
     public static Vector2 EntryPoint(WaveDataSO data)
     {
-        var point = data.playerStart;
-        if (!data.customRoom)
+        var point = PlayerStartAt(data, 0);
+        if (!data.customRoom && !data.cellMap.enabled)
         {
             point.x = Mathf.Clamp(point.x, data.room.bounds.xMin + 1, data.room.bounds.xMax - 1);
             point.y = Mathf.Clamp(point.y, data.room.bounds.yMin + 1, data.room.bounds.yMax - 1);

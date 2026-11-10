@@ -447,19 +447,9 @@ public sealed class TrainingCourseStage : MonoBehaviour
     {
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
         if (player == null || playerReturnPoint == null) return;
-        Vector3 delta = playerReturnPoint.position - player.transform.position;
-        if (player.AbilityManager != null)
-        {
-            player.AbilityManager.InterruptAllAbilities();
-            player.AbilityManager.JumpAbility.ClearPendingInput();
-            player.AbilityManager.DashAbility.ClearPendingInput();
-        }
-        player.ResetPlayerPosition(playerReturnPoint.position);
-        player.externalForce = Vector2.zero;
-        // 카메라가 먼 거리를 끌려오지 않고 옮긴 위치로 바로 따라가게 한다.
-        CinemachineCore.OnTargetObjectWarped(player.transform, delta);
-        if (!string.IsNullOrEmpty(playerTransitionTriggerName) && player.animator != null)
-            player.animator.SetTrigger(playerTransitionTriggerName);
+        // 다음 Wave에 명시한 Spawn은 지형이 닫힌 뒤 공통 준비 단계가 수행한다.
+        if (subscribedWaveManager != null && (subscribedWaveManager.IsPreparingWave || subscribedWaveManager.NextWaveTeleports && CurrentStep != FinishStep.None)) return;
+        WavePlayerStart.Relocate(player, playerReturnPoint.position, false);
     }
 
     // 지형이 원래 자리로 돌아왔을 때 막히는 쪽(진행 방향으로 지형 경계 너머)에 남은 플레이어를 시작 위치로 옮긴다.

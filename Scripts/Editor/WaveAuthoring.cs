@@ -39,12 +39,16 @@ public static class WaveAuthoring
         var issues = new List<string>();
         if (data.waves == null || data.waves.Length == 0) issues.Add("Wave가 없습니다.");
         CheckBounds(data.room.bounds, "기본 Room", issues);
+        if (data.overrideClearPortalPosition && (!float.IsFinite(data.clearPortalPosition.x) || !float.IsFinite(data.clearPortalPosition.y)))
+            issues.Add("Lobby 복귀 포탈 좌표는 유한한 값이어야 합니다.");
         if (data.cellMap.enabled && (data.cellMap.platformPrefab == null || data.cellMap.oneWayPrefab == null)) issues.Add("한 칸 Platform / OneWayPlatform Prefab을 연결하세요.");
         if (!data.customRoom && !data.room.bounds.Contains(data.playerStart)) issues.Add("시작점이 Room 밖입니다. 실행 시 1칸 안쪽으로 보정됩니다.");
         for (int w = 0; w < (data.waves?.Length ?? 0); w++)
         {
             var wave = data.waves[w];
             string prefix = $"W{w + 1}";
+            var start = WaveRoomState.PlayerStartAt(data, w);
+            if (!float.IsFinite(start.x) || !float.IsFinite(start.y)) issues.Add(prefix + ": 시작 좌표는 유한한 값이어야 합니다.");
             if (wave.changeTerrain) CheckBounds(wave.room.bounds, prefix, issues);
             if (wave.clearType == WaveClearType.CustomTrigger && string.IsNullOrWhiteSpace(wave.customTriggerKey)) issues.Add(prefix + ": 목표 트리거 키가 비었습니다.");
             if (wave.surviveTime < 0 || wave.clearDelay < 0 || wave.startDelay < 0) issues.Add(prefix + ": 음수 시간을 수정하세요.");

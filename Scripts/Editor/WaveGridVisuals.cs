@@ -259,8 +259,8 @@ public sealed class WaveGridGeometry
                 if (waveIndex < index && group.persistAfterWave) return cell.position + Vector2Int.RoundToInt(group.openOffset);
                 if (waveIndex == index && !group.afterHandoff)
                 {
-                    float t = Mathf.Clamp01((time - times[i] - group.delay) / Mathf.Max(.001f, group.duration));
-                    return cell.position + Vector2Int.RoundToInt(group.openOffset * Mathf.SmoothStep(0, 1, t));
+                    // 코스 벽 열림은 Wave 시각 0 이전의 공통 준비 단계에서 끝난다.
+                    return cell.position + Vector2Int.RoundToInt(group.openOffset);
                 }
             }
         }

@@ -70,13 +70,7 @@ public class TutorialPositionResetter : WorldEntityBase
         yield return new WaitForSeconds(fadeOutDuration);
 
         // 어두운 동안 시작 위치로 옮기고, 카메라가 먼 거리를 끌려오지 않게 바로 따라가게 한다.
-        Vector3 delta = transform.position - player.transform.position;
-        player.transform.position = transform.position;
-        player.Velocity = Vector2.zero;
-        player.externalForce = Vector2.zero;
-        CinemachineCore.OnTargetObjectWarped(player.transform, delta);
-        if (!string.IsNullOrEmpty(playerTransitionTriggerName))
-            player.animator.SetTrigger(playerTransitionTriggerName);
+        WavePlayerStart.Relocate(player, transform.position, !string.IsNullOrEmpty(playerTransitionTriggerName));
         yield return new WaitForSeconds(blackHold);
 
         RecoverScreen();
