@@ -6,7 +6,6 @@ using UnityEngine;
 // 이 방의 웨이브에 보스가 등장하면 공용 보스 BGM으로 바꾸고, 보스가 쓰러지거나 정리되면 방 BGM으로 돌아온다.
 // 전용 BGM이 있는 보스(EnemySpawnController에 전주·메인이 지정된 Nightmare 등)는 자기 곡을 직접 재생하므로 건너뛴다.
 [DisallowMultipleComponent]
-[RequireComponent(typeof(Room))]
 public sealed class RoomBgmPlayer : MonoBehaviour
 {
     [SerializeField] private AudioClip bgmClip;
@@ -38,7 +37,7 @@ public sealed class RoomBgmPlayer : MonoBehaviour
     // 그래야 이미 떠난 방도 다음 방에 음악이 없을 때 자기 곡을 줄일 수 있다.
     private void Awake()
     {
-        room = GetComponent<Room>();
+        room = GetComponentInParent<Room>(true);
         Subscribe();
     }
 
@@ -98,7 +97,8 @@ public sealed class RoomBgmPlayer : MonoBehaviour
         if (!HasMusic && bossBgmClip == null) return;
         if (IsCurrentRoom) { if (HasMusic || IsBossMusicActive) Play(); return; }
         var current = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
-        if (current != null && current.TryGetComponent<RoomBgmPlayer>(out var next) && next.HasMusic) return;
+        var next = current != null ? current.GetComponentInChildren<RoomBgmPlayer>(true) : null;
+        if (next != null && next.HasMusic) return;
         var sound = SoundManager.Instance;
         if (sound == null) return;
         if (bgmClip != null) sound.FadeOutBGM(bgmClip, fadeDuration);

@@ -1,9 +1,18 @@
 using UnityEngine;
 
-[CreateAssetMenu(menuName = "Game/WaveData")]
 [UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "WaveData")]
 public class WaveDataSO : ScriptableObject
 {
+    public TrainingRoomContent roomTemplate;
+    public TrainingDefinitionSO training;
+    public Vector2 playerStart = new Vector2(9f, -1.5f);
+    public WaveRoomLayout room = new WaveRoomLayout();
+    [Tooltip("기존 훈련의 카메라·목표 마무리·보스 연출을 보존하는 명시적 커스텀 모듈입니다.")]
+    public bool customRoom;
+    [Tooltip("기존 카메라는 보존합니다. 원래 범위가 변하던 훈련만 이 설정을 사용합니다.")]
+    public bool adaptCameraToRoom;
+    public GameObject backgroundPrefab;
+    public WaveCellMap cellMap = new WaveCellMap();
     public Wave[] waves;
 }
 
@@ -17,6 +26,15 @@ public enum WaveClearType
 [System.Serializable]
 public class Wave
 {
+    public float startDelay;
+    public bool overrideCellMap;
+    public WaveMapCell[] cells = System.Array.Empty<WaveMapCell>();
+    public WaveCellBatch[] cellBatches = System.Array.Empty<WaveCellBatch>();
+    public bool changeTerrain;
+    public WaveRoomLayout room = new WaveRoomLayout();
+    public WaveTerrainEvent[] terrainEvents = System.Array.Empty<WaveTerrainEvent>();
+    public bool custom;
+    public string customDescription;
     [Header("Wave Settings")]
     public WaveClearType clearType = WaveClearType.DefeatAllTargets;
     public float surviveTime = 0f;
@@ -35,4 +53,7 @@ public class WaveSpawnInfo
     public bool isBossEnemy = false;
     public float spawnDelay;
     public Vector2 spawnPosition;
+    [Tooltip("0이면 시간 제한 없이 유지합니다. 생성 시점부터 센 초입니다.")]
+    public float lifetime;
+    public string goalKeyOverride;
 }

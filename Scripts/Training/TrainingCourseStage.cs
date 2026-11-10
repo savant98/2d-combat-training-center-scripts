@@ -377,17 +377,8 @@ public sealed class TrainingCourseStage : MonoBehaviour
         yield return new WaitForSeconds(successPause);
 
         CurrentStep = FinishStep.Vanishing;
-        var platforms = new List<TemporaryPlatform>();
-        foreach (var platform in FindObjectsByType<TemporaryPlatform>(FindObjectsSortMode.None))
-            if (platform.gameObject.activeInHierarchy) platforms.Add(platform);
-        Vector2 axis = courseDirection.normalized;
-        platforms.Sort((a, b) => Vector2.Dot(b.transform.position, axis).CompareTo(Vector2.Dot(a.transform.position, axis)));
-        foreach (var platform in platforms)
-        {
-            if (platform != null && platform.gameObject.activeInHierarchy) platform.ForceReturnToPool();
-            if (vanishInterval > 0f) yield return new WaitForSeconds(vanishInterval);
-        }
-
+        var cellTerrain = GetComponentInParent<WaveCellTerrain>(true);
+        if (cellTerrain != null) yield return cellTerrain.VanishCourseCells(courseDirection.normalized, vanishInterval);
         if (returnOnFinish)
         {
             // 웨이브 정리에서 지형이 닫히기 전에 공중 체류와 외부 힘을 없앤다.
@@ -429,9 +420,6 @@ public sealed class TrainingCourseStage : MonoBehaviour
             ReturnPlayer();
         }
 
-        // 사라지는 발판이 소멸 애니메이션을 마치고 풀로 돌아간 뒤 웨이브를 끝내 정리가 겹치지 않게 한다.
-        float vanishLimit = Time.time + 2f;
-        while (platforms.Exists(p => p != null && p.gameObject.activeInHierarchy) && Time.time < vanishLimit) yield return null;
         yield return new WaitForSeconds(settlePause);
 
         CurrentStep = FinishStep.Completing;
@@ -485,7 +473,7 @@ public sealed class TrainingCourseStage : MonoBehaviour
         {
             var tilemap = segments[s].tilemap;
             if (tilemap == null || tilemap.transform.parent == null) continue;
-            var bounds = tilemap.localBounds;
+            var bounds = TerrainBounds(tilemap);
             for (int i = 0; i < 4; i++)
             {
                 var corner = new Vector3(i % 2 == 0 ? bounds.min.x : bounds.max.x, i < 2 ? bounds.min.y : bounds.max.y, 0f);
@@ -510,7 +498,7 @@ public sealed class TrainingCourseStage : MonoBehaviour
         Vector3 start = tilemap.transform.localPosition;
         Vector3 travel = targetLocal - start;
         if (segments[index].playSound && travel.sqrMagnitude > .01f)
-            PlaySound(segmentSound, tilemap.transform.TransformPoint(tilemap.localBounds.center));
+            PlaySound(segmentSound, tilemap.transform.TransformPoint(TerrainBounds(tilemap).center));
         // 잠금이 풀리듯 반대쪽으로 살짝 물러났다가 움직인다.
         if (unlock > 0f && travel.sqrMagnitude > .01f)
         {
@@ -529,11 +517,17 @@ public sealed class TrainingCourseStage : MonoBehaviour
         if (sound != null && sound.clip != null && SoundManager.Instance != null) SoundManager.Instance.PlaySFX(sound, position);
     }
 
+    private Bounds TerrainBounds(Tilemap map)
+    {
+        var terrain = GetComponentInParent<WaveCellTerrain>(true);
+        return terrain != null ? terrain.LocalBounds(map.transform) : map.localBounds;
+    }
+
     private Vector3 CenterOfSegments()
     {
         Vector3 sum = Vector3.zero; int count = 0;
         foreach (var segment in segments)
-            if (segment.tilemap != null) { sum += segment.tilemap.transform.TransformPoint(segment.tilemap.localBounds.center); count++; }
+            if (segment.tilemap != null) { sum += segment.tilemap.transform.TransformPoint(TerrainBounds(segment.tilemap).center); count++; }
         return count > 0 ? sum / count : transform.position;
     }
 

@@ -7,6 +7,12 @@ public class TutorialGoal : MonoBehaviour
     [SerializeField] private string triggerKey;
 
     private bool goalIn = false;
+    private string originalKey;
+    public void ConfigureWaveGoal(string key)
+    {
+        if (originalKey == null) originalKey = triggerKey;
+        triggerKey = string.IsNullOrEmpty(key) ? originalKey : key;
+    }
 
     public void InitializeGoalSetting()
     {

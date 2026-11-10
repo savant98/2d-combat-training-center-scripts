@@ -5,7 +5,7 @@ using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 
-// 지형 패널은 단위 타일로 구성하고 생성 발판은 기존 WorldEntityPool과 등장·소멸 연출을 사용한다.
+// 기존 Room의 셸·카메라 배치 정보를 보존한다. 생성 발판은 WaveCellTerrain의 한 칸 데이터로 처리한다.
 [DisallowMultipleComponent]
 public sealed class TrainingRoomLayoutController : MonoBehaviour
 {
@@ -33,9 +33,6 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
     [SerializeField] private Transform floor;
     [SerializeField] private Transform ceiling;
     [SerializeField] private Transform[] platforms;
-    [SerializeField] private TemporaryPlatform platformPrefab;
-    [SerializeField] private TemporaryPlatform endCapPrefab;
-    [SerializeField] private float platformTransitionDuration = .55f;
     [SerializeField] private TileBase terrainTile;
     [SerializeField] private Transform backdrop;
     [SerializeField] private TrainingRoomPresentation presentation;
@@ -48,16 +45,12 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
     [SerializeField] private SoundOptions segmentSound;
     [SerializeField] private float duration = 1.2f;
 
-    private readonly List<TemporaryPlatform> generatedPlatforms = new();
-    private readonly List<TemporaryPlatform> generatedEndCaps = new();
     private Panel[] panels;
     private float assemblingHalfWidth;
     private int currentLayout = -1;
     public bool IsMoving { get; private set; }
     public int CurrentLayout => currentLayout;
     public Layout[] Layouts => (Layout[])layouts.Clone();
-    public IReadOnlyList<TemporaryPlatform> GeneratedPlatforms => generatedPlatforms;
-    public IReadOnlyList<TemporaryPlatform> GeneratedEndCaps => generatedEndCaps;
 
     private void OnEnable()
     {
@@ -76,14 +69,11 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
     public IEnumerator PrepareWave(int index)
     {
         Cache();
-        Layout next = layouts[index];
-        Layout previous = currentLayout < 0 ? layouts[0] : layouts[currentLayout];
+        Layout next = Resolve(index);
+        Layout previous = currentLayout < 0 ? Resolve(0) : Resolve(currentLayout);
         bool terrainChanges = previous.halfWidth != next.halfWidth || previous.height != next.height;
-        bool platformChanges = next.platforms
-            ? generatedPlatforms.Count != platforms.Length || generatedEndCaps.Count != platforms.Length * 2
-            : generatedPlatforms.Count > 0 || generatedEndCaps.Count > 0;
         currentLayout = index;
-        if (!terrainChanges && !platformChanges && !next.centerPlayer)
+        if (!terrainChanges && !next.centerPlayer)
         {
             ApplyShell(next.halfWidth, next.height);
             yield break;
@@ -102,13 +92,6 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
         // 등장 효과와 이동·중력을 분리한다. 안전한 위치에서는 점프와 입력 버퍼도 유지한다.
         player.animator.SetTrigger("TitleTransition");
 
-        if (!next.platforms && (generatedPlatforms.Count > 0 || generatedEndCaps.Count > 0))
-        {
-            Despawn(generatedPlatforms);
-            Despawn(generatedEndCaps);
-            yield return new WaitForSeconds(platformTransitionDuration);
-            ClearPlatforms();
-        }
         if (next.halfWidth > previous.halfWidth)
         {
             // 벽 밖의 바닥을 먼저 조립한 뒤 벽과 카메라 영역을 연다. 이동 중인 플레이어의 추락을 막는다.
@@ -141,18 +124,19 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
             yield return new WaitForFixedUpdate();
             ApplyShell(next.halfWidth, next.height);
         }
-        if (next.platforms && platformChanges)
-        {
-            ClearPlatforms();
-            foreach (var point in platforms)
-            {
-                generatedPlatforms.Add(WorldEntityPool.Instance.Spawn(platformPrefab, point.position, Quaternion.identity));
-                foreach (float x in new[] { -3.5f, 3.5f })
-                    generatedEndCaps.Add(WorldEntityPool.Instance.Spawn(endCapPrefab, point.position + new Vector3(x, .5f), Quaternion.identity));
-            }
-            yield return new WaitForSeconds(platformTransitionDuration);
-        }
         IsMoving = false;
+    }
+
+    private Layout Resolve(int index)
+    {
+        var source = waves.Data;
+        if (source != null && index >= 0 && index < source.waves.Length)
+        {
+            var room = WaveRoomState.LayoutAt(source, index);
+            return new Layout { halfWidth = room.bounds.width * .5f, height = room.bounds.height,
+                platforms = !room.paintPlatforms && room.platformCells.Length > 0, centerPlayer = room.centerPlayer };
+        }
+        return layouts[Mathf.Clamp(index, 0, layouts.Length - 1)];
     }
 
     private static void WarpPlayer(PlayerController player, Vector3 position, Vector2 velocity)
@@ -184,25 +168,6 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
         if (Mathf.Abs(correction.x) > .0001f) { velocity.x = 0; player.externalForce.x = 0; }
         if (Mathf.Abs(correction.y) > .0001f) { velocity.y = 0; player.externalForce.y = 0; }
         WarpPlayer(player, player.transform.position + correction, velocity);
-    }
-
-    private static void Despawn(List<TemporaryPlatform> items)
-    {
-        foreach (var item in items)
-            if (item != null && item.gameObject.activeInHierarchy) item.ForceReturnToPool();
-    }
-
-    private static void Clear(List<TemporaryPlatform> items)
-    {
-        foreach (var item in items)
-            if (item != null && item.gameObject.activeInHierarchy) item.ForceReturnTrigger();
-        items.Clear();
-    }
-
-    private void ClearPlatforms()
-    {
-        Clear(generatedPlatforms);
-        Clear(generatedEndCaps);
     }
 
     private void ApplyShell(float halfWidth, float height)
@@ -289,7 +254,7 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
 
     private void FaceCenter(EnemyController enemy)
     {
-        if (currentLayout == 6)
+        if (currentLayout >= 0 && waves.Data != null && waves.Data.waves[currentLayout].room.faceCenter)
             enemy.FacingUpdate(enemy.transform.position.x < playerReturnPoint.position.x ? 1 : -1);
     }
     private void Play(SoundOptions sound)
@@ -300,11 +265,11 @@ public sealed class TrainingRoomLayoutController : MonoBehaviour
     private void ResetLayout()
     {
         StopAllCoroutines();
-        ClearPlatforms();
         IsMoving = false;
         assemblingHalfWidth = 0f;
         currentLayout = -1;
-        ApplyShell(layouts[0].halfWidth, layouts[0].height);
+        var initial = Resolve(0);
+        ApplyShell(initial.halfWidth, initial.height);
     }
     private void OnDisable()
     {

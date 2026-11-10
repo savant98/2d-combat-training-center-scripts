@@ -40,6 +40,7 @@ public class TrainingMenuController : MonoBehaviour
         [Tooltip("진행 기록을 표시할 훈련입니다. 비우면 잠긴 훈련으로 표시합니다.")]
         public TrainingDefinitionSO recordTraining;
         public Room targetRoom;
+        public WaveDataSO waveData;
         public Transform spawnPoint;
     }
 
@@ -53,6 +54,7 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField] private TextMeshProUGUI detailTitleText;
     [SerializeField] private TextMeshProUGUI detailDescriptionText;
     public Room SelectedRoom { get; private set; }
+    public WaveDataSO SelectedWaveData { get; private set; }
     public Transform SelectedSpawnPoint { get; private set; }
     public event Action OnConfirmEnterRoom;
 
@@ -257,11 +259,12 @@ public class TrainingMenuController : MonoBehaviour
             var entry = listEntries[index];
             currentTraining = entry.recordTraining;
             SelectedRoom = entry.targetRoom;
+            SelectedWaveData = entry.waveData;
             SelectedSpawnPoint = entry.spawnPoint;
             if (detailTitleText != null) detailTitleText.text = entry.title;
             if (detailDescriptionText != null) detailDescriptionText.text = entry.summary;
         }
-        else { SelectedRoom = null; SelectedSpawnPoint = null; }
+        else { SelectedRoom = null; SelectedSpawnPoint = null; SelectedWaveData = null; }
         RefreshUI();
         if (!HasPresentation)
         {

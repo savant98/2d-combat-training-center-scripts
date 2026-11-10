@@ -11,6 +11,18 @@ public class WaveManager : MonoBehaviour
 
     [SerializeField] private TrainingRoomLayoutController roomLayout;
 
+    public WaveDataSO Data => waveData;
+    public IReadOnlyList<WorldEntityBase> WorldEntities => currentWaveEntities;
+    public Transform SpawnRoot => spawnRoot;
+    public event Action<Wave> WaveStarted;
+    public event Action WaveEnded;
+    private readonly List<GameObject> looseObjects = new();
+    public void Configure(WaveDataSO data, Transform root, TrainingDefinitionSO training)
+    {
+        waveData = data;
+        spawnRoot = root;
+        currentTrainingDef = training;
+    }
     public static WaveManager ActiveInstance { get; private set; }
     public Action OnAllWavesCleared;
     public event Action<EnemyController> EnemySpawned;
@@ -32,6 +44,15 @@ public class WaveManager : MonoBehaviour
 
     public void BeginWaves(bool showWaveIntro = true)
     {
+        if (waveData.cellMap.enabled && GetComponentInParent<WaveCellTerrain>(true) == null)
+        {
+            var room = GetComponentInParent<Room>(true);
+            room.gameObject.AddComponent<WaveCellTerrain>().Configure(waveData, this);
+        }
+        StopAllCoroutines();
+        ClearActiveWaveHandlers();
+        ClearCurrentWaveEntities();
+        isWaveActive = false;
         WavesReset?.Invoke();
         currentWaveIndex = 0;
         ActiveInstance = this;
@@ -81,7 +102,14 @@ public class WaveManager : MonoBehaviour
     }
     private IEnumerator PrepareAndSpawn()
     {
-        if (roomLayout != null) yield return roomLayout.PrepareWave(currentWaveIndex);
+        var cells = GetComponentInParent<WaveCellTerrain>(true);
+        if (cells != null) yield return cells.Prepare(currentWaveIndex);
+        else
+        {
+            if (roomLayout != null && roomLayout.isActiveAndEnabled) yield return roomLayout.PrepareWave(currentWaveIndex);
+            var builder = GetComponentInParent<WaveRoomBuilder>();
+            if (builder != null) yield return builder.Prepare(waveData.waves[currentWaveIndex]);
+        }
         SpawnWave(waveData.waves[currentWaveIndex]);
     }
     private void SpawnWave(Wave wave)
@@ -91,6 +119,7 @@ public class WaveManager : MonoBehaviour
         isWaveActive = true;
         isSpawnActive = true;
         activeEnemies.Clear();
+        WaveStarted?.Invoke(wave);
 
         // 1. 오브젝트 생성 루틴 시작
         coroutine = StartCoroutine(SpawnRoutine(wave));
@@ -103,9 +132,13 @@ public class WaveManager : MonoBehaviour
     }
     private IEnumerator SpawnRoutine(Wave wave)
     {
+        float sequenceStart = Time.time;
+        if (wave.startDelay > 0) yield return new WaitForSeconds(wave.startDelay);
         // Spawn Enemy
-        foreach (var info in wave.spawnObjects)
+        foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
         {
+            if (!isWaveActive) yield break;
+            if (info.prefab == null) continue;
             // spawn 위치 설정
             Vector3 spawnPos = new(spawnRoot.position.x + info.spawnPosition.x, spawnRoot.position.y + info.spawnPosition.y, 0);
             GameObject spawnedObj = null;
@@ -167,6 +200,20 @@ public class WaveManager : MonoBehaviour
             else // 둘 다 아닌 경우
             {
                 spawnedObj = Instantiate(info.prefab, spawnPos, Quaternion.identity);
+                if (!info.keepAfterWave) looseObjects.Add(spawnedObj);
+            }
+
+            if (spawnedObj != null)
+            {
+                foreach (var goal in spawnedObj.GetComponentsInChildren<TutorialGoal>(true))
+                {
+                    goal.ConfigureWaveGoal(info.goalKeyOverride);
+                    goal.InitializeGoalSetting();
+                }
+                var lifetime = spawnedObj.GetComponent<WaveSpawnLifetime>();
+                if (lifetime == null) lifetime = spawnedObj.AddComponent<WaveSpawnLifetime>();
+                var item = spawnedObj;
+                lifetime.Arm(info.lifetime, () => Expire(item));
             }
 
             if (info.spawnDelay > 0f)
@@ -175,9 +222,24 @@ public class WaveManager : MonoBehaviour
             }
         }
 
+        float cellsReady = 0;
+        foreach (var batch in wave.cellBatches) cellsReady = Mathf.Max(cellsReady, batch.time + batch.duration);
+        if (Time.time < sequenceStart + cellsReady) yield return new WaitForSeconds(sequenceStart + cellsReady - Time.time);
         isSpawnActive = false;
         if (isWaveActive && wave.clearType == WaveClearType.DefeatAllTargets && aliveTargets == 0)
             CompleteWave();
+    }
+
+    private void Expire(GameObject item)
+    {
+        if (item == null || !item.activeInHierarchy) return;
+        if (item.TryGetComponent(out EnemyController enemy))
+        {
+            if (activeEnemies.Contains(enemy)) HandleEnemyDeath(enemy);
+            else EnemyPool.Instance.Despawn(enemy);
+        }
+        else if (item.TryGetComponent(out WorldEntityBase entity)) entity.ForceReturnToPool();
+        else Destroy(item);
     }
 
     private void HandleEnemyDeath(EnemyController deadEnemy)
@@ -234,6 +296,9 @@ public class WaveManager : MonoBehaviour
     private void CompleteWave()
     {
         isWaveActive = false;
+        StopAllCoroutines();
+        if (RoomManager.Instance != null && RoomManager.Instance.CurrentRoom != null) RoomManager.Instance.CurrentRoom.ResetBossEntryCamera();
+        WaveEnded?.Invoke();
         ClearActiveWaveHandlers();
         ClearCurrentWaveEntities();
 
@@ -267,6 +332,8 @@ public class WaveManager : MonoBehaviour
                 entity.ForceReturnToPool();
             }
         }
+        foreach (var item in looseObjects) if (item != null) Destroy(item);
+        looseObjects.Clear();
         currentWaveEntities.Clear(); // 비워주기
     }
 }

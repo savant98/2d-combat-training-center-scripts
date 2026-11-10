@@ -18,6 +18,8 @@ public class Room : MonoBehaviour
     [SerializeField] private FeedbackDataSO spawnPortalFeedback;
 
     public WaveManager WaveManager => waveManager;
+    public CinemachineCamera VirtualCamera => virtualCamera;
+    public GameObject ContentRoot => rootObject;
     public bool SuppressAutomaticWaves { get; set; }
     public Vector3 SpawnPoint => currentSpawnPoint;
 
@@ -25,13 +27,33 @@ public class Room : MonoBehaviour
     private float waitForBossEntryTime = 3.5f;
     private Tween bossEntryCameraTween;
     private Vector3 currentSpawnPoint;
+    public void ReleaseContent()
+    {
+        if (waveManager != null) waveManager.OnAllWavesCleared -= HandleWavesCleared;
+        StopAllCoroutines();
+        if (virtualCamera != null) ResetBossEntryCamera();
+    }
+    private void HandleWavesCleared() => StartCoroutine(WaveCompleteRoutine());
+    public void BindContent(TrainingRoomContent content)
+    {
+        rootObject = content.gameObject;
+        waveManager = content.waves;
+        virtualCamera = content.roomCamera;
+        clearPortalPrefab = content.clearPortal;
+        defaultOrthographicSize = virtualCamera.Lens.OrthographicSize;
+        virtualCamera.enabled = false;
+        waveManager.OnAllWavesCleared += HandleWavesCleared;
+    }
     private void Awake()
     {
+        if (GetComponent<RoomViewRules>() == null) gameObject.AddComponent<RoomViewRules>();
+        var host = GetComponent<TrainingRoomHost>();
+        if (host != null) { host.Load(host.defaultData); rootObject.SetActive(false); return; }
         defaultOrthographicSize = virtualCamera.Lens.OrthographicSize;
         virtualCamera.enabled = false;
 
         if (waveManager != null)
-            waveManager.OnAllWavesCleared += () => { StartCoroutine(WaveCompleteRoutine()); };
+            waveManager.OnAllWavesCleared += HandleWavesCleared;
 
         rootObject.SetActive(false);
     }
@@ -62,7 +84,7 @@ public class Room : MonoBehaviour
 
         virtualCamera.Follow = bossTr;
         bossEntryCameraTween = DOTween.To(() => virtualCamera.Lens.OrthographicSize,
-            x => virtualCamera.Lens.OrthographicSize = x,
+            SetCameraSize,
             defaultOrthographicSize * 0.75f,
             0.3f);
 
@@ -76,16 +98,21 @@ public class Room : MonoBehaviour
         UIManager.Instance.ShowBossHP(true);
         virtualCamera.Follow = GameManager.Instance.Player.transform;
         bossEntryCameraTween = DOTween.To(() => virtualCamera.Lens.OrthographicSize,
-            x => virtualCamera.Lens.OrthographicSize = x,
+            SetCameraSize,
             defaultOrthographicSize,
             0.3f);
+    }
+    private void SetCameraSize(float size)
+    {
+        virtualCamera.Lens.OrthographicSize = size;
+        virtualCamera.GetComponent<CinemachineConfiner2D>()?.InvalidateLensCache();
     }
     public void ResetBossEntryCamera()
     {
         bossEntryCameraTween?.Kill();
         bossEntryCameraTween = null;
         if (virtualCamera == null) return;
-        virtualCamera.Lens.OrthographicSize = defaultOrthographicSize;
+        SetCameraSize(defaultOrthographicSize);
         if (GameManager.Instance != null && GameManager.Instance.Player != null)
             virtualCamera.Follow = GameManager.Instance.Player.transform;
     }

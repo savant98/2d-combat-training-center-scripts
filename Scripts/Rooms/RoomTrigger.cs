@@ -91,6 +91,7 @@ public class RoomTrigger : MonoBehaviour, IInteractable
         RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest
         {
             targetRoom = menuController.SelectedRoom != null ? menuController.SelectedRoom : room,
+            waveData = menuController.SelectedWaveData,
             teleportPoint = menuController.SelectedSpawnPoint != null ? menuController.SelectedSpawnPoint : teleportPoint,
             transitionEffect = transitionEffect
         });
