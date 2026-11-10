@@ -7,7 +7,7 @@ using UnityEngine;
 //   소리는 취소되는 즉시 멈춰야 하므로 피드백 대신 SoundManager의 Loop로 재생한다.
 // - 준비 완료(SetWaiting 첫 프레임): 단계별 lockFeedback(체결 폭발·소리·흔들림)을 재생하고, 고리가 흰빛으로 번쩍인다.
 // - 대기(SetWaiting): 호가 남은 시간만큼 줄어들고 톱니 고리가 시계처럼 한 칸씩 끊어 돈다. 칸마다 틱 소리와 불꽃이 나고, 남은 시간이 적으면 깜빡인다.
-//   무기를 아직 쓸 수 없으면(게이지·재사용 대기) 고리 색이 붉게 어두워진다.
+//   고리는 항상 그 단계의 색을 유지한다. 무기를 쓸 수 있는지는 머리 위 GearUI와 HUD 슬롯이 보여 준다(2026-11-10 "반복하면 색이 유지되지 않는다" 수정).
 // - 끝(End): 무기를 쏘면 몸으로 빨려 들어가고, 손을 떼거나 시간이 다 되면 벌어지며 깜빡여 꺼지고 해제음이 난다. 맞거나 다른 행동으로 끊기면 조용히 사라진다.
 // 시간은 Time.deltaTime이라 히트스톱 때 함께 멈춘다. Player 이동과 Animator 뒤에 값을 맞추도록 실행 순서를 늦춘다.
 [DefaultExecutionOrder(110)]
@@ -34,7 +34,6 @@ public sealed class PlayerGearVisual : MonoBehaviour
     private static readonly int StageId = Shader.PropertyToID("_Stage");
     private static readonly int SlideId = Shader.PropertyToID("_Slide");
     private static readonly int LitId = Shader.PropertyToID("_Lit");
-    private static readonly int ReadyId = Shader.PropertyToID("_Ready");
     private static readonly int RadiusId = Shader.PropertyToID("_Radius");
 
     [Header("Parts")]
@@ -73,7 +72,7 @@ public sealed class PlayerGearVisual : MonoBehaviour
     private Phase phase = Phase.Inactive;
     private EndReason endReason;
     private int stage, lastTick;
-    private float phaseAge, progress, flash, spin, spinTarget, ready = 1f;
+    private float phaseAge, progress, flash, spin, spinTarget;
     private float alpha, open = 1f, slide, lit;
     private float ringRadius = 1.34f;
     private Color stageColor = Color.white;
@@ -99,22 +98,20 @@ public sealed class PlayerGearVisual : MonoBehaviour
         Hide();
     }
 
-    public void SetCharging(int targetStage, float fill, bool weaponReady)
+    public void SetCharging(int targetStage, float fill)
     {
         if (phase != Phase.Charging || stage != targetStage)
             BeginCharge(targetStage);
 
         progress = Mathf.Clamp01(fill);
-        ready = weaponReady ? 1f : 0f;
     }
 
-    public void SetWaiting(int lockedStage, float remaining, bool weaponReady)
+    public void SetWaiting(int lockedStage, float remaining)
     {
         if (phase != Phase.Waiting || stage != lockedStage)
             Lock(lockedStage);
 
         progress = Mathf.Clamp01(remaining);
-        ready = weaponReady ? 1f : 0f;
 
         int tick = Mathf.FloorToInt((1f - progress) * waitTickCount);
         if (tick > lastTick)
@@ -311,7 +308,6 @@ public sealed class PlayerGearVisual : MonoBehaviour
         block.SetFloat(StageId, Mathf.Min(stage, ClampCount));
         block.SetFloat(SlideId, slide);
         block.SetFloat(LitId, lit);
-        block.SetFloat(ReadyId, ready);
         ring.SetPropertyBlock(block);
     }
 
@@ -322,7 +318,6 @@ public sealed class PlayerGearVisual : MonoBehaviour
         progress = flash = spin = spinTarget = alpha = slide = lit = 0f;
         open = 1f;
         stage = lastTick = 0;
-        ready = 1f;
         StopLoops();
         if (ring != null) ring.enabled = false;
         if (motes != null) motes.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);

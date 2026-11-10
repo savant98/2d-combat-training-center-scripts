@@ -95,6 +95,10 @@ public class PlayerWeaponAbility : PlayerAbility
             weaponSwapVisual.Initialize(controller.model.transform.Find("Circle"));
         }
 
+        // HUD의 기어 슬롯·눈금은 머리 위 GearUI의 단계 색을 그대로 쓴다.
+        if (gearUI != null)
+            UIManager.Instance.SetGearStageColors(gearUI.GetStageColor(1), gearUI.GetStageColor(2), gearUI.GetStageColor(3));
+
         ApplyWeaponSet(0, true);
 
         selectedWeapon = normalWeapon;
@@ -713,20 +717,15 @@ public class PlayerWeaponAbility : PlayerAbility
         if (gearState == GearState.Charging)
         {
             float chargeTime = Mathf.Max(0.0001f, weaponData.gearStageChargeTime);
-            gearVisual.SetCharging(chargingTargetStage, Mathf.Clamp01(gearTimer / chargeTime), IsGearWeaponReady(chargingTargetStage));
+            gearVisual.SetCharging(chargingTargetStage, Mathf.Clamp01(gearTimer / chargeTime));
         }
         else if (gearState == GearState.Waiting)
         {
             float waitTime = Mathf.Max(0.0001f, weaponData.gearWaitTime);
-            gearVisual.SetWaiting(gearStage, Mathf.Clamp01(gearTimer / waitTime), IsGearWeaponReady(gearStage));
+            gearVisual.SetWaiting(gearStage, Mathf.Clamp01(gearTimer / waitTime));
         }
     }
 
-    private bool IsGearWeaponReady(int stage)
-    {
-        WeaponBaseSO weapon = weaponData.weaponSets[currentSetIndex].GetGearWeapon(stage);
-        return weapon != null && skillGauge >= weapon.skillGauge && IsWeaponCooldownReady(weapon);
-    }
     #endregion
 
     #region CoolTime Helper

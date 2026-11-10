@@ -326,6 +326,10 @@ public class UIManager : MonoBehaviour
     {
         hud.SetHP(currentHP, maxHP);
     }
+    public void SetGearStageColors(Color stage1, Color stage2, Color stage3)
+    {
+        hud.SetGearStageColors(stage1, stage2, stage3);
+    }
 
     public void UpdateBossHP(float normalized)
     {
