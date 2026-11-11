@@ -249,6 +249,8 @@ public class StarSpear : ProjectileBase
 
     private void Detonate(Vector2 center, DetonationCause cause)
     {
+        // 폭발은 소환 위치가 아니라 폭발 중심에서 바깥쪽으로 민다.
+        damageInfo.knockbackOrigin = center;
         if (State == SpearState.Done || isReturning) return;
         bool flying = State == SpearState.Flight;
         State = SpearState.Done;

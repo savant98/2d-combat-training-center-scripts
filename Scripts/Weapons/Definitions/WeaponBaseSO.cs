@@ -20,6 +20,10 @@ public abstract class WeaponBaseSO : ScriptableObject
     [Header("Recoil")]
     public float recoilPower = 2f;
 
+    [Header("Enemy Knockback")]
+    [Tooltip("일반 피격 시 적에게 더하는 수평 외력 속도. 쉴드 적은 면역이며 0이면 밀리지 않는다.")]
+    [Min(0f)] public float knockbackPower;
+
     [Header("DamageInfo Settings")]
     public DamageInfo damageInfo;
     public float skillGauge;
@@ -48,6 +52,10 @@ public abstract class WeaponBaseSO : ScriptableObject
 
         // 발사 시 복사된 출처를 유지하여 무기 교체 후 적중도 구분한다.
         [NonSerialized] public WeaponBaseSO sourceWeapon;
+
+        // 공격 시작 위치와 방향을 보관해 발사 후 플레이어가 이동해도 밀리는 방향을 유지한다.
+        [NonSerialized] public Vector2 knockbackOrigin;
+        [NonSerialized] public int knockbackFacing;
     }
 
     protected DamageInfo WithSource(DamageInfo info)

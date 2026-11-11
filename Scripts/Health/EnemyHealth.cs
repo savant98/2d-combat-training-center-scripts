@@ -59,12 +59,14 @@ public class EnemyHealth : HealthBase
         public InvulnerabilityLease(EnemyHealth health,int id) { this.health=health; this.id=id; }
         public void Dispose() { if(health!=null) health.invulnerabilityOwners.Remove(id); health=null; }
     }
+    private EnemyController controller;
     private float minimumHealth;
     private Coroutine coroutine;
     protected override void Awake()
     {
         ApplyHealthData();
         base.Awake();
+        controller = GetComponentInParent<EnemyController>();
         if (enemyShieldSystem != null)
             enemyShieldSystem.SetShieldSystem(this, enemyUI, brain);
     }
@@ -94,7 +96,13 @@ public class EnemyHealth : HealthBase
             damageInfo.damage = Mathf.Min(damageInfo.damage, Mathf.Max(0f, currentHP - minimumHealth));
         }
         float applied = Mathf.Clamp(damageInfo.damage, 0f, Mathf.Max(0f, currentHP));
-        if (applied > 0f) DamageApplied?.Invoke(this, damageInfo, applied);
+        if (applied > 0f)
+        {
+            // 무적·0 피해·사망 후 풀 반환에는 외력을 남기지 않는다.
+            if (currentHP > damageInfo.damage && controller != null)
+                controller.ApplyWeaponKnockback(damageInfo);
+            DamageApplied?.Invoke(this, damageInfo, applied);
+        }
         base.TakeDamage(damageInfo, hitPosition);
 
         enemyUI.ShowHP(currentHP / maxHP, IsBossEnemy);

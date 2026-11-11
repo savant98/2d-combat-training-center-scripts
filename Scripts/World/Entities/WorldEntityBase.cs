@@ -28,6 +28,15 @@ public abstract class WorldEntityBase : MonoBehaviour
         this.owner = owner;
         this.ownerFaction = owner != null ? owner.Faction : Faction.Enemy;
         this.damageInfo = damageInfo;
+        if (owner != null && ownerFaction == Faction.Player)
+        {
+            this.damageInfo.knockbackOrigin = owner.transform.position;
+            this.damageInfo.knockbackFacing = owner.Facing;
+        }
+        else
+        {
+            this.damageInfo.knockbackFacing = 0;
+        }
         this.spawnCount = count;
         
         // 방향에 맞게 반전

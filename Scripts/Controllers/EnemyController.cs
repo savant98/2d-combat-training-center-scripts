@@ -54,6 +54,24 @@ public class EnemyController : CharacterController2D
         Velocity.y += GravityOn ? Gravity * Time.deltaTime : 0;
         return Velocity;
     }
+    public void ApplyWeaponKnockback(WeaponBaseSO.DamageInfo info)
+    {
+        // 쉴드 종류는 소진·브레이크 중에도 일반 피격 넉백을 받지 않는다.
+        // 쉴드 브레이크 순간의 기존 전용 외력은 HandleBreak에서 별도로 처리한다.
+        if (enemyHealth == null || enemyHealth.enemyShieldSystem != null ||
+            IgnoreExternalForces || !isActiveAndEnabled || info.knockbackFacing == 0 ||
+            info.sourceWeapon == null)
+            return;
+
+        float power = info.sourceWeapon.knockbackPower;
+        if (power <= 0f || float.IsNaN(power) || float.IsInfinity(power))
+            return;
+
+        float offset = transform.position.x - info.knockbackOrigin.x;
+        float direction = Mathf.Abs(offset) > 0.001f ? Mathf.Sign(offset) : info.knockbackFacing;
+        AddKnockback(Vector2.right * (direction * power));
+    }
+
     private void HandleBreak()
     {
         // 즉시 멈춤

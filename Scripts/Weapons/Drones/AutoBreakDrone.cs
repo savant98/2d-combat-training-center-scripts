@@ -315,6 +315,8 @@ public class AutoBreakDrone : DroneBase
     // 돌진이 끝난 자리에서 폭발한다(StarSpear 창과 같은 방식). 드론은 사라지지 않고 돌아온다.
     private void Detonate(Vector2 center)
     {
+        // 폭발은 소환 위치가 아니라 폭발 중심에서 바깥쪽으로 민다.
+        damageInfo.knockbackOrigin = center;
         velocity = Vector2.zero;
 
         if (dashTrail != null)
