@@ -5,7 +5,7 @@ using UnityEngine.UI;
 [AddComponentMenu("UI/Training Hologram Graphic")]
 public class TrainingHologramGraphic : UnityEngine.UI.Image
 {
-    public enum Shape { Frame, Beam, Scanlines }
+    public enum Shape { Frame, Beam, Scanlines, FocusFrame }
 
     [SerializeField] private Shape shape;
     [SerializeField] private Color tint = new Color(.26f, .72f, 1f, 1f);
@@ -50,6 +50,14 @@ public class TrainingHologramGraphic : UnityEngine.UI.Image
         {
             case Shape.Beam: DrawBeam(vh, rect, drawColor); break;
             case Shape.Scanlines: DrawScanlines(vh, rect, drawColor); break;
+            case Shape.FocusFrame:
+                DrawFrame(vh, rect, drawColor);
+                int start = vh.currentVertCount;
+                vh.AddVert(new Vector2(rect.xMin + 16f, rect.center.y - 8f), drawColor, Vector2.zero);
+                vh.AddVert(new Vector2(rect.xMin + 28f, rect.center.y), drawColor, Vector2.zero);
+                vh.AddVert(new Vector2(rect.xMin + 16f, rect.center.y + 8f), drawColor, Vector2.zero);
+                vh.AddTriangle(start, start + 1, start + 2);
+                break;
             default: DrawFrame(vh, rect, drawColor); break;
         }
     }

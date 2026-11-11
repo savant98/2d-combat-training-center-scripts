@@ -230,6 +230,8 @@ public class TrainingMenuController : MonoBehaviour
         RestoreScreenLayout();
         listPanel.SetActive(true);
         detailPanel.SetActive(false);
+        var pageMotion = listPanel.GetComponent<TrainingMenuPageMotion>();
+        if (pageMotion != null) pageMotion.Replay();
         listPanelGroup.alpha = 0f;
         listScreen.localScale = new Vector3(listScreenScale.x, listScreenScale.y * .015f, listScreenScale.z);
         listScreen.anchoredPosition = listHome + Vector2.down * 12f;
