@@ -18,6 +18,8 @@ public sealed class WaveEditorWindow : EditorWindow
     private int mode;
     private float time;
     private GameObject brush;
+    [SerializeField] private int brushRotationSteps;
+    private static readonly string[] rotationLabels = { "0°", "90°", "180°", "270°" };
     private readonly List<GameObject> palette = new();
     private string search = "";
     private bool showRoom;
@@ -97,6 +99,7 @@ public sealed class WaveEditorWindow : EditorWindow
         detailsWidth = Mathf.Clamp(detailsWidth, 220, Mathf.Max(220, position.width - paletteWidth - 220 - 12));
         Toolbar();
         if (Current == null) { EditorGUILayout.HelpBox("WaveData를 선택하거나 새로 만드세요. 기존 데이터는 좌표와 생성 순서를 그대로 읽습니다.", MessageType.Info); return; }
+        RotationShortcut();
         using (new EditorGUILayout.HorizontalScope())
         {
             Palette();
@@ -183,6 +186,11 @@ public sealed class WaveEditorWindow : EditorWindow
             paletteCategory = GUILayout.Toolbar(paletteCategory, new[] { "Enemy", "Platform" });
             search = EditorGUILayout.TextField(search, EditorStyles.toolbarSearchField);
             iconSize = EditorGUILayout.Slider("미리보기 크기", iconSize, 40, 100);
+            if (WavePrefabVisuals.IsEnvironmentTool(brush))
+            {
+                brushRotationSteps = EditorGUILayout.Popup("배치 방향", NormalizeRotation(brushRotationSteps), rotationLabels);
+                EditorGUILayout.HelpBox("셀 중심에 배치 · R: 반시계 90° 회전\n수명·생성 시각은 배치 항목 상세에서 설정합니다.", MessageType.None);
+            }
             var category = paletteCategory == 0 ? WavePrefabVisuals.Category.Enemy : WavePrefabVisuals.Category.Platform;
             var items = palette.Where(p => p != null && WavePrefabVisuals.Classify(p) == category && p.name.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
             GUILayout.Label($"{items.Length}개 · 클릭 후 격자에 배치", EditorStyles.miniLabel);
@@ -200,7 +208,7 @@ public sealed class WaveEditorWindow : EditorWindow
                         if (brush == item) GUI.backgroundColor = new Color(.35f, .75f, 1);
                         if (GUI.Button(rect, new GUIContent("", item.name))) UseBrush(item);
                         GUI.backgroundColor = background;
-                        WavePrefabVisuals.Draw(new Rect(rect.x + 6, rect.y + 4, iconSize, iconSize), item);
+                        WavePrefabVisuals.Draw(new Rect(rect.x + 6, rect.y + 4, iconSize, iconSize), item, false, item == brush && WavePrefabVisuals.IsEnvironmentTool(item) ? brushRotationSteps : 0);
                         GUI.Label(new Rect(rect.x + 3, rect.y + iconSize + 6, rect.width - 6, 32), new GUIContent(item.GetComponent<WaveTerrainCellView>() != null ? item.GetComponent<WaveTerrainCellView>().kind.ToString() : item.name, item.name), cardNameStyle);
                     }
             }
@@ -325,7 +333,7 @@ public sealed class WaveEditorWindow : EditorWindow
             var frame = new Rect(rect.x - 3, rect.y - 3, rect.width + 6, rect.height + 6);
             EditorGUI.DrawRect(frame, i == selected ? Color.white : TimingColor(times[i]));
             EditorGUI.DrawRect(rect, new Color(.09f, .11f, .15f, .96f));
-            WavePrefabVisuals.Draw(rect, spawn.prefab, true);
+            WavePrefabVisuals.Draw(rect, spawn.prefab, true, spawn.rotationSteps);
             GUI.Label(new Rect(rect.x - 30, rect.yMax + 2, rect.width + 60, 18), spawn.prefab != null ? spawn.prefab.name : "참조 없음", markerStyle);
             if (spawn.isBossEnemy) GUI.Label(new Rect(rect.xMax - 15, rect.y, 15, 18), "B", markerStyle);
         }
@@ -338,8 +346,7 @@ public sealed class WaveEditorWindow : EditorWindow
     private Rect MarkerRect(int index)
     {
         var spawn = Current.spawnObjects[index];
-        var p = Screen(spawn.spawnPosition + Offset);
-        var bounds = WavePrefabVisuals.LocalBounds(spawn.prefab);
+        var bounds = WavePrefabVisuals.RotatedBounds(spawn.prefab, spawn.rotationSteps);
         var min = Screen(spawn.spawnPosition + Offset + new Vector2(bounds.min.x, bounds.max.y));
         return new Rect(min, new Vector2(bounds.size.x, bounds.size.y) * zoom);
     }
@@ -353,7 +360,22 @@ public sealed class WaveEditorWindow : EditorWindow
     private void UseBrush(GameObject value)
     {
         editPlayerStart = editClearPortal = false;
-        brush = value;if (WavePrefabVisuals.Classify(value) == WavePrefabVisuals.Category.Enemy) { terrainSession = false;selected = -1;selectedBatch = -1;eventIndex = -1;selectedCell = null; }ResetGesture();
+        brush = value;if (WavePrefabVisuals.Classify(value) == WavePrefabVisuals.Category.Enemy || WavePrefabVisuals.IsEnvironmentTool(value)) { terrainSession = false;selected = -1;selectedBatch = -1;eventIndex = -1;selectedCell = null; }ResetGesture();
+    }
+    private static int NormalizeRotation(int value) => ((value % 4) + 4) % 4;
+    private void RotationShortcut()
+    {
+        var e = Event.current;
+        if (e.type != EventType.KeyDown || e.keyCode != KeyCode.R || e.control || e.command || e.alt || EditorGUIUtility.editingTextField || GUIUtility.hotControl != 0) return;
+        if (mode == 0 && selected >= 0 && selected < (Current.spawnObjects?.Length ?? 0) && WavePrefabVisuals.IsEnvironmentTool(Current.spawnObjects[selected].prefab))
+            Mutate(() => Current.spawnObjects[selected].rotationSteps = NormalizeRotation(Current.spawnObjects[selected].rotationSteps + 1));
+        else if (mode == 1 && WavePrefabVisuals.IsEnvironmentTool(brush))
+        {
+            brushRotationSteps = NormalizeRotation(brushRotationSteps + 1);
+            Repaint();
+        }
+        else return;
+        e.Use();
     }
     private void ResetGesture()
     {
@@ -409,6 +431,7 @@ public sealed class WaveEditorWindow : EditorWindow
         if (mode != 1) return;
         if (editClearPortal) Mutate(() => { data.overrideClearPortalPosition = true; data.clearPortalPosition = Vector2Int.RoundToInt(point); });
         else if (editPlayerStart) Mutate(() => { Current.overridePlayerStart = true; Current.playerStart = Vector2Int.RoundToInt(point); });
+        else if (WavePrefabVisuals.IsEnvironmentTool(brush)) Place(point);
         else if (terrainSession) Paint(cell, false);
         else if (!drag || brush != null && brush.GetComponent<WaveTerrainCellView>() != null) Place(point);
     }
@@ -486,7 +509,7 @@ public sealed class WaveEditorWindow : EditorWindow
         Mutate(() =>
         {
             var list = (Current.spawnObjects ?? Array.Empty<WaveSpawnInfo>()).ToList();
-            list.Add(new WaveSpawnInfo { prefab = brush, spawnPosition = WavePrefabVisuals.Placement(brush, point) - Offset, isRequiredToClear = brush.GetComponent<EnemyController>() != null });
+            list.Add(new WaveSpawnInfo { prefab = brush, spawnPosition = WavePrefabVisuals.Placement(brush, point) - Offset, rotationSteps = WavePrefabVisuals.IsEnvironmentTool(brush) ? NormalizeRotation(brushRotationSteps) : 0, isRequiredToClear = brush.GetComponent<EnemyController>() != null });
             Current.spawnObjects = list.ToArray();
             selected = WaveAuthoring.SetTime(Current, list.Count - 1, time);
             selectedBatch = -1; selectedCell = null;
@@ -710,7 +733,7 @@ public sealed class WaveEditorWindow : EditorWindow
             GUILayout.Label($"Wave {waveIndex + 1} 상세", EditorStyles.boldLabel);
             if (data.cellMap.enabled)
             {
-                EditorGUILayout.HelpBox("Platform / OneWayPlatform은 한 칸입니다. 팔레트에서 고르고 칠한 셀이 실제 맵이 됩니다. Enemy 이미지는 실제 월드 크기입니다.", MessageType.None);
+                EditorGUILayout.HelpBox("Platform / OneWayPlatform은 한 칸입니다. 팔레트에서 고르고 칠한 셀이 실제 맵이 됩니다. 환경 도구는 셀 중심에 배치하고 90°씩 회전합니다. 생성 항목 상세에서 시각·수명·Wave 종료 후 유지를 설정하세요. Enemy 이미지는 실제 월드 크기입니다.", MessageType.None);
                 if (selectedCell.HasValue)
                 {
                     EditorGUILayout.LabelField("선택한 셀", selectedCell.Value.ToString());
@@ -776,6 +799,12 @@ public sealed class WaveEditorWindow : EditorWindow
                 GUILayout.Space(12); GUILayout.Label($"선택한 생성 항목 #{selected + 1}", EditorStyles.boldLabel);
                 var spawn = wave.FindPropertyRelative("spawnObjects").GetArrayElementAtIndex(selected);
                 foreach (var pair in new[] { ("prefab", "Prefab"), ("spawnPosition", "생성 좌표 (원본 보존)"), ("isRequiredToClear", "처치 필수 목표"), ("isBossEnemy", "보스 등장"), ("keepAfterWave", "Wave 종료 후 유지"), ("lifetime", "생성 후 유지 제한 (0=무제한)"), ("goalKeyOverride", "목표 도달 키 (빈 값=원본)") }) Property(spawn, pair.Item1, pair.Item2);
+                if (WavePrefabVisuals.IsEnvironmentTool(Current.spawnObjects[selected].prefab))
+                {
+                    var rotation = spawn.FindPropertyRelative("rotationSteps");
+                    rotation.intValue = EditorGUILayout.Popup("설치 방향 · R", NormalizeRotation(rotation.intValue), rotationLabels);
+                    EditorGUILayout.HelpBox("0°는 Prefab 원본 방향입니다. 셀 중심을 기준으로 반시계 90°씩 회전합니다.", MessageType.None);
+                }
                 float originalTime = WaveAuthoring.Times(Current)[selected];
                 bool preparation = Current.spawnObjects[selected].prefab != null && Current.spawnObjects[selected].prefab.GetComponent<TrainingCourseActivator>() != null;
                 float nextTime = originalTime;

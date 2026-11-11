@@ -19,9 +19,17 @@ public class LaserBeam : WorldEntityBase
     [SerializeField] private FeedbackDataSO hitFeedbackData;
     [SerializeField] private FeedbackDataSO blockFeedbackData;
     [SerializeField, Min(0f)] private float blockFeedbackInterval = 0.08f;
+    [SerializeField, Min(0f), Tooltip("0이면 기존 적 레이저처럼 모든 판정 시각에 효과를 재생합니다.")]
+    private float hitFeedbackInterval;
 
     [Header("Loop Sound")]
     [SerializeField] private SoundOptions loopSound;
+    [SerializeField] private bool useDistanceAttenuation;
+    [SerializeField, Min(0f)] private float soundNearDistance = 3f;
+    [SerializeField, Min(0f)] private float soundFarDistance = 22f;
+
+    [Header("Endpoint Sparks")]
+    [SerializeField] private ParticleSystem[] endpointSparks = System.Array.Empty<ParticleSystem>();
 
     [Header("Beam Visual")]
     [SerializeField, Min(1f)] private float glowWidthMultiplier = 1.8f;
@@ -44,6 +52,12 @@ public class LaserBeam : WorldEntityBase
     [SerializeField] private bool autoReturnToPool = true;
     [SerializeField, Min(0f)] private float fadeOutDuration = 0.2f;
 
+    private RaycastMotor2D motor;
+    private Collider2D[] boxHits = new Collider2D[16];
+    private readonly List<Collider2D> capHits = new();
+    private readonly HashSet<Collider2D> beamHits = new();
+    private readonly HashSet<HealthBase> damagedTargets = new();
+
     private Coroutine lifeRoutine;
     private Coroutine widthRoutine;
 
@@ -56,16 +70,23 @@ public class LaserBeam : WorldEntityBase
     private float damageTimer;
     private float lifetimeWidthMultiplier;
     private float blockFeedbackTimer;
+    private float nextHitFeedbackTime;
     private LayerMask blockMask;
     private LayerMask damageMask;
 
     private bool activeBeam;
 
     private SoundHandle loopSoundHandle;
+    private float loopSoundBaseVolume;
+    private float nextLoopSoundRetryTime;
+    private Vector2 loopSoundPosition;
+    private readonly Dictionary<FeedbackDataSO, FeedbackDataSO> distanceFeedbacks = new();
 
     protected override void Awake()
     {
         base.Awake();
+        motor = GetComponent<RaycastMotor2D>();
+        if (motor == null) motor = gameObject.AddComponent<RaycastMotor2D>();
 
         InitializeLineRenderer(coreLineRenderer);
         InitializeLineRenderer(glowLineRenderer);
@@ -80,12 +101,25 @@ public class LaserBeam : WorldEntityBase
 
     public override void ForceReturnToPool()
     {
+        if (!gameObject.activeSelf) return;
         ResetBeamState();
         base.ForceReturnToPool();
     }
     private void OnDisable()
     {
         StopLoopSound();
+        StopEndpointSparks();
+    }
+
+    private void OnDestroy()
+    {
+        foreach (var feedback in distanceFeedbacks.Values)
+        {
+            if (feedback == null) continue;
+            if (Application.isPlaying) Destroy(feedback);
+            else DestroyImmediate(feedback);
+        }
+        distanceFeedbacks.Clear();
     }
     public override void Initialize(CharacterController2D owner, WeaponBaseSO.DamageInfo damageInfo, int count = 0)
     {
@@ -117,9 +151,26 @@ public class LaserBeam : WorldEntityBase
         damageTimer = tickInterval;
         activeBeam = true;
 
+        loopSoundPosition = origin;
+        if (useDistanceAttenuation || (endpointSparks != null && endpointSparks.Length > 0))
+        {
+            // 풀의 이전 발사 위치에서 스파크가 나오지 않도록 기존 모터 질의로 양 끝을 먼저 정한다.
+            var initialHit = LaserLineUtility.GetBlockHit(origin, this.direction, this.length, baseWidth * .5f, blockMask);
+            Vector2 endPoint = origin + this.direction * (initialHit.collider != null ? initialHit.distance : this.length);
+            if (useDistanceAttenuation) loopSoundPosition = (origin + endPoint) * .5f;
+            if (endpointSparks != null && endpointSparks.Length > 0)
+            {
+                RefreshBeam(endPoint);
+                // 발사 첫 순간의 시각 폭은 0이므로 스파크의 부모만 정상 크기로 초기화한다.
+                LaserLineUtility.UpdateCaps(startCap, endCap, origin, endPoint, this.direction, baseWidth,
+                    startCapScaleMultiplier, endCapScaleMultiplier);
+            }
+        }
+        nextLoopSoundRetryTime = 0f;
         StartLoopSound();
 
         SetLinesEnabled(true);
+        PlayEndpointSparks();
 
         StopWidthRoutine();
         widthRoutine = StartCoroutine(CoBeamWidthAnim());
@@ -195,7 +246,7 @@ public class LaserBeam : WorldEntityBase
         if (blockFeedbackTimer > 0f)
             return;
 
-        FeedbackPlayer.Instance.Play(blockFeedbackData, blockHit.point);
+        FeedbackPlayer.Instance.Play(GetDistanceFeedback(blockFeedbackData, blockHit.point), blockHit.point);
         blockFeedbackTimer = blockFeedbackInterval;
     }
     private void UpdateDamageTick(float deltaTime, float blockedDistance)
@@ -215,35 +266,39 @@ public class LaserBeam : WorldEntityBase
         if (radius <= 0)
             return;
 
-        RaycastHit2D[] hits = Physics2D.CircleCastAll(
-            origin,
-            radius,
-            direction,
-            blockedDistance,
-            damageMask);
+        beamHits.Clear();
+        damagedTargets.Clear();
+        Vector2 end = origin + direction * blockedDistance;
 
-        if (hits == null || hits.Length == 0)
-            return;
-
-        HashSet<HealthBase> damagedTargets = new HashSet<HealthBase>();
-
-        for (int i = 0; i < hits.Length; i++)
+        // 기존 원형 Cast와 같은 캡슐 범위를 모터의 사각형·양 끝 원의 합집합으로 검사합니다.
+        if (blockedDistance > 0f)
         {
-            Collider2D col = hits[i].collider;
-            if (col == null)
-                continue;
+            float angle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg;
+            int count;
+            do
+            {
+                count = motor.OverlapAttackBox((origin + end) * .5f,
+                    new Vector2(blockedDistance, radius * 2f), angle, boxHits, damageMask);
+                if (count < boxHits.Length) break;
+                System.Array.Resize(ref boxHits, boxHits.Length * 2);
+            } while (true);
+            for (int i = 0; i < count; i++) beamHits.Add(boxHits[i]);
+        }
+        var filter = new ContactFilter2D();
+        filter.SetLayerMask(damageMask);
+        filter.useTriggers = Physics2D.queriesHitTriggers;
+        motor.OverlapAttackCircle(origin, radius, filter, capHits);
+        foreach (var hit in capHits) beamHits.Add(hit);
+        motor.OverlapAttackCircle(end, radius, filter, capHits);
+        foreach (var hit in capHits) beamHits.Add(hit);
 
-            //if (!col.TryGetComponent<HealthBase>(out var health))
-            //    continue;
+        foreach (var hit in beamHits)
+        {
+            if (hit == null) continue;
+            HealthBase health = hit.GetComponentInParent<HealthBase>();
+            if (health == null || !damagedTargets.Add(health)) continue;
 
-            HealthBase health = hits[i].collider.GetComponentInParent<HealthBase>();
-            if (health == null)
-                continue;
-
-            if (!damagedTargets.Add(health))
-                continue;
-
-            Vector2 hitPoint = hits[i].point;
+            Vector2 hitPoint = hit.ClosestPoint(origin);
 
             if (ownerFaction == Faction.Enemy && health is PlayerHealth player)
             {
@@ -268,10 +323,11 @@ public class LaserBeam : WorldEntityBase
 
     private void PlayHitFeedback(Vector2 hitPoint)
     {
-        if (hitFeedbackData == null)
+        if (hitFeedbackData == null || Time.time < nextHitFeedbackTime)
             return;
 
-        FeedbackPlayer.Instance.Play(hitFeedbackData, hitPoint);
+        nextHitFeedbackTime = Time.time + hitFeedbackInterval;
+        FeedbackPlayer.Instance.Play(GetDistanceFeedback(hitFeedbackData, hitPoint), hitPoint);
     }
 
     private IEnumerator CoBeamWidthAnim()
@@ -342,6 +398,8 @@ public class LaserBeam : WorldEntityBase
     private void ResetBeamState()
     {
         StopLoopSound();
+        StopEndpointSparks();
+        nextLoopSoundRetryTime = 0f;
 
         activeBeam = false;
 
@@ -351,6 +409,7 @@ public class LaserBeam : WorldEntityBase
         damageTimer = tickInterval;
         animatedWidth = 0f;
         blockFeedbackTimer = 0f;
+        nextHitFeedbackTime = 0f;
         currentVisualWidth = 0f;
         lifetimeWidthMultiplier = 1f;
 
@@ -453,30 +512,121 @@ public class LaserBeam : WorldEntityBase
     {
         StopLoopSound();
 
-        if (loopSound == null || loopSound.clip == null)
+        if (loopSound == null || loopSound.clip == null || SoundManager.Instance == null)
             return;
 
-        if (SoundManager.Instance == null)
-            return;
-
-        loopSoundHandle = SoundManager.Instance.PlayLoop(
-            loopSound,
-            origin,
-            null);
+        Vector2 position = useDistanceAttenuation ? loopSoundPosition : origin;
+        float gain = LoopSoundDistanceGain();
+        if (useDistanceAttenuation)
+        {
+            nextLoopSoundRetryTime = Time.unscaledTime + .12f;
+            // 들리지 않는 빔은 공용 반복음의 동시 재생 자리를 차지하지 않는다.
+            if (gain <= 0f) return;
+        }
+        loopSoundHandle = SoundManager.Instance.PlayLoop(loopSound, position, null);
+        if (loopSoundHandle == null || !loopSoundHandle.IsValid) return;
+        var source = loopSoundHandle.GetSource();
+        // SoundManager가 계산한 동시 재생 감쇠를 기준으로 거리 음량만 덧곱한다.
+        loopSoundBaseVolume = source.volume;
+        if (useDistanceAttenuation) source.volume = loopSoundBaseVolume * gain;
     }
 
     private void StopLoopSound()
     {
         loopSoundHandle?.Stop();
         loopSoundHandle = null;
+        loopSoundBaseVolume = 0f;
     }
 
     private void UpdateLoopSoundPosition(Vector2 endPoint)
     {
-        if (loopSoundHandle == null || !loopSoundHandle.IsValid)
-            return;
-
-        Vector2 center = (origin + endPoint) * 0.5f;
+        Vector2 center = (origin + endPoint) * .5f;
+        loopSoundPosition = center;
+        float gain = LoopSoundDistanceGain();
+        if (useDistanceAttenuation)
+        {
+            if (gain <= 0f) { StopLoopSound(); return; }
+            if ((loopSoundHandle == null || !loopSoundHandle.IsValid) && Time.unscaledTime >= nextLoopSoundRetryTime)
+                StartLoopSound();
+        }
+        if (loopSoundHandle == null || !loopSoundHandle.IsValid) return;
         loopSoundHandle.SetPosition(center);
+        if (useDistanceAttenuation) loopSoundHandle.GetSource().volume = loopSoundBaseVolume * gain;
+    }
+
+    private float LoopSoundDistanceGain()
+    {
+        if (!useDistanceAttenuation) return 1f;
+        var listener = Camera.main;
+        if (listener == null) return 1f;
+        // 긴 빔은 중앙이 멀어도 발사점이나 도착점 근처에서 들려야 하므로 실제 구간까지의 거리를 쓴다.
+        Vector2 segment = (loopSoundPosition - origin) * 2f;
+        Vector2 point = origin;
+        float lengthSquared = segment.sqrMagnitude;
+        if (lengthSquared > .000001f)
+        {
+            Vector2 delta = (Vector2)listener.transform.position - origin;
+            float progress = Mathf.Clamp01(Vector2.Dot(delta, segment) / lengthSquared);
+            point += segment * progress;
+        }
+        return SoundDistanceGain(point);
+    }
+
+    private float SoundDistanceGain(Vector2 position)
+    {
+        if (!useDistanceAttenuation) return 1f;
+        var listener = Camera.main;
+        if (listener == null) return 1f;
+        // 기존 비행음처럼 XY 거리만 사용해 카메라 깊이가 2D 음량에 영향을 주지 않는다.
+        float distance = Vector2.Distance(listener.transform.position, position);
+        float near = Mathf.Max(0f, soundNearDistance);
+        float far = Mathf.Max(near, soundFarDistance);
+        if (far <= near) return distance <= near ? 1f : 0f;
+        float t = Mathf.InverseLerp(near, far, distance);
+        return 1f - t * t * (3f - 2f * t);
+    }
+
+    private FeedbackDataSO GetDistanceFeedback(FeedbackDataSO data, Vector2 position)
+    {
+        if (!useDistanceAttenuation || data == null || data.sound == null) return data;
+        if (!distanceFeedbacks.TryGetValue(data, out var copy))
+        {
+            // 공유 SO를 바꾸지 않고 개체별 사본을 재사용한다. 매 피격마다 사본을 생성하지 않는다.
+            copy = Instantiate(data);
+            copy.name = data.name + " (Distance Instance)";
+            copy.hideFlags = HideFlags.DontSave;
+            var sound = data.sound;
+            copy.sound = new SoundOptions
+            {
+                bus = sound.bus, clip = sound.clip, volume = sound.volume, pitch = sound.pitch,
+                spatialBlend = sound.spatialBlend, randomizePitch = sound.randomizePitch,
+                pitchRange = sound.pitchRange, minInterval = sound.minInterval,
+                maxSimultaneous = sound.maxSimultaneous, crowdedVolumeMultiplier = sound.crowdedVolumeMultiplier
+            };
+            distanceFeedbacks.Add(data, copy);
+        }
+        float gain = SoundDistanceGain(position);
+        copy.sound.volume = data.sound.volume * gain;
+        // 음량 0인 단발음도 공용 동시 재생 수를 차지하므로 비가청 소리는 재생 요청을 생략한다.
+        copy.sound.clip = gain > 0f ? data.sound.clip : null;
+        return copy;
+    }
+
+    private void PlayEndpointSparks()
+    {
+        if (endpointSparks == null) return;
+        foreach (var sparks in endpointSparks)
+        {
+            if (sparks == null) continue;
+            sparks.Stop(false, ParticleSystemStopBehavior.StopEmittingAndClear);
+            sparks.Play(false);
+        }
+    }
+
+    private void StopEndpointSparks()
+    {
+        if (endpointSparks == null) return;
+        foreach (var sparks in endpointSparks)
+            if (sparks != null) sparks.Stop(false, ParticleSystemStopBehavior.StopEmittingAndClear);
     }
 }

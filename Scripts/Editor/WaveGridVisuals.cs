@@ -12,13 +12,14 @@ public static class WavePrefabVisuals
     private static readonly Dictionary<int, Sprite> sprites = new();
     private static readonly Dictionary<int, Rect> previewUVs = new();
     public static void Invalidate() { sprites.Clear();previewUVs.Clear(); }
-    public static bool IsPaletteItem(GameObject prefab) => prefab != null && (prefab.GetComponent<EnemyController>() != null || prefab.GetComponent<WaveTerrainCellView>() != null);
+    public static bool IsEnvironmentTool(GameObject prefab) => prefab != null && prefab.GetComponent<WaveEnvironmentTool>() != null;
+    public static bool IsPaletteItem(GameObject prefab) => prefab != null && (prefab.GetComponent<EnemyController>() != null || prefab.GetComponent<WaveTerrainCellView>() != null || IsEnvironmentTool(prefab));
 
     public static Category Classify(GameObject prefab)
     {
         if (prefab == null) return Category.Other;
         if (prefab.GetComponent<EnemyController>() != null) return Category.Enemy;
-        if (prefab.GetComponent<WaveTerrainCellView>() != null) return Category.Platform;
+        if (prefab.GetComponent<WaveTerrainCellView>() != null || IsEnvironmentTool(prefab)) return Category.Platform;
         return Category.Other;
     }
 
@@ -74,8 +75,20 @@ public static class WavePrefabVisuals
         }
         return found && result.size.x>0 && result.size.y>0?result:collision?new Bounds(Vector3.zero,Vector3.one):LocalBounds(prefab,true);
     }
+    public static Bounds RotatedBounds(GameObject prefab, int rotationSteps)
+    {
+        var source = LocalBounds(prefab);
+        var rotation = Quaternion.Euler(0, 0, rotationSteps * 90f);
+        var result = new Bounds(rotation * source.center, Vector3.zero);
+        foreach (float x in new[] { source.min.x, source.max.x })
+            foreach (float y in new[] { source.min.y, source.max.y })
+                result.Encapsulate(rotation * new Vector3(x, y, 0));
+        return result;
+    }
     public static Vector2 Placement(GameObject prefab, Vector2 point)
     {
+        // 환경 도구의 회전 기준과 격자 한 칸의 중심을 일치시킨다.
+        if (IsEnvironmentTool(prefab)) return Vector2Int.FloorToInt(point) + Vector2.one * .5f;
         var shape = LocalBounds(prefab, true);
         return new Vector2(Mathf.Floor(point.x) + .5f - shape.center.x, Mathf.Floor(point.y) - shape.min.y);
     }
@@ -131,9 +144,98 @@ public static class WavePrefabVisuals
         catch(UnityException){return new Rect(0,0,1,1);}
         finally{RenderTexture.active=previous;if(target!=null)RenderTexture.ReleaseTemporary(target);if(copy!=null)UnityEngine.Object.DestroyImmediate(copy);}
     }
-    public static bool Draw(Rect rect, GameObject prefab, bool actualSize = false)
+    // 환경 도구는 실제 Mesh·Sprite를 정면 합성한다. 비활성 Editor의 썸네일 생성 여부에 의존하지 않는다.
+    private static bool DrawEnvironment(Rect rect, GameObject prefab, bool actualSize, int rotationSteps)
+    {
+        var bounds = RotatedBounds(prefab, rotationSteps);
+        if (!actualSize)
+        {
+            var size = new Vector2(bounds.size.x, bounds.size.y);
+            size *= Mathf.Min(rect.width / Mathf.Max(.001f, size.x), rect.height / Mathf.Max(.001f, size.y));
+            rect = new Rect(rect.center - size * .5f, size);
+        }
+        Vector2 Point(Vector3 point) => new Vector2(rect.xMin + (point.x - bounds.min.x) / Mathf.Max(.001f, bounds.size.x) * rect.width,
+            rect.yMax - (point.y - bounds.min.y) / Mathf.Max(.001f, bounds.size.y) * rect.height);
+        var rotation = Matrix4x4.Rotate(Quaternion.Euler(0, 0, rotationSteps * 90f));
+        var root = rotation * Matrix4x4.Scale(prefab.transform.localScale) * prefab.transform.worldToLocalMatrix;
+        bool drawn = false;
+        foreach (var renderer in prefab.GetComponentsInChildren<Renderer>(true)
+            .Where(r => VisibleModelRenderer(r, prefab.transform))
+            .OrderBy(r => SortingLayer.GetLayerValueFromID(r.sortingLayerID)).ThenBy(r => r.sortingOrder))
+        {
+            var transform = root * renderer.transform.localToWorldMatrix;
+            if (renderer is MeshRenderer && renderer.TryGetComponent<MeshFilter>(out var filter) && filter.sharedMesh != null)
+            {
+                var mesh = filter.sharedMesh;
+                var vertices = mesh.vertices;
+                var materials = renderer.sharedMaterials;
+                Handles.BeginGUI();
+                try
+                {
+                    for (int submesh = 0; submesh < mesh.subMeshCount; submesh++)
+                    {
+                        var material = submesh < materials.Length ? materials[submesh] : null;
+                        Handles.color = material != null && material.HasProperty("_BaseColor") ? material.GetColor("_BaseColor")
+                            : material != null && material.HasProperty("_Color") ? material.GetColor("_Color") : Color.white;
+                        var triangles = mesh.GetTriangles(submesh);
+                        for (int i = 0; i + 2 < triangles.Length; i += 3)
+                            Handles.DrawAAConvexPolygon(Point(transform.MultiplyPoint3x4(vertices[triangles[i]])),
+                                Point(transform.MultiplyPoint3x4(vertices[triangles[i + 1]])), Point(transform.MultiplyPoint3x4(vertices[triangles[i + 2]])));
+                    }
+                    drawn = true;
+                }
+                finally { Handles.EndGUI(); }
+            }
+            else if (renderer is SpriteRenderer sprite && sprite.sprite != null)
+            {
+                try
+                {
+                    var shape = sprite.sprite.bounds;
+                    var topLeft = Point(transform.MultiplyPoint3x4(new Vector3(shape.min.x, shape.max.y)));
+                    var right = Point(transform.MultiplyPoint3x4(new Vector3(shape.max.x, shape.max.y))) - topLeft;
+                    var down = Point(transform.MultiplyPoint3x4(new Vector3(shape.min.x, shape.min.y))) - topLeft;
+                    var matrix = Matrix4x4.identity;
+                    matrix.SetColumn(0, new Vector4(right.x, right.y, 0, 0));
+                    matrix.SetColumn(1, new Vector4(down.x, down.y, 0, 0));
+                    matrix.SetColumn(3, new Vector4(topLeft.x, topLeft.y, 0, 1));
+                    var pixels = sprite.sprite.textureRect;
+                    var texture = sprite.sprite.texture;
+                    var uv = new Rect(pixels.x / texture.width, pixels.y / texture.height, pixels.width / texture.width, pixels.height / texture.height);
+                    if (sprite.flipX) { uv.x += uv.width; uv.width = -uv.width; }
+                    if (sprite.flipY) { uv.y += uv.height; uv.height = -uv.height; }
+                    var previousMatrix = GUI.matrix;
+                    var previousColor = GUI.color;
+                    try
+                    {
+                        GUI.matrix = previousMatrix * matrix;
+                        GUI.color *= sprite.color;
+                        GUI.DrawTextureWithTexCoords(new Rect(0, 0, 1, 1), texture, uv, true);
+                        drawn = true;
+                    }
+                    finally { GUI.matrix = previousMatrix; GUI.color = previousColor; }
+                }
+                catch (UnityException) { }
+            }
+        }
+        return drawn;
+    }
+    public static bool Draw(Rect rect, GameObject prefab, bool actualSize = false, int rotationSteps = 0)
     {
         if (prefab == null) return false;
+        int turns = ((rotationSteps % 4) + 4) % 4;
+        if (IsEnvironmentTool(prefab)) return DrawEnvironment(rect, prefab, actualSize, turns);
+        if (turns != 0)
+        {
+            var previous = GUI.matrix;
+            var image = turns % 2 == 0 ? rect : new Rect(rect.center - new Vector2(rect.height, rect.width) * .5f, new Vector2(rect.height, rect.width));
+            try
+            {
+                // 화면 Y축이 아래를 향하므로 월드의 반시계 회전은 음의 GUI 각도다.
+                GUIUtility.RotateAroundPivot(-turns * 90f, rect.center);
+                return Draw(image, prefab, actualSize);
+            }
+            finally { GUI.matrix = previous; }
+        }
         var cell=prefab.GetComponent<WaveTerrainCellView>();
         if(cell!=null&&cell.kind==WaveCellKind.OneWayPlatform) { DrawOneWay(rect,prefab);return true; }
         // 격자와 팔레트에서 같은 복합 Prefab 미리보기를 사용한다. 실제 크기는 호출부의 월드 Bounds가 정한다.
@@ -209,7 +311,7 @@ public sealed class WaveGridGeometry
             var spawn = wave.spawnObjects[i];
             if (spawn.prefab == null || WavePrefabVisuals.Classify(spawn.prefab) != WavePrefabVisuals.Category.Platform
                 || times[i] > time || spawn.lifetime > 0 && time >= times[i] + spawn.lifetime) continue;
-            var matrix = Matrix4x4.TRS(spawn.spawnPosition + layout.spawnOffset, Quaternion.identity, spawn.prefab.transform.localScale) * spawn.prefab.transform.worldToLocalMatrix;
+            var matrix = Matrix4x4.TRS(spawn.spawnPosition + layout.spawnOffset, spawn.Rotation, spawn.prefab.transform.localScale) * spawn.prefab.transform.worldToLocalMatrix;
             changes.Add((times[i], i, () => ProjectTilemaps(spawn.prefab, matrix, result)));
         }
         changes.Add((0, 100000, () => result.ExceptWith(layout.removedCells)));

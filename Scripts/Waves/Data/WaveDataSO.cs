@@ -60,6 +60,9 @@ public class WaveSpawnInfo
     public bool isBossEnemy = false;
     public float spawnDelay;
     public Vector2 spawnPosition;
+    [Tooltip("셀 중심을 기준으로 반시계 방향 90도씩 회전합니다.")]
+    public int rotationSteps;
+    public Quaternion Rotation => Quaternion.Euler(0, 0, ((rotationSteps % 4 + 4) % 4) * 90);
     [Tooltip("0이면 시간 제한 없이 유지합니다. 생성 시점부터 센 초입니다.")]
     public float lifetime;
     public string goalKeyOverride;

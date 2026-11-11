@@ -128,7 +128,7 @@ public class WaveManager : MonoBehaviour
             foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
             {
                 if (info.prefab == null || info.prefab.GetComponent<TrainingCourseActivator>() == null) continue;
-                var entity = WorldEntityPool.Instance.Spawn(info.prefab.GetComponent<WorldEntityBase>(), spawnRoot.position + (Vector3)info.spawnPosition, Quaternion.identity);
+                var entity = WorldEntityPool.Instance.Spawn(info.prefab.GetComponent<WorldEntityBase>(), spawnRoot.position + (Vector3)info.spawnPosition, info.Rotation);
                 if (!info.keepAfterWave) currentWaveEntities.Add(entity);
                 preparedCourses.Add(info, entity);
             }
@@ -231,7 +231,7 @@ public class WaveManager : MonoBehaviour
             }
             else if (info.prefab.TryGetComponent(out WorldEntityBase worldEntityPrefab)) // WorldEntity인 경우
             {
-                WorldEntityBase worldEntityInstance = WorldEntityPool.Instance.Spawn(worldEntityPrefab, spawnPos, Quaternion.identity);
+                WorldEntityBase worldEntityInstance = WorldEntityPool.Instance.Spawn(worldEntityPrefab, spawnPos, info.Rotation);
                 
                 if (!info.keepAfterWave)
                 {
@@ -252,7 +252,7 @@ public class WaveManager : MonoBehaviour
             }
             else // 둘 다 아닌 경우
             {
-                spawnedObj = Instantiate(info.prefab, spawnPos, Quaternion.identity);
+                spawnedObj = Instantiate(info.prefab, spawnPos, info.Rotation);
                 if (!info.keepAfterWave) looseObjects.Add(spawnedObj);
             }
 
