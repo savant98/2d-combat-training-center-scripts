@@ -106,6 +106,13 @@ public sealed class WaveCellTerrain : MonoBehaviour
 
     public void ApplyBackground() => GetComponent<WaveRoomBackground>()?.Apply(data.backgroundPrefab);
     private WaveCellStyle Style(WaveMapCell cell) => data.cellMap.styles[Mathf.Clamp(cell.style, 0, data.cellMap.styles.Length - 1)];
+    // 스타일에 같은 종류의 전용 Prefab이 있으면 그것을, 없으면 맵 기본 Prefab을 쓴다.
+    private WaveTerrainCellView Source(WaveMapCell cell)
+    {
+        var own = data.cellMap.styles.Length > 0 ? Style(cell).prefab : null;
+        if (own != null && own.kind == cell.kind) return own;
+        return cell.kind == WaveCellKind.Platform ? data.cellMap.platformPrefab : data.cellMap.oneWayPrefab;
+    }
     private void RefreshOutlines()
     {
         foreach (var outline in terrainOutlines) if(outline.line != null) outline.line.enabled=false;
@@ -118,6 +125,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
         {
             var cells=group.OrderBy(c=>c.position.y).ThenBy(c=>c.position.x).ToArray();
             var cellByPosition=cells.ToDictionary(c=>c.position);
+            // 전용 그림 셀은 외곽선과 같은 묶음 안의 이웃에 맞춰 이어진 그림을 고른다(RuleTile처럼 놓기만 하면 이어진다).
+            foreach(var cell in cells) pool[cell].SetConnection(WaveTerrainCellView.ConnectionMask(cell.position,cellByPosition.ContainsKey));
             var rules=WaveRoomRulesSO.Default;
             bool generated=Style(cells[0]).generated;
             float inset=generated?0:rules != null?rules.terrainLineInset:.025f;
@@ -158,6 +167,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
                 if(run.Count==0)return;var owner=run[0];var line=pool[owner].edges.First(l=>l.name=="SurfaceLine");
                 line.positionCount=2;line.SetPositions(new[]{new Vector3(-.5f,.5f),new Vector3(run[run.Count-1].position.x-owner.position.x+.5f,.5f)});line.loop=false;line.enabled=true;run.Clear();
             }
+            var rowCells=new HashSet<int>(row.Select(c=>c.position.x));
+            foreach(var cell in row) pool[cell].SetConnection((rowCells.Contains(cell.position.x-1)?WaveTerrainCellView.Left:0)|(rowCells.Contains(cell.position.x+1)?WaveTerrainCellView.Right:0));
             foreach(var cell in row.OrderBy(c=>c.position.x)){if(run.Count>0&&cell.position.x!=run[run.Count-1].position.x+1)Finish();run.Add(cell);}Finish();
         }
         UpdateTerrainOutlines();
@@ -193,7 +204,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         var composite = physicsRoot.GetComponent<CompositeCollider2D>();
         if (composite == null) composite = physicsRoot.AddComponent<CompositeCollider2D>();
         composite.geometryType = CompositeCollider2D.GeometryType.Polygons;
-        var settings = (cell.kind == WaveCellKind.Platform ? data.cellMap.platformPrefab : data.cellMap.oneWayPrefab).GetComponent<CompositeCollider2D>();
+        var settings = Source(cell).GetComponent<CompositeCollider2D>();
         composite.generationType = settings.generationType;
         composite.vertexDistance = settings.vertexDistance; composite.offsetDistance = settings.offsetDistance; composite.edgeRadius = settings.edgeRadius;
         if (cell.kind == WaveCellKind.OneWayPlatform)
@@ -216,8 +227,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         if (pool.ContainsKey(cell)) return;
         var owner = GetChannel(cell);
-        var prefab = cell.kind == WaveCellKind.Platform ? data.cellMap.platformPrefab : data.cellMap.oneWayPrefab;
-        var view = prefab.CreateVisual(owner.parent);
+        var view = Source(cell).CreateVisual(owner.parent);
         view.ApplyStyle(Style(cell));
         view.name = $"{cell.kind}_{cell.position.x}_{cell.position.y}";
         view.transform.localPosition = (Vector2)cell.position - owner.origin + Vector2.one * .5f;
@@ -229,7 +239,9 @@ public sealed class WaveCellTerrain : MonoBehaviour
         var point = Vector2Int.RoundToInt((Vector2)cell.position - owner.origin);
         if (cell.kind == WaveCellKind.OneWayPlatform) point.y = 0;
         var coordinate = (Vector3Int)point;
-        owner.map.SetTile(coordinate, enabled ? cell.kind == WaveCellKind.Platform ? Style(cell).tile : oneWayTile : null);
+        // 전용 Prefab이 충돌 Tile을 정하면(시범 생성 발판: 셀 경계와 같은 Grid 충돌) 그것을 쓴다.
+        var platformTile = Source(cell).collisionTile != null ? Source(cell).collisionTile : Style(cell).tile;
+        owner.map.SetTile(coordinate, enabled ? cell.kind == WaveCellKind.Platform ? platformTile : oneWayTile : null);
         if (enabled && cell.kind == WaveCellKind.Platform)
         {
             owner.map.SetTileFlags(coordinate, TileFlags.None);

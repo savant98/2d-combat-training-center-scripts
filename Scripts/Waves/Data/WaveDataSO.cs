@@ -66,4 +66,6 @@ public class WaveSpawnInfo
     [Tooltip("0이면 시간 제한 없이 유지합니다. 생성 시점부터 센 초입니다.")]
     public float lifetime;
     public string goalKeyOverride;
+    [Tooltip("이 배치에만 적용하는 장치 설정입니다. Prefab 기본값과 다른 값만 저장합니다.")]
+    public WaveDeviceSetting[] deviceSettings = System.Array.Empty<WaveDeviceSetting>();
 }

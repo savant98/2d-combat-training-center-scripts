@@ -41,6 +41,8 @@ public sealed class WaveCellStyle
     public int sortingOrder;
     public int layer = -1;
     public bool generated;
+    [Tooltip("이 스타일 전용 셀 Prefab. 셀 종류(kind)가 같을 때만 쓰고, 비우면 cellMap의 기본 Prefab을 쓴다. 충돌은 계속 위 Tile을 쓴다.")]
+    public WaveTerrainCellView prefab;
 }
 
 [Serializable]

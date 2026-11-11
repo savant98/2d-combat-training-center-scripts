@@ -15,6 +15,17 @@ public static class WaveAuthoring
         return times;
     }
 
+    /// <summary>생성 시각과 수명(0이면 무제한)으로 본 항목이 time에 있는가.</summary>
+    public static bool Alive(float time, float start, float lifetime) => start <= time && (lifetime <= 0 || time < start + lifetime);
+
+    /// <summary>두 항목이 있는 시간 [start, start+lifetime)이 겹치는가. 수명 0은 끝이 없다.</summary>
+    public static bool Overlaps(float aStart, float aLifetime, float bStart, float bLifetime)
+    {
+        float aEnd = aLifetime > 0 ? aStart + aLifetime : float.PositiveInfinity;
+        float bEnd = bLifetime > 0 ? bStart + bLifetime : float.PositiveInfinity;
+        return aStart < bEnd - .0001f && bStart < aEnd - .0001f;
+    }
+
     // 기존 '항목 뒤 대기' 표현을 보존하면서 절대 시각으로 추가·이동·삭제한다.
     public static int SetTime(Wave wave, int index, float time, bool remove = false)
     {
@@ -62,6 +73,21 @@ public static class WaveAuthoring
                 CheckTime(spawn.lifetime, item + " 수명", issues);
                 if (spawn.isRequiredToClear && spawn.prefab != null && spawn.prefab.GetComponent<EnemyController>() == null && spawn.prefab.GetComponent<HealthBase>() != null)
                     issues.Add(prefix + ": 파괴 가능한 월드 목표의 사망 이벤트 연결을 확인하세요.");
+            }
+            // 같은 칸에 같은 시간대의 환경 장치가 둘 있으면 실행 중 겹친다. 먼저 생긴 장치의 수명을 정해야 한다.
+            var offset = WaveRoomState.LayoutAt(data, w).spawnOffset;
+            var times = Times(wave);
+            RectInt Occupied(WaveSpawnInfo spawn) => WavePrefabVisuals.Cells(spawn.spawnPosition + offset, WavePrefabVisuals.Footprint(spawn.prefab, spawn.rotationSteps));
+            for (int i = 0; i < spawns.Length; i++)
+            {
+                if (spawns[i].prefab == null || spawns[i].prefab.GetComponent<WaveEnvironmentTool>() == null) continue;
+                var cells = Occupied(spawns[i]);
+                for (int j = i + 1; j < spawns.Length; j++)
+                {
+                    if (spawns[j].prefab == null || spawns[j].prefab.GetComponent<WaveEnvironmentTool>() == null) continue;
+                    if (!cells.Overlaps(Occupied(spawns[j])) || !Overlaps(times[i], spawns[i].lifetime, times[j], spawns[j].lifetime)) continue;
+                    issues.Add($"{prefix}: ({cells.x}, {cells.y}) 칸의 #{i + 1} {spawns[i].prefab.name}과 #{j + 1} {spawns[j].prefab.name}이 같은 시간에 같은 칸을 차지합니다. 먼저 생긴 장치의 수명을 정하세요.");
+                }
             }
             foreach (var batch in wave.cellBatches)
                 if (!float.IsFinite(batch.time) || !float.IsFinite(batch.duration) || !float.IsFinite(batch.lifetime) || batch.time < 0 || batch.duration < 0 || batch.lifetime < 0) issues.Add(prefix + ": 셀 생성 묶음의 시간/수명 오류입니다.");

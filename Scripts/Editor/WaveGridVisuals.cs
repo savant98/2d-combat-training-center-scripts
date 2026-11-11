@@ -11,9 +11,56 @@ public static class WavePrefabVisuals
     public enum Category { Enemy, Platform, Other }
     private static readonly Dictionary<int, Sprite> sprites = new();
     private static readonly Dictionary<int, Rect> previewUVs = new();
-    public static void Invalidate() { sprites.Clear();previewUVs.Clear(); }
+    private static readonly Dictionary<(int, bool), Bounds> boundsCache = new();
+    public static void Invalidate() { sprites.Clear();previewUVs.Clear();boundsCache.Clear();ownVisuals.Clear();WaveDevicePreviewCache.Invalidate(); }
     public static bool IsEnvironmentTool(GameObject prefab) => prefab != null && prefab.GetComponent<WaveEnvironmentTool>() != null;
     public static bool IsPaletteItem(GameObject prefab) => prefab != null && (prefab.GetComponent<EnemyController>() != null || prefab.GetComponent<WaveTerrainCellView>() != null || IsEnvironmentTool(prefab));
+    // 한 칸보다 큰 환경 도구는 표식 배경과 선택 영역을 놓인 칸 하나로 줄여 아래 지형을 가리지 않는다.
+    public static bool UsesCompactMarker(GameObject prefab) => prefab != null && prefab.TryGetComponent<WaveEnvironmentTool>(out var tool) && tool.CompactMarker;
+    // 환경 장치가 차지하는 칸 수(회전 반영). Enemy와 지형은 한 칸이다.
+    public static Vector2Int Footprint(GameObject prefab, int rotationSteps = 0)
+    {
+        if (prefab == null || !prefab.TryGetComponent<WaveEnvironmentTool>(out var tool)) return Vector2Int.one;
+        var size = tool.Footprint;
+        return (((rotationSteps % 4) + 4) % 4) % 2 == 1 ? new Vector2Int(size.y, size.x) : size;
+    }
+    // 장치 기준점(격자 좌표)이 차지하는 칸들. 홀수 축은 칸 중심, 짝수 축은 격자 꼭짓점에 기준점이 놓인다.
+    public static RectInt Cells(Vector2 point, Vector2Int size) => new RectInt(Vector2Int.FloorToInt(point - (Vector2)size * .5f + Vector2.one * .5f), size);
+    // 움직이는 환경 도구가 닿는 범위를 덧그린다. origin은 장치 원점의 화면 좌표, zoom은 한 칸의 픽셀 수다.
+    public static bool DrawRange(GameObject prefab, int rotationSteps, Vector2 origin, float zoom, WaveDeviceSetting[] settings = null)
+    {
+        if (!IsEnvironmentTool(prefab) || !WaveDevicePreviewCache.TryGetRange(prefab, settings, out var tool) || tool.Shape == WaveEnvironmentTool.RangeShape.None) return false;
+        var rotation = Quaternion.Euler(0, 0, rotationSteps * 90f);
+        // 화면 Y축은 아래를 향한다.
+        Vector3 Point(Vector2 local) { Vector2 world = rotation * (Vector3)local; return origin + new Vector2(world.x, -world.y) * zoom; }
+        Vector3[] points;
+        if (tool.Shape == WaveEnvironmentTool.RangeShape.Circle)
+        {
+            points = new Vector3[49];
+            for (int i = 0; i < points.Length; i++)
+            {
+                float angle = i * Mathf.PI * 2f / 48f;
+                points[i] = Point(tool.Center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * tool.Size.x);
+            }
+        }
+        else
+        {
+            var half = tool.Size * .5f;
+            points = new[] { Point(tool.Center + new Vector2(-half.x, -half.y)), Point(tool.Center + new Vector2(half.x, -half.y)),
+                Point(tool.Center + half), Point(tool.Center + new Vector2(-half.x, half.y)), Point(tool.Center + new Vector2(-half.x, -half.y)) };
+        }
+        var color = tool.Color;
+        Handles.BeginGUI();
+        try
+        {
+            Handles.color = new Color(color.r, color.g, color.b, color.a * .12f);
+            Handles.DrawAAConvexPolygon(points.Take(points.Length - 1).ToArray());
+            Handles.color = color;
+            Handles.DrawAAPolyLine(2, points);
+        }
+        finally { Handles.EndGUI(); }
+        return true;
+    }
 
     public static Category Classify(GameObject prefab)
     {
@@ -55,6 +102,14 @@ public static class WavePrefabVisuals
     public static Bounds LocalBounds(GameObject prefab, bool collision = false)
     {
         if (prefab == null) return new Bounds(Vector3.zero, Vector3.one);
+        bool persistent = EditorUtility.IsPersistent(prefab);
+        if (persistent && boundsCache.TryGetValue((prefab.GetInstanceID(), collision), out var cachedBounds)) return cachedBounds;
+        var computed = ComputeLocalBounds(prefab, collision);
+        if (persistent) boundsCache[(prefab.GetInstanceID(), collision)] = computed;
+        return computed;
+    }
+    private static Bounds ComputeLocalBounds(GameObject prefab, bool collision)
+    {
         var box=prefab.GetComponent<BoxCollider2D>();var capsule=prefab.GetComponent<CapsuleCollider2D>();
         if(collision && (box!=null || capsule!=null))
         {
@@ -73,8 +128,11 @@ public static class WavePrefabVisuals
                 if(!found){result=new Bounds(point,Vector3.zero);found=true;}else result.Encapsulate(point);
             }
         }
-        return found && result.size.x>0 && result.size.y>0?result:collision?new Bounds(Vector3.zero,Vector3.one):LocalBounds(prefab,true);
+        return found && result.size.x>0 && result.size.y>0?result:collision?new Bounds(Vector3.zero,Vector3.one):ComputeLocalBounds(prefab,true);
     }
+    // 환경 장치는 배치 설정(톱날 길이 등)을 반영한 크기를 캐시에서 받는다.
+    public static Bounds RotatedBounds(GameObject prefab, int rotationSteps, WaveDeviceSetting[] settings)
+        => IsEnvironmentTool(prefab) ? WaveDevicePreviewCache.RotatedBounds(prefab, settings, ((rotationSteps % 4) + 4) % 4) : RotatedBounds(prefab, rotationSteps);
     public static Bounds RotatedBounds(GameObject prefab, int rotationSteps)
     {
         var source = LocalBounds(prefab);
@@ -85,15 +143,24 @@ public static class WavePrefabVisuals
                 result.Encapsulate(rotation * new Vector3(x, y, 0));
         return result;
     }
-    public static Vector2 Placement(GameObject prefab, Vector2 point)
+    public static Vector2 Placement(GameObject prefab, Vector2 point, int rotationSteps = 0)
     {
-        // 환경 도구의 회전 기준과 격자 한 칸의 중심을 일치시킨다.
-        if (IsEnvironmentTool(prefab)) return Vector2Int.FloorToInt(point) + Vector2.one * .5f;
+        // 환경 도구의 회전 기준을 차지하는 칸들의 중심에 맞춘다. 한 칸이면 칸 중심, 2×2면 가장 가까운 격자 꼭짓점이다.
+        if (IsEnvironmentTool(prefab))
+        {
+            var size = Footprint(prefab, rotationSteps);
+            return new Vector2(size.x % 2 == 0 ? Mathf.Round(point.x) : Mathf.Floor(point.x) + .5f,
+                size.y % 2 == 0 ? Mathf.Round(point.y) : Mathf.Floor(point.y) + .5f);
+        }
         var shape = LocalBounds(prefab, true);
         return new Vector2(Mathf.Floor(point.x) + .5f - shape.center.x, Mathf.Floor(point.y) - shape.min.y);
     }
-    public static void DrawCell(Rect rect, WaveMapCell cell, WaveCellMap map)
+    public static void DrawCell(Rect rect, WaveMapCell cell, WaveCellMap map, int mask = 0)
     {
+        // 스타일 전용 Prefab(시범 발판 등)이 자기 그림을 쓰면 실행 화면과 같게 그 그림을 그린다.
+        var own = map.styles.Length > 0 ? map.styles[Mathf.Clamp(cell.style,0,map.styles.Length-1)].prefab : null;
+        var source = own != null && own.kind == cell.kind ? own : cell.kind == WaveCellKind.OneWayPlatform ? map.oneWayPrefab : null;
+        if (source != null && source.ownVisual && DrawOwnVisual(rect, source, mask)) return;
         if (cell.kind == WaveCellKind.OneWayPlatform)
         {
             DrawOneWay(rect,map.oneWayPrefab.gameObject); return;
@@ -105,6 +172,42 @@ public static class WavePrefabVisuals
         var imageRect=new Rect(rect.center-size*.5f,size); var pixels=sprite.textureRect;
         var uv=new Rect(pixels.x/sprite.texture.width,pixels.y/sprite.texture.height,pixels.width/sprite.texture.width,pixels.height/sprite.texture.height);
         var previous=GUI.color;GUI.color=style.color*tile.color;GUI.DrawTextureWithTexCoords(imageRect,sprite.texture,uv,true);GUI.color=previous;
+    }
+    // 전용 그림 셀의 그림 위치·색은 Prefab마다 한 번만 읽는다(다시 그릴 때마다 수백 칸에서 부품을 찾지 않게).
+    private static readonly Dictionary<int, (SpriteRenderer image, Matrix4x4 toRoot, Color line, bool hasLine)> ownVisuals = new();
+    // Prefab의 그림(이웃 조합 그림이 있으면 그것)을 셀 중심 기준 위치·크기 그대로 그린다. OneWay는 윗면 발광선도 덧그린다.
+    private static bool DrawOwnVisual(Rect rect, WaveTerrainCellView view, int mask)
+    {
+        if (!ownVisuals.TryGetValue(view.GetInstanceID(), out var info))
+        {
+            var root = view.visualRoot != null ? view.visualRoot.transform : view.transform;
+            var renderer = root.GetComponentInChildren<SpriteRenderer>(true);
+            var line = root.GetComponentsInChildren<LineRenderer>(true).FirstOrDefault(l => l.name == "SurfaceLine");
+            var material = line != null ? line.sharedMaterial : null;
+            Color color = material != null && material.HasProperty("_EmissionColor") ? material.GetColor("_EmissionColor") : new Color(1, .45f, .05f);
+            color /= Mathf.Max(1, Mathf.Max(color.r, Mathf.Max(color.g, color.b))); color.a = 1;
+            info = (renderer, renderer != null ? root.worldToLocalMatrix * renderer.transform.localToWorldMatrix : Matrix4x4.identity, color, line != null);
+            ownVisuals[view.GetInstanceID()] = info;
+        }
+        var image = info.image;
+        if (image == null) return false;
+        var sprite = view.ConnectedSprite(mask) ?? image.sprite;
+        if (sprite == null) return false;
+        var bounds = sprite.bounds;
+        Vector2 min = info.toRoot.MultiplyPoint3x4(bounds.min), max = info.toRoot.MultiplyPoint3x4(bounds.max);
+        float unit = rect.width;
+        var imageRect = Rect.MinMaxRect(rect.center.x + Mathf.Min(min.x, max.x) * unit, rect.center.y - Mathf.Max(min.y, max.y) * unit,
+            rect.center.x + Mathf.Max(min.x, max.x) * unit, rect.center.y - Mathf.Min(min.y, max.y) * unit);
+        var pixels = sprite.textureRect;
+        var uv = new Rect(pixels.x / sprite.texture.width, pixels.y / sprite.texture.height, pixels.width / sprite.texture.width, pixels.height / sprite.texture.height);
+        var previous = GUI.color; GUI.color = image.color; GUI.DrawTextureWithTexCoords(imageRect, sprite.texture, uv, true); GUI.color = previous;
+        if (view.kind == WaveCellKind.OneWayPlatform && info.hasLine)
+        {
+            Handles.BeginGUI(); Handles.color = info.line;
+            Handles.DrawAAPolyLine(2, new Vector3(rect.x, rect.y), new Vector3(rect.xMax, rect.y));
+            Handles.EndGUI();
+        }
+        return true;
     }
     private static void DrawOneWay(Rect rect,GameObject prefab)
     {
@@ -219,11 +322,34 @@ public static class WavePrefabVisuals
         }
         return drawn;
     }
-    public static bool Draw(Rect rect, GameObject prefab, bool actualSize = false, int rotationSteps = 0)
+    // 미리 그려 둔 텍스처를 실제 크기 또는 칸에 맞춘 크기로 놓는다. 다시 그릴 때 Mesh를 읽거나 삼각형을 그리지 않는다.
+    private static bool DrawCachedEnvironment(Rect rect, GameObject prefab, bool actualSize, int turns, WaveDeviceSetting[] settings)
+    {
+        if (Event.current != null && Event.current.type != EventType.Repaint) return true;
+        var bounds = WaveDevicePreviewCache.RotatedBounds(prefab, settings, turns);
+        if (!actualSize)
+        {
+            var size = new Vector2(bounds.size.x, bounds.size.y);
+            size *= Mathf.Min(rect.width / Mathf.Max(.001f, size.x), rect.height / Mathf.Max(.001f, size.y));
+            rect = new Rect(rect.center - size * .5f, size);
+        }
+        float pixelsPerUnit = rect.width / Mathf.Max(.001f, bounds.size.x) * (EditorGUIUtility.pixelsPerPoint);
+        var texture = WaveDevicePreviewCache.Picture(prefab, settings, turns, pixelsPerUnit, out var world);
+        // 텍스처는 가장자리 여백을 포함하므로 같은 비율로 넓혀 놓는다.
+        float sx = rect.width / Mathf.Max(.001f, bounds.size.x), sy = rect.height / Mathf.Max(.001f, bounds.size.y);
+        var target = new Rect(rect.xMin + (world.xMin - bounds.min.x) * sx, rect.yMin + (bounds.max.y - world.yMax) * sy, world.width * sx, world.height * sy);
+        GUI.DrawTexture(target, texture, ScaleMode.StretchToFill, true);
+        return true;
+    }
+    public static bool Draw(Rect rect, GameObject prefab, bool actualSize = false, int rotationSteps = 0, WaveDeviceSetting[] settings = null)
     {
         if (prefab == null) return false;
         int turns = ((rotationSteps % 4) + 4) % 4;
-        if (IsEnvironmentTool(prefab)) return DrawEnvironment(rect, prefab, actualSize, turns);
+        if (IsEnvironmentTool(prefab))
+        {
+            if (WaveDevicePreviewCache.Get(prefab, settings).HasSprites) return DrawEnvironment(rect, prefab, actualSize, turns);
+            return DrawCachedEnvironment(rect, prefab, actualSize, turns, settings);
+        }
         if (turns != 0)
         {
             var previous = GUI.matrix;
@@ -275,7 +401,47 @@ public sealed class WaveGridGeometry
 {
     private TrainingRoomContent cachedTemplate;
     private HashSet<Vector2Int> cachedBase;
-    public void Invalidate() { cachedTemplate = null; cachedBase = null; }
+    private (int data, int dirty, int wave, float time) styledKey = (0, -1, -1, float.NaN);
+    private Dictionary<Vector2Int, WaveMapCell> styledCache;
+    private (int data, int dirty, int wave, float time) cellsKey = (0, -1, -1, float.NaN);
+    private HashSet<Vector2Int> cellsCache;
+    public void Invalidate() { cachedTemplate = null; cachedBase = null; styledCache = null; cellsCache = null; assemblyCache = null; }
+    // 편집기 창이 다시 그릴 때마다 지형 상태(시작 맵·생성 묶음·예약·코스 이동)를 처음부터 계산하지 않도록,
+    // WaveData가 바뀌거나(더티 횟수) Wave·편집 시각이 바뀔 때만 다시 계산한다. 돌려받은 값은 고치지 않는다.
+    public Dictionary<Vector2Int, WaveMapCell> CachedStyledCells(WaveDataSO data, int index, float time)
+    {
+        var key = (data.GetInstanceID(), EditorUtility.GetDirtyCount(data), index, time);
+        if (styledCache == null || !styledKey.Equals(key)) { styledCache = StyledCells(data, index, time); styledKey = key; }
+        return styledCache;
+    }
+    // 칸이 속한 생성 묶음 번호(시작 맵·지형 예약 칸은 0). 실행 중 생성 묶음마다 외곽선·이어진 그림이 따로인 것과 같게 미리 보여 준다.
+    public Dictionary<Vector2Int, int> CachedAssemblies(WaveDataSO data, int index, float time)
+    {
+        var key = (data.GetInstanceID(), EditorUtility.GetDirtyCount(data), index, time);
+        if (assemblyCache != null && assemblyKey.Equals(key)) return assemblyCache;
+        var result = new Dictionary<Vector2Int, int>();
+        var initial = new HashSet<WaveMapCell>(WaveCellState.Initial(data, index));
+        int id = 0;
+        for (int w = 0; w <= index && w < data.waves.Length; w++)
+            foreach (var batch in data.waves[w].cellBatches ?? Array.Empty<WaveCellBatch>())
+            {
+                id++;
+                bool present = w == index ? batch.time <= time + .0005f : batch.keepAfterWave;
+                if (!present) continue;
+                foreach (var cell in batch.cells)
+                    if (!initial.Contains(cell)) result[PresentedCell(data, index, time, cell)] = id;
+            }
+        assemblyCache = result; assemblyKey = key;
+        return result;
+    }
+    private Dictionary<Vector2Int, int> assemblyCache;
+    private (int, int, int, float) assemblyKey;
+    public HashSet<Vector2Int> CachedCells(WaveDataSO data, int index, float time)
+    {
+        var key = (data.GetInstanceID(), EditorUtility.GetDirtyCount(data), index, time);
+        if (cellsCache == null || !cellsKey.Equals(key)) { cellsCache = Cells(data, index, time); cellsKey = key; }
+        return cellsCache;
+    }
 
     public HashSet<Vector2Int> Cells(WaveDataSO data, int index, float time)
     {

@@ -232,6 +232,8 @@ public class WaveManager : MonoBehaviour
             else if (info.prefab.TryGetComponent(out WorldEntityBase worldEntityPrefab)) // WorldEntity인 경우
             {
                 WorldEntityBase worldEntityInstance = WorldEntityPool.Instance.Spawn(worldEntityPrefab, spawnPos, info.Rotation);
+                // 배치마다 저장한 장치 설정(뻗는 거리·팔 길이·점프 높이 등)을 이 개체에만 적용한다.
+                WaveDeviceSettings.Apply(worldEntityInstance.gameObject, info.deviceSettings);
                 
                 if (!info.keepAfterWave)
                 {

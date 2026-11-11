@@ -34,6 +34,8 @@ public sealed class WaveEditorWindow : EditorWindow
     private bool showCustom;
     private bool showTerrainCustom;
     private int dragIndex = -1;
+    // 환경 장치를 잡은 지점에서 장치 기준점까지의 거리. 2×2 장치를 가장자리로 잡고 조금 끌어도 제자리에 있게 한다.
+    private Vector2 dragOffset;
     private Vector2Int? selectedCell;
     private Vector2Int? lastPaint;
     private bool gridGesture;
@@ -49,6 +51,22 @@ public sealed class WaveEditorWindow : EditorWindow
     [SerializeField] private int paletteCategory;
     [SerializeField] private bool editPlayerStart;
     [SerializeField] private bool editClearPortal;
+    // 배치 모드에서 다음에 놓을 장치의 세부 설정. 새 배치에만 복사하며 Prefab 기본값은 바꾸지 않는다.
+    [SerializeField] private WaveDeviceSetting[] brushSettings = WaveDeviceSettings.None;
+    // 0 이상이면 그 번호의 복사본을 붙이는 중이다.
+    [SerializeField] private int copyBrush = -1;
+    [SerializeField] private float objectPaneHeight = 330;
+    private Vector2 objectScroll;
+    // 선택 / 이동 모드에서 빈 곳을 드래그해 고른 칸 범위(복사용).
+    private Vector2Int? areaStart, areaEnd;
+    private bool areaDragging;
+    private int lastDirty = -1;
+    private bool wasLoadingPreviews;
+    private GUIStyle objectPaneStyle, objectHeaderStyle;
+    private Texture2D objectPaneTexture, objectHeaderTexture;
+    // 우클릭 복사의 확인과 보관 칸 선택. 검증 도구가 바꿔 끼운다. 창을 띄울 수 없는 batchmode에서는 묻지 않고 취소한다.
+    internal static Func<string, bool> ConfirmCopy = message => !Application.isBatchMode && EditorUtility.DisplayDialog("셀 복사", message, "복사", "취소");
+    internal static Action<WaveCopyClip, Action<int>> ChooseCopySlot = (clip, choose) => { if (!Application.isBatchMode) WaveCopySlotWindow.Open(clip, choose); };
     private Rect leftSplitter, rightSplitter;
     private readonly WaveGridGeometry geometry = new();
     private Wave Current => data != null && data.waves != null && waveIndex >= 0 && waveIndex < data.waves.Length ? data.waves[waveIndex] : null;
@@ -59,6 +77,7 @@ public sealed class WaveEditorWindow : EditorWindow
     public void Select(WaveDataSO value)
     {
         pendingBackground = value != null ? value.backgroundPrefab : null;
+        areaStart = areaEnd = null; copyBrush = -1;
         data = value; waveIndex = 0; selected = -1; selectedBatch = -1; selectedCell = null; time = 0; eventIndex = -1; timedOperation = WaveTerrainOperation.Add; creationStyle = 1; ResetGesture(); serialized = null;
         if (value != null) pan = new Vector2(-value.room.bounds.center.x, value.room.bounds.center.y) * zoom;
         Repaint();
@@ -70,9 +89,26 @@ public sealed class WaveEditorWindow : EditorWindow
         Undo.undoRedoPerformed += Refresh;
         ReloadPalette();
     }
-    private void OnInspectorUpdate() { Repaint(); }
+    // 예전에는 입력이 없어도 초당 10번 창 전체를 다시 그렸다. 입력 때는 Unity가 다시 그리므로,
+    // 다른 곳(Inspector·Undo)에서 데이터가 바뀌었거나 Enemy 미리보기 이미지를 불러오는 중일 때만 다시 그린다.
+    private void OnInspectorUpdate()
+    {
+        int dirty = data != null ? EditorUtility.GetDirtyCount(data) : -1;
+        bool loading = AssetPreview.IsLoadingAssetPreviews();
+        // 불러오기가 끝난 다음 틱에도 한 번 더 그려, 마지막에 도착한 미리보기가 화면에 남지 않는 일을 막는다.
+        if (dirty == lastDirty && !loading && !wasLoadingPreviews) return;
+        lastDirty = dirty;
+        wasLoadingPreviews = loading;
+        Repaint();
+    }
     private void OnProjectChange() { ReloadPalette(); geometry.Invalidate(); WavePrefabVisuals.Invalidate(); Repaint(); }
-    private void OnDisable() { Undo.undoRedoPerformed -= Refresh; ResetGesture(); }
+    private void OnDisable()
+    {
+        Undo.undoRedoPerformed -= Refresh; ResetGesture();
+        if (objectPaneTexture != null) DestroyImmediate(objectPaneTexture);
+        if (objectHeaderTexture != null) DestroyImmediate(objectHeaderTexture);
+        objectPaneStyle = objectHeaderStyle = null;
+    }
     private void OnLostFocus() => ResetGesture();
     private void Refresh() { serialized = null; geometry.Invalidate(); Repaint(); }
     private void ReloadPalette()
@@ -168,12 +204,13 @@ public sealed class WaveEditorWindow : EditorWindow
             }
             if (data == null) return;
             int nextWave = EditorGUILayout.Popup(waveIndex, Enumerable.Range(0, data.waves?.Length ?? 0).Select(i => $"Wave {i + 1}").ToArray(), GUILayout.Width(100));
-            if (nextWave != waveIndex) { waveIndex = nextWave; selected = -1; selectedBatch = -1; eventIndex = -1; selectedCell = null; ResetGesture(); }
-            if (GUILayout.Button("+ Wave", EditorStyles.toolbarButton)) Mutate(() => { var list = (data.waves ?? Array.Empty<Wave>()).ToList(); list.Add(new Wave { spawnObjects = Array.Empty<WaveSpawnInfo>() }); data.waves = list.ToArray(); waveIndex = list.Count - 1; selected = -1; selectedBatch = -1; selectedCell = null; eventIndex = -1; ResetGesture(); });
+            if (nextWave != waveIndex) { waveIndex = nextWave; selected = -1; selectedBatch = -1; eventIndex = -1; selectedCell = null; areaStart = areaEnd = null; ResetGesture(); }
+            if (GUILayout.Button("+ Wave", EditorStyles.toolbarButton)) Mutate(() => { var list = (data.waves ?? Array.Empty<Wave>()).ToList(); list.Add(new Wave { spawnObjects = Array.Empty<WaveSpawnInfo>() }); data.waves = list.ToArray(); waveIndex = list.Count - 1; selected = -1; selectedBatch = -1; selectedCell = null; eventIndex = -1; areaStart = areaEnd = null; ResetGesture(); });
             if (GUILayout.Button("복제", EditorStyles.toolbarButton) && Current != null) Mutate(() => { var copy = JsonUtility.FromJson<Wave>(JsonUtility.ToJson(Current)); var list = data.waves.ToList(); list.Insert(waveIndex + 1, copy); data.waves = list.ToArray(); waveIndex++; selected = -1; selectedBatch = -1; selectedCell = null; eventIndex = -1; ResetGesture(); });
-            if (GUILayout.Button("삭제", EditorStyles.toolbarButton) && data.waves.Length > 1) Mutate(() => { var list = data.waves.ToList(); list.RemoveAt(waveIndex); data.waves = list.ToArray(); waveIndex = Mathf.Min(waveIndex, list.Count - 1); selected = -1; selectedBatch = -1; selectedCell = null; eventIndex = -1; ResetGesture(); });
+            if (GUILayout.Button("삭제", EditorStyles.toolbarButton) && data.waves.Length > 1) Mutate(() => { var list = data.waves.ToList(); list.RemoveAt(waveIndex); data.waves = list.ToArray(); waveIndex = Mathf.Min(waveIndex, list.Count - 1); selected = -1; selectedBatch = -1; selectedCell = null; eventIndex = -1; areaStart = areaEnd = null; ResetGesture(); });
             if (GUILayout.Button("검사", EditorStyles.toolbarButton)) EditorUtility.DisplayDialog("WaveData 검사", string.Join("\n", WaveAuthoring.Validate(data).DefaultIfEmpty("데이터 검사 통과")), "확인");
-            if (GUILayout.Button("저장", EditorStyles.toolbarButton)) AssetDatabase.SaveAssets();
+            // 편집은 더티 표시만 하고 디스크에는 저장 버튼을 누를 때 이 WaveData만 쓴다.
+            if (GUILayout.Button(new GUIContent("저장", "이 WaveData를 디스크에 저장합니다. 다른 에셋은 저장하지 않습니다."), EditorStyles.toolbarButton)) AssetDatabase.SaveAssetIfDirty(data);
         }
     }
     private void Palette()
@@ -187,10 +224,7 @@ public sealed class WaveEditorWindow : EditorWindow
             search = EditorGUILayout.TextField(search, EditorStyles.toolbarSearchField);
             iconSize = EditorGUILayout.Slider("미리보기 크기", iconSize, 40, 100);
             if (WavePrefabVisuals.IsEnvironmentTool(brush))
-            {
-                brushRotationSteps = EditorGUILayout.Popup("배치 방향", NormalizeRotation(brushRotationSteps), rotationLabels);
-                EditorGUILayout.HelpBox("셀 중심에 배치 · R: 반시계 90° 회전\n수명·생성 시각은 배치 항목 상세에서 설정합니다.", MessageType.None);
-            }
+                EditorGUILayout.HelpBox("셀 중심에 배치 · R: 반시계 90° 회전\n방향·세부 설정은 오른쪽 '배치 오브젝트 상세'에서 정합니다.", MessageType.None);
             var category = paletteCategory == 0 ? WavePrefabVisuals.Category.Enemy : WavePrefabVisuals.Category.Platform;
             var items = palette.Where(p => p != null && WavePrefabVisuals.Classify(p) == category && p.name.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
             GUILayout.Label($"{items.Length}개 · 클릭 후 격자에 배치", EditorStyles.miniLabel);
@@ -208,11 +242,13 @@ public sealed class WaveEditorWindow : EditorWindow
                         if (brush == item) GUI.backgroundColor = new Color(.35f, .75f, 1);
                         if (GUI.Button(rect, new GUIContent("", item.name))) UseBrush(item);
                         GUI.backgroundColor = background;
-                        WavePrefabVisuals.Draw(new Rect(rect.x + 6, rect.y + 4, iconSize, iconSize), item, false, item == brush && WavePrefabVisuals.IsEnvironmentTool(item) ? brushRotationSteps : 0);
-                        GUI.Label(new Rect(rect.x + 3, rect.y + iconSize + 6, rect.width - 6, 32), new GUIContent(item.GetComponent<WaveTerrainCellView>() != null ? item.GetComponent<WaveTerrainCellView>().kind.ToString() : item.name, item.name), cardNameStyle);
+                        WavePrefabVisuals.Draw(new Rect(rect.x + 6, rect.y + 4, iconSize, iconSize), item, false, item == brush && WavePrefabVisuals.IsEnvironmentTool(item) ? brushRotationSteps : 0, item == brush ? brushSettings : null);
+                        var cellView = item.GetComponent<WaveTerrainCellView>();
+                        GUI.Label(new Rect(rect.x + 3, rect.y + iconSize + 6, rect.width - 6, 32), new GUIContent(cellView != null && !cellView.ownVisual ? cellView.kind.ToString() : item.name, item.name), cardNameStyle);
                     }
             }
             EditorGUILayout.EndScrollView();
+            CopySlots();
             EditorGUILayout.HelpBox("한 칸 = 1 Unit\n휠: 확대/축소 · 가운데 버튼: 이동\n경계 막대를 드래그해 영역 크기 조절\n녹색 셀: 실제 지형 · 파란 표식: 플레이어 시작", MessageType.None);
         }
     }
@@ -281,15 +317,20 @@ public sealed class WaveEditorWindow : EditorWindow
         for (int x = Mathf.FloorToInt(low.x / stride) * stride; x < high.x; x += stride) Handles.DrawLine(Local(new Vector2(x, low.y)), Local(new Vector2(x, high.y)));
         for (int y = Mathf.FloorToInt(high.y / stride) * stride; y < low.y; y += stride) Handles.DrawLine(Local(new Vector2(low.x, y)), Local(new Vector2(high.x, y)));
         Handles.EndGUI();
-        var styledCells = data.cellMap.enabled ? geometry.StyledCells(data, waveIndex, time) : null;
-        var typedCells = styledCells?.ToDictionary(row => row.Key, row => row.Value.kind);
-        foreach (var cell in typedCells != null ? (IEnumerable<Vector2Int>)typedCells.Keys : geometry.Cells(data, waveIndex, time))
+        // 지형 상태는 WaveData·Wave·편집 시각이 바뀔 때만 다시 계산한다.
+        var styledCells = data.cellMap.enabled ? geometry.CachedStyledCells(data, waveIndex, time) : null;
+        var assemblies = data.cellMap.enabled ? geometry.CachedAssemblies(data, waveIndex, time) : null;
+        foreach (var cell in styledCells != null ? (IEnumerable<Vector2Int>)styledCells.Keys : geometry.CachedCells(data, waveIndex, time))
         {
             Vector2 p = Local(new Vector2(cell.x, cell.y + 1));
             var rect = new Rect(p + Vector2.one * .6f, Vector2.one * Mathf.Max(1, zoom - 1.2f));
             if (rect.Overlaps(new Rect(Vector2.zero, canvas.size)))
             {
-                if (styledCells != null) WavePrefabVisuals.DrawCell(new Rect(p,Vector2.one*zoom),styledCells[cell],data.cellMap);
+                if (styledCells != null)
+                {
+                    var styled = styledCells[cell];
+                    WavePrefabVisuals.DrawCell(new Rect(p,Vector2.one*zoom),styled,data.cellMap,ConnectionMask(styledCells,assemblies,styled,cell));
+                }
                 else EditorGUI.DrawRect(rect,new Color(.16f,.65f,.36f,.9f));
             }
         }
@@ -325,17 +366,39 @@ public sealed class WaveEditorWindow : EditorWindow
             }
         }
         float[] times = WaveAuthoring.Times(Current);
+        var view = new Rect(Vector2.zero, canvas.size);
         for (int i = 0; i < (Current.spawnObjects?.Length ?? 0); i++)
         {
             var spawn = Current.spawnObjects[i];
             var global = MarkerRect(i);
             var rect = new Rect(global.position - canvas.position, global.size);
-            var frame = new Rect(rect.x - 3, rect.y - 3, rect.width + 6, rect.height + 6);
-            EditorGUI.DrawRect(frame, i == selected ? Color.white : TimingColor(times[i]));
-            EditorGUI.DrawRect(rect, new Color(.09f, .11f, .15f, .96f));
-            WavePrefabVisuals.Draw(rect, spawn.prefab, true, spawn.rotationSteps);
-            GUI.Label(new Rect(rect.x - 30, rect.yMax + 2, rect.width + 60, 18), spawn.prefab != null ? spawn.prefab.name : "참조 없음", markerStyle);
-            if (spawn.isBossEnemy) GUI.Label(new Rect(rect.xMax - 15, rect.y, 15, 18), "B", markerStyle);
+            // 한 칸보다 큰 환경 도구는 배경을 놓인 칸에만 깔고, 그림과 작동 범위는 실제 크기로 덧그린다.
+            var visualGlobal = VisualRect(i);
+            var visual = new Rect(visualGlobal.position - canvas.position, visualGlobal.size);
+            // 편집 시각에 아직 없거나 수명이 끝난 항목은 흐리게 그린다. 그 칸에는 다른 장치를 설치할 수 있다.
+            bool alive = Alive(i, times);
+            var previousColor = GUI.color;
+            if (!alive) GUI.color = new Color(1, 1, 1, .28f);
+            if (alive || i == selected) WavePrefabVisuals.DrawRange(spawn.prefab, spawn.rotationSteps, Local(spawn.spawnPosition + Offset), zoom, spawn.deviceSettings);
+            if (rect.Overlaps(view) || visual.Overlaps(view))
+            {
+                var frame = new Rect(rect.x - 3, rect.y - 3, rect.width + 6, rect.height + 6);
+                EditorGUI.DrawRect(frame, i == selected ? Color.white : TimingColor(times[i]) * new Color(1, 1, 1, alive ? 1 : .35f));
+                EditorGUI.DrawRect(rect, new Color(.09f, .11f, .15f, alive ? .96f : .4f));
+                WavePrefabVisuals.Draw(visual, spawn.prefab, true, spawn.rotationSteps, spawn.deviceSettings);
+                GUI.Label(new Rect(rect.x - 30, rect.yMax + 2, rect.width + 60, 18), spawn.prefab != null ? spawn.prefab.name : "참조 없음", markerStyle);
+                if (spawn.isBossEnemy) GUI.Label(new Rect(rect.xMax - 15, rect.y, 15, 18), "B", markerStyle);
+            }
+            GUI.color = previousColor;
+        }
+        if (mode == 0 && AreaRect() is RectInt area)
+        {
+            var corner = Local(new Vector2(area.xMin, area.yMax));
+            var box = new Rect(corner, new Vector2(area.width, area.height) * zoom);
+            EditorGUI.DrawRect(box, new Color(.3f, .85f, 1f, .12f));
+            Handles.BeginGUI(); Handles.color = new Color(.4f, .9f, 1f);
+            Handles.DrawAAPolyLine(2, new Vector3(box.xMin, box.yMin), new Vector3(box.xMax, box.yMin), new Vector3(box.xMax, box.yMax), new Vector3(box.xMin, box.yMax), new Vector3(box.xMin, box.yMin));
+            Handles.EndGUI();
         }
         DrawSpawnPoint(Local(WaveRoomState.PlayerStartAt(data, waveIndex)), new Color(.2f, .7f, 1), $"Wave {waveIndex + 1} 시작점" + (Current.teleportAtStart ? " · Spawn" : ""));
         DrawSpawnPoint(Local(Offset), new Color(1, .72f, .2f), "Enemy / 발판 생성 기준");
@@ -343,10 +406,22 @@ public sealed class WaveEditorWindow : EditorWindow
             DrawSpawnPoint(Local(data.clearPortalPosition), new Color(.75f, .9f, .35f), "전체 Wave 완료 · Lobby 포탈");
         GUI.EndClip();
     }
+    // 배경·테두리·이름표·선택 판정에 쓰는 영역.
     private Rect MarkerRect(int index)
     {
         var spawn = Current.spawnObjects[index];
-        var bounds = WavePrefabVisuals.RotatedBounds(spawn.prefab, spawn.rotationSteps);
+        if (WavePrefabVisuals.UsesCompactMarker(spawn.prefab))
+        {
+            var cells = Occupied(spawn);
+            return new Rect(Screen(new Vector2(cells.xMin, cells.yMax)), (Vector2)cells.size * zoom);
+        }
+        return VisualRect(index);
+    }
+    // Prefab의 보이는 부품 전체가 차지하는 실제 크기.
+    private Rect VisualRect(int index)
+    {
+        var spawn = Current.spawnObjects[index];
+        var bounds = WavePrefabVisuals.RotatedBounds(spawn.prefab, spawn.rotationSteps, spawn.deviceSettings);
         var min = Screen(spawn.spawnPosition + Offset + new Vector2(bounds.min.x, bounds.max.y));
         return new Rect(min, new Vector2(bounds.size.x, bounds.size.y) * zoom);
     }
@@ -360,6 +435,8 @@ public sealed class WaveEditorWindow : EditorWindow
     private void UseBrush(GameObject value)
     {
         editPlayerStart = editClearPortal = false;
+        copyBrush = -1;
+        if (value != brush) brushSettings = WaveDeviceSettings.None;
         brush = value;if (WavePrefabVisuals.Classify(value) == WavePrefabVisuals.Category.Enemy || WavePrefabVisuals.IsEnvironmentTool(value)) { terrainSession = false;selected = -1;selectedBatch = -1;eventIndex = -1;selectedCell = null; }ResetGesture();
     }
     private static int NormalizeRotation(int value) => ((value % 4) + 4) % 4;
@@ -368,7 +445,12 @@ public sealed class WaveEditorWindow : EditorWindow
         var e = Event.current;
         if (e.type != EventType.KeyDown || e.keyCode != KeyCode.R || e.control || e.command || e.alt || EditorGUIUtility.editingTextField || GUIUtility.hotControl != 0) return;
         if (mode == 0 && selected >= 0 && selected < (Current.spawnObjects?.Length ?? 0) && WavePrefabVisuals.IsEnvironmentTool(Current.spawnObjects[selected].prefab))
-            Mutate(() => Current.spawnObjects[selected].rotationSteps = NormalizeRotation(Current.spawnObjects[selected].rotationSteps + 1));
+        {
+            int index = selected, next = NormalizeRotation(Current.spawnObjects[index].rotationSteps + 1);
+            if (RotationBlocked(index, next) is int blocking && blocking >= 0)
+                ShowNotification(new GUIContent($"돌리면 #{blocking + 1} {Current.spawnObjects[blocking].prefab?.name}과 같은 칸을 차지해 돌릴 수 없습니다."));
+            else Mutate(() => Current.spawnObjects[index].rotationSteps = next);
+        }
         else if (mode == 1 && WavePrefabVisuals.IsEnvironmentTool(brush))
         {
             brushRotationSteps = NormalizeRotation(brushRotationSteps + 1);
@@ -380,7 +462,7 @@ public sealed class WaveEditorWindow : EditorWindow
     private void ResetGesture()
     {
         if (gridControl != 0 && GUIUtility.hotControl == gridControl) GUIUtility.hotControl = 0;
-        gridGesture = false; gridControl = 0; dragIndex = -1; lastPaint = null;
+        gridGesture = false; gridControl = 0; dragIndex = -1; lastPaint = null; areaDragging = false;
     }
     private void GridInput()
     {
@@ -404,6 +486,11 @@ public sealed class WaveEditorWindow : EditorWindow
             if (mode == 1 && e.type == EventType.DragPerform) { UseBrush(prefab); DragAndDrop.AcceptDrag(); EditGrid(World(e.mousePosition), false); }
             e.Use(); return;
         }
+        // 우클릭은 데이터를 바꾸지 않고, 그 셀(또는 드래그로 고른 범위)의 오브젝트를 복사본 칸에 담을지 묻는다.
+        if (e.type == EventType.MouseDown && e.button == 1 && inside && GUIUtility.hotControl == 0)
+        {
+            ContextCopy(World(e.mousePosition)); e.Use(); return;
+        }
         // 좌클릭으로 격자 안에서 시작한 제스처만 데이터를 바꾼다. 우클릭은 삭제하지 않는다.
         if (e.button != 0) return;
         if (e.type == EventType.MouseDown && inside && GUIUtility.hotControl == 0)
@@ -422,7 +509,8 @@ public sealed class WaveEditorWindow : EditorWindow
         if (mode == 0)
         {
             if (!drag) SelectGrid(point);
-            else if (dragIndex >= 0) Mutate(() => Current.spawnObjects[dragIndex].spawnPosition = WavePrefabVisuals.Placement(Current.spawnObjects[dragIndex].prefab, point) - Offset);
+            else if (dragIndex >= 0) MoveSpawn(dragIndex, point);
+            else if (areaDragging) { areaEnd = cell; Repaint(); }
             return;
         }
         if (lastPaint == cell) return;
@@ -431,6 +519,7 @@ public sealed class WaveEditorWindow : EditorWindow
         if (mode != 1) return;
         if (editClearPortal) Mutate(() => { data.overrideClearPortalPosition = true; data.clearPortalPosition = Vector2Int.RoundToInt(point); });
         else if (editPlayerStart) Mutate(() => { Current.overridePlayerStart = true; Current.playerStart = Vector2Int.RoundToInt(point); });
+        else if (copyBrush >= 0) { if (!drag) PasteCopy(cell); }
         else if (WavePrefabVisuals.IsEnvironmentTool(brush)) Place(point);
         else if (terrainSession) Paint(cell, false);
         else if (!drag || brush != null && brush.GetComponent<WaveTerrainCellView>() != null) Place(point);
@@ -453,8 +542,16 @@ public sealed class WaveEditorWindow : EditorWindow
     private void SelectGrid(Vector2 point)
     {
         int spawn = Hit(point);
-        if (spawn >= 0) { SelectTimelineEntry(0,spawn); dragIndex = spawn; return; }
         var cell = Vector2Int.FloorToInt(point);
+        if (spawn >= 0)
+        {
+            SelectTimelineEntry(0,spawn); dragIndex = spawn; areaStart = areaEnd = cell; areaDragging = false;
+            var picked = Current.spawnObjects[spawn];
+            dragOffset = WavePrefabVisuals.IsEnvironmentTool(picked.prefab) ? picked.spawnPosition + Offset - point : Vector2.zero;
+            return;
+        }
+        // 빈 곳에서 시작한 드래그는 복사할 칸 범위를 고른다.
+        areaStart = areaEnd = cell; areaDragging = true;
         int entry = !terrainSession || terrainTarget != 1 ? TerrainAt(cell) : -1;
         int batch = BatchAt(cell);
         bool eventNewer = entry >= 0 && (batch < 0 || Current.terrainEvents[entry].time >= Current.cellBatches[batch].time);
@@ -498,18 +595,34 @@ public sealed class WaveEditorWindow : EditorWindow
     }
     private int Hit(Vector2 point)
     {
+        var screen = Screen(point);
+        var times = WaveAuthoring.Times(Current);
+        int fallback = -1;
         for (int i = (Current.spawnObjects?.Length ?? 0) - 1; i >= 0; i--)
-            if (new Rect(MarkerRect(i).center - Vector2.Max(MarkerRect(i).size, Vector2.one * 12) * .5f, Vector2.Max(MarkerRect(i).size, Vector2.one * 12)).Contains(Screen(point))) return i;
-        return -1;
+        {
+            var marker = MarkerRect(i);
+            var size = Vector2.Max(marker.size, Vector2.one * 12);
+            if (!new Rect(marker.center - size * .5f, size).Contains(screen)) continue;
+            if (Alive(i, times)) return i;
+            if (fallback < 0) fallback = i;
+        }
+        return fallback;
     }
     private void Place(Vector2 point)
     {
         if (brush == null || !EditorUtility.IsPersistent(brush) || !WavePrefabVisuals.IsPaletteItem(brush)) return;
         if (data.cellMap.enabled && brush.GetComponent<WaveTerrainCellView>() != null) { if (terrainSession && terrainTarget == 1) PaintCell(Vector2Int.FloorToInt(point), false); else PaintTimedCell(Vector2Int.FloorToInt(point)); return; }
+        bool device = WavePrefabVisuals.IsEnvironmentTool(brush);
+        int steps = device ? NormalizeRotation(brushRotationSteps) : 0;
+        var target = WavePrefabVisuals.Placement(brush, point, steps);
+        float lifetime = 0;
+        if (device && !FitLifetime(WavePrefabVisuals.Cells(target, WavePrefabVisuals.Footprint(brush, steps)), time, -1, out lifetime)) return;
         Mutate(() =>
         {
             var list = (Current.spawnObjects ?? Array.Empty<WaveSpawnInfo>()).ToList();
-            list.Add(new WaveSpawnInfo { prefab = brush, spawnPosition = WavePrefabVisuals.Placement(brush, point) - Offset, rotationSteps = WavePrefabVisuals.IsEnvironmentTool(brush) ? NormalizeRotation(brushRotationSteps) : 0, isRequiredToClear = brush.GetComponent<EnemyController>() != null });
+            list.Add(new WaveSpawnInfo { prefab = brush, spawnPosition = target - Offset, rotationSteps = steps,
+                isRequiredToClear = brush.GetComponent<EnemyController>() != null, lifetime = lifetime,
+                deviceSettings = device && brushSettings != null ? (WaveDeviceSetting[])brushSettings.Clone() : WaveDeviceSettings.None });
             Current.spawnObjects = list.ToArray();
             selected = WaveAuthoring.SetTime(Current, list.Count - 1, time);
             selectedBatch = -1; selectedCell = null;
@@ -530,12 +643,72 @@ public sealed class WaveEditorWindow : EditorWindow
             {
                 var cell = previous; cell.position = targets.Length > 0 ? previous.position : position;
                 cell.kind = brush != null && brush.GetComponent<WaveTerrainCellView>() != null ? brush.GetComponent<WaveTerrainCellView>().kind : WaveCellKind.Platform;
-                cell.style = cell.kind == WaveCellKind.OneWayPlatform ? 1 : 0;
+                cell.style = BrushStyle(cell.kind == WaveCellKind.OneWayPlatform ? 1 : 0);
                 cells.Add(cell);
             }
             Current.cells = cells.OrderBy(c => c.position.y).ThenBy(c => c.position.x).ToArray();
             selectedCell = position; selectedBatch = -1; selected = -1;
         });
+    }
+    // 전용 그림 셀이 이웃과 이어지는 방향. 실행 중(WaveCellTerrain.RefreshOutlines)과 같은 규칙이다:
+    // 같은 종류·같은 외형·같은 코스 묶음(group)이고, 생성 발광 외형과 OneWay는 같은 생성 묶음일 때만 잇는다(OneWay는 좌우만).
+    private int ConnectionMask(Dictionary<Vector2Int, WaveMapCell> cells, Dictionary<Vector2Int, int> assemblies, WaveMapCell cell, Vector2Int position)
+    {
+        var styles = data.cellMap.styles ?? Array.Empty<WaveCellStyle>();
+        var own = cell.style >= 0 && cell.style < styles.Length && styles[cell.style] != null ? styles[cell.style].prefab : null;
+        bool ownVisual = own != null && own.kind == cell.kind ? own.ownVisual : cell.kind == WaveCellKind.OneWayPlatform && data.cellMap.oneWayPrefab != null && data.cellMap.oneWayPrefab.ownVisual;
+        if (!ownVisual) return 0;
+        bool byAssembly = cell.kind == WaveCellKind.OneWayPlatform || cell.style >= 0 && cell.style < styles.Length && styles[cell.style] != null && styles[cell.style].generated;
+        int Assembly(Vector2Int at) => assemblies != null && assemblies.TryGetValue(at, out var id) ? id : 0;
+        int mine = Assembly(position);
+        bool Same(Vector2Int other) => cells.TryGetValue(other, out var near) && near.kind == cell.kind && near.style == cell.style && near.group == cell.group
+            && (!byAssembly || Assembly(other) == mine);
+        if (cell.kind == WaveCellKind.OneWayPlatform)
+            return (Same(position + Vector2Int.left) ? WaveTerrainCellView.Left : 0) | (Same(position + Vector2Int.right) ? WaveTerrainCellView.Right : 0);
+        return WaveTerrainCellView.ConnectionMask(position, Same);
+    }
+    // 지금 브러시가 자기 그림을 쓰는 셀 Prefab(시범 발판 등)이면 그 Prefab 전용 스타일 번호를, 아니면 fallback을 쓴다.
+    private int BrushStyle(int fallback) => ResolveBrushStyle(fallback, true);
+    // 브러시가 칠할 스타일 번호. 자기 그림을 쓰는 셀 Prefab(새 생성 발판)이면 그 Prefab을 쓰는 스타일(보통 생성 발광 1번)을 찾고,
+    // 없으면 create일 때만 끝에 더한다. 맵 기본 OneWay Prefab은 따로 스타일을 만들지 않는다.
+    // 일반 브러시는 fallback을 쓰되, 그것이 전용 Prefab 스타일이면 생성 발광(1번)을 쓴다.
+    private int ResolveBrushStyle(int fallback, bool create)
+    {
+        var view = brush != null ? brush.GetComponent<WaveTerrainCellView>() : null;
+        var styles = data.cellMap.styles ?? Array.Empty<WaveCellStyle>();
+        bool mapOneWay = view != null && view.kind == WaveCellKind.OneWayPlatform && data.cellMap.oneWayPrefab == view;
+        if (view != null && view.ownVisual && !mapOneWay)
+        {
+            for (int i = 0; i < styles.Length; i++) if (styles[i] != null && styles[i].prefab == view) return i;
+            return create ? EnsureStyle(view) : -1;
+        }
+        bool own = fallback >= 0 && fallback < styles.Length && styles[fallback] != null && styles[fallback].prefab != null;
+        return own ? Mathf.Min(1, styles.Length - 1) : fallback;
+    }
+    // 브러시가 칠할 외형이 이 예약의 외형과 다르면 true. 서로 다른 외형을 같은 예약에 섞지 않는다.
+    private bool StyleMismatch(int style) => ResolveBrushStyle(style, false) != style;
+    // 이 Prefab을 쓰는 스타일 번호. 없으면 생성 발광 스타일을 본떠 끝에 더한다. 기존 번호의 의미는 바뀌지 않는다(Mutate 안에서 부른다).
+    private int EnsureStyle(WaveTerrainCellView view)
+    {
+        var styles = data.cellMap.styles ?? Array.Empty<WaveCellStyle>();
+        for (int i = 0; i < styles.Length; i++) if (styles[i] != null && styles[i].prefab == view) return i;
+        // 본뜰 스타일: 생성 외형(1번 관례) → 아무 생성 스타일 → 마지막 스타일. FinalWave의 투명 스타일(끝 번호)을 본뜨지 않게 한다.
+        var source = styles.FirstOrDefault(s => s != null && s.generated && s.prefab == null)
+            ?? (styles.Length > 1 && styles[1] != null && styles[1].generated ? styles[1] : null)
+            ?? styles.FirstOrDefault(s => s != null && s.generated && s.color.a > 0)
+            ?? styles.LastOrDefault(s => s != null) ?? new WaveCellStyle { generated = true, layer = 6, sortingOrder = 1 };
+        var style = new WaveCellStyle { tile = source.tile, material = source.material, color = source.color, transform = source.transform,
+            sortingLayer = source.sortingLayer, sortingOrder = source.sortingOrder, layer = source.layer, generated = true, prefab = view };
+        data.cellMap.styles = styles.Append(style).ToArray();
+        return styles.Length;
+    }
+    private string[] StyleNames()
+    {
+        var styles = data.cellMap.styles ?? Array.Empty<WaveCellStyle>();
+        var names = new string[Mathf.Max(2, styles.Length)];
+        for (int i = 0; i < names.Length; i++)
+            names[i] = i < styles.Length && styles[i] != null && styles[i].prefab != null ? $"{i}: {styles[i].prefab.name}" : i == 0 ? "기본 지형" : i == 1 ? "생성 발광" : $"스타일 {i}";
+        return names;
     }
     private void PaintBatchCell(Vector2Int position, bool erase)
     {
@@ -552,7 +725,7 @@ public sealed class WaveEditorWindow : EditorWindow
             }
             var batch = Current.cellBatches[selectedBatch]; var cells = batch.cells.ToList();
             cells.RemoveAll(c => c.position == position);
-            if (!erase) cells.Add(new WaveMapCell { position = position, style = creationStyle, kind = brush != null && brush.GetComponent<WaveTerrainCellView>() != null ? brush.GetComponent<WaveTerrainCellView>().kind : WaveCellKind.Platform });
+            if (!erase) cells.Add(new WaveMapCell { position = position, style = BrushStyle(creationStyle), kind = brush != null && brush.GetComponent<WaveTerrainCellView>() != null ? brush.GetComponent<WaveTerrainCellView>().kind : WaveCellKind.Platform });
             batch.cells = cells.ToArray(); selectedCell = position; selected = -1; eventIndex = -1;
         });
     }
@@ -570,7 +743,7 @@ public sealed class WaveEditorWindow : EditorWindow
             if(eventIndex>=0 && eventIndex<Current.terrainEvents.Length)
             {
                 var entry=Current.terrainEvents[eventIndex];
-                if(!entry.custom && entry.operation==WaveTerrainOperation.Add && Mathf.Abs(entry.time-time)<=.0005f && (brush==null || brush.GetComponent<WaveTerrainCellView>()==null || entry.cellKind==brush.GetComponent<WaveTerrainCellView>().kind))
+                if(!entry.custom && entry.operation==WaveTerrainOperation.Add && Mathf.Abs(entry.time-time)<=.0005f && (brush==null || brush.GetComponent<WaveTerrainCellView>()==null || entry.cellKind==brush.GetComponent<WaveTerrainCellView>().kind && !StyleMismatch(entry.cellStyle)))
                 { Mutate(()=>{entry.cells=entry.cells.Union(new[]{cell}).ToArray();selectedCell=cell;});return; }
             }
             PaintBatchCell(cell,false);return;
@@ -726,9 +899,14 @@ public sealed class WaveEditorWindow : EditorWindow
     {
         using (new EditorGUILayout.VerticalScope(GUILayout.Width(detailsWidth)))
         {
-            rightScroll = EditorGUILayout.BeginScrollView(rightScroll);
             if (serialized == null || serialized.targetObject != data) serialized = new SerializedObject(data);
             serialized.Update();
+            // 위: 배치 오브젝트 상세(색을 달리한 별도 칸). 아래: Wave 상세.
+            ObjectPane();
+            ResizeObjectPane();
+            // ObjectPane은 바꾼 값을 ApplyModifiedProperties로 반영하거나 Mutate로 serialized를 새로 만든다. 다시 Update하지 않는다.
+            if (serialized == null || serialized.targetObject != data) serialized = new SerializedObject(data);
+            rightScroll = EditorGUILayout.BeginScrollView(rightScroll);
             var wave = serialized.FindProperty("waves").GetArrayElementAtIndex(waveIndex);
             GUILayout.Label($"Wave {waveIndex + 1} 상세", EditorStyles.boldLabel);
             if (data.cellMap.enabled)
@@ -793,29 +971,6 @@ public sealed class WaveEditorWindow : EditorWindow
                     else EditorGUILayout.PropertyField(wave.FindPropertyRelative("room"), new GUIContent("변경 Room"), true);
                 }
                 if (data.customRoom) EditorGUILayout.HelpBox("원본 카메라·코스 마무리는 모듈로 보존됩니다. 아래 공통 지형 이벤트는 함께 실행됩니다. 모듈 원본은 Prefab Mode에서 편집할 수 있습니다.", MessageType.Info);
-            }
-            if (selected >= 0 && selected < (Current.spawnObjects?.Length ?? 0))
-            {
-                GUILayout.Space(12); GUILayout.Label($"선택한 생성 항목 #{selected + 1}", EditorStyles.boldLabel);
-                var spawn = wave.FindPropertyRelative("spawnObjects").GetArrayElementAtIndex(selected);
-                foreach (var pair in new[] { ("prefab", "Prefab"), ("spawnPosition", "생성 좌표 (원본 보존)"), ("isRequiredToClear", "처치 필수 목표"), ("isBossEnemy", "보스 등장"), ("keepAfterWave", "Wave 종료 후 유지"), ("lifetime", "생성 후 유지 제한 (0=무제한)"), ("goalKeyOverride", "목표 도달 키 (빈 값=원본)") }) Property(spawn, pair.Item1, pair.Item2);
-                if (WavePrefabVisuals.IsEnvironmentTool(Current.spawnObjects[selected].prefab))
-                {
-                    var rotation = spawn.FindPropertyRelative("rotationSteps");
-                    rotation.intValue = EditorGUILayout.Popup("설치 방향 · R", NormalizeRotation(rotation.intValue), rotationLabels);
-                    EditorGUILayout.HelpBox("0°는 Prefab 원본 방향입니다. 셀 중심을 기준으로 반시계 90°씩 회전합니다.", MessageType.None);
-                }
-                float originalTime = WaveAuthoring.Times(Current)[selected];
-                bool preparation = Current.spawnObjects[selected].prefab != null && Current.spawnObjects[selected].prefab.GetComponent<TrainingCourseActivator>() != null;
-                float nextTime = originalTime;
-                if (preparation) EditorGUILayout.HelpBox("코스 열림은 Wave 시작 전 지형 준비 이벤트입니다. 개별 시작점 이동은 위의 Wave 시작 좌표·텔레포트 설정을 사용합니다. 아래 대기 시간은 준비가 끝난 뒤 나머지 생성 타임라인에 적용합니다.", MessageType.None);
-                else nextTime = EditorGUILayout.FloatField("실제 생성 시각 (초)", originalTime);
-                Property(spawn, "spawnDelay", "이 항목 생성 후 대기 (초)");
-                serialized.ApplyModifiedProperties();
-                if (nextTime != originalTime) ChangeSpawnTime(selected,nextTime);
-                var prefab = Current.spawnObjects[selected].prefab;
-                if (prefab != null && GUILayout.Button("선택 Prefab 원본 상세 열기")) AssetDatabase.OpenAsset(prefab);
-                if (prefab != null && prefab.GetComponentInChildren<TutorialGoal>(true) != null) EditorGUILayout.HelpBox("목표 Prefab의 triggerKey와 Wave 완료 키를 맞추세요. 기존 코스는 도달 키와 마무리 완료 키가 다릅니다.", MessageType.Info);
             }
             if(data.cellMap.enabled && (selectedBatch>=0 || eventIndex>=0 || terrainSession && terrainTarget!=1)) TerrainDetails();
             showRaw = EditorGUILayout.Foldout(showRaw, "전체 생성 목록 / 원본 순서", true);
@@ -900,8 +1055,10 @@ public sealed class WaveEditorWindow : EditorWindow
                 float birth=value.FindPropertyRelative("time").floatValue;LifecycleFields(value,birth);
                 if(selectedBatch<0)Property(value,"cellKind","셀 종류 (이 예약 전체)");
                 int style=selectedBatch>=0?(Current.cellBatches[selectedBatch].cells.Length>0?Current.cellBatches[selectedBatch].cells[0].style:creationStyle):value.FindPropertyRelative("cellStyle").intValue;
-                int next=EditorGUILayout.Popup("외형",Mathf.Clamp(style,0,1),new[]{"기본 지형","생성 발광"});
-                if(next!=Mathf.Clamp(style,0,1))
+                var styleNames=StyleNames();
+                int shown=Mathf.Clamp(style,0,styleNames.Length-1);
+                int next=EditorGUILayout.Popup("외형",shown,styleNames);
+                if(next!=shown)
                 {
                     serialized.ApplyModifiedProperties();creationStyle=next;
                     if(selectedBatch>=0)Mutate(()=>Current.cellBatches[selectedBatch].cells=Current.cellBatches[selectedBatch].cells.Select(c=>{c.style=next;return c;}).ToArray());
@@ -942,6 +1099,413 @@ public sealed class WaveEditorWindow : EditorWindow
         Property(room, "faceCenter", "Enemy 중앙 바라보기");
     }
     private static void Property(SerializedProperty parent, string field, string label) => EditorGUILayout.PropertyField(parent.FindPropertyRelative(field), new GUIContent(label), true);
+    // ───────────────────────────── 배치 오브젝트 상세 (Wave 상세와 분리한 칸) ─────────────────────────────
+    private void ObjectPane()
+    {
+        EnsurePaneStyles();
+        using (new EditorGUILayout.VerticalScope(objectPaneStyle, GUILayout.Height(objectPaneHeight)))
+        {
+            GUILayout.Label("배치 오브젝트 상세", objectHeaderStyle);
+            objectScroll = EditorGUILayout.BeginScrollView(objectScroll);
+            bool hasSelection = selected >= 0 && selected < (Current.spawnObjects?.Length ?? 0);
+            bool brushPane = mode == 1 && (copyBrush >= 0 || WavePrefabVisuals.IsEnvironmentTool(brush));
+            if (brushPane)
+            {
+                if (copyBrush >= 0) CopyBrushDetails(); else BrushDetails();
+                if (hasSelection) { GUILayout.Space(8); GUILayout.Label("방금 배치·선택한 항목", EditorStyles.miniBoldLabel); }
+            }
+            if (hasSelection) SelectedSpawnDetails();
+            else if (!brushPane)
+                EditorGUILayout.HelpBox("선택 / 이동 모드에서 배치한 오브젝트를 누르면 방향·세부 설정·생성 시각·수명을 여기서 바꿉니다.\n배치 모드에서 팔레트의 장치를 고르면 배치할 값을 미리 정합니다.\n빈 곳을 드래그해 칸 범위를 고르고 우클릭하면 그 안의 오브젝트를 복사합니다.", MessageType.None);
+            EditorGUILayout.EndScrollView();
+        }
+    }
+    private void SelectedSpawnDetails()
+    {
+        var wave = serialized.FindProperty("waves").GetArrayElementAtIndex(waveIndex);
+        var info = Current.spawnObjects[selected];
+        int previousRotation = info.rotationSteps;
+        GUILayout.Label($"#{selected + 1} {(info.prefab != null ? info.prefab.name : "참조 없음")}", EditorStyles.boldLabel);
+        var spawn = wave.FindPropertyRelative("spawnObjects").GetArrayElementAtIndex(selected);
+        bool device = WavePrefabVisuals.IsEnvironmentTool(info.prefab);
+        WaveDeviceSetting[] nextSettings = null;
+        if (device)
+        {
+            var rotation = spawn.FindPropertyRelative("rotationSteps");
+            rotation.intValue = EditorGUILayout.Popup("설치 방향 · R", NormalizeRotation(rotation.intValue), rotationLabels);
+            var edited = DeviceSettingsFields(info.prefab, info.deviceSettings, out bool settingsChanged);
+            if (settingsChanged) nextSettings = edited;
+            EditorGUILayout.HelpBox("이 배치에만 저장합니다. Prefab 기본값과 팔레트 항목은 바뀌지 않습니다. 0°는 Prefab 원본 방향이며 장치 중심(한 칸은 셀 중심, 2×2는 격자 꼭짓점)을 기준으로 반시계 90°씩 회전합니다.", MessageType.None);
+        }
+        var previousPrefab = info.prefab; var previousPosition = info.spawnPosition; float previousLifetime = info.lifetime;
+        foreach (var pair in new[] { ("prefab", "Prefab"), ("spawnPosition", "생성 좌표 (원본 보존)"), ("isRequiredToClear", "처치 필수 목표"), ("isBossEnemy", "보스 등장"), ("keepAfterWave", "Wave 종료 후 유지"), ("lifetime", "생성 후 유지 제한 (0=무제한)"), ("goalKeyOverride", "목표 도달 키 (빈 값=원본)") }) Property(spawn, pair.Item1, pair.Item2);
+        float originalTime = WaveAuthoring.Times(Current)[selected];
+        bool preparation = info.prefab != null && info.prefab.GetComponent<TrainingCourseActivator>() != null;
+        float nextTime = originalTime;
+        if (preparation) EditorGUILayout.HelpBox("코스 열림은 Wave 시작 전 지형 준비 이벤트입니다. 개별 시작점 이동은 Wave 상세의 시작 좌표·텔레포트 설정을 사용합니다. 아래 대기 시간은 준비가 끝난 뒤 나머지 생성 타임라인에 적용합니다.", MessageType.None);
+        else nextTime = EditorGUILayout.FloatField("실제 생성 시각 (초)", originalTime);
+        Property(spawn, "spawnDelay", "이 항목 생성 후 대기 (초)");
+        if (device)
+        {
+            int other = Conflict(Occupied(info), originalTime, info.lifetime, selected);
+            if (other >= 0) EditorGUILayout.HelpBox($"같은 칸의 #{other + 1} {Current.spawnObjects[other].prefab?.name}과 있는 시간이 겹칩니다. 먼저 생기는 쪽의 수명을 정하거나 생성 시각을 옮기세요.", MessageType.Warning);
+        }
+        serialized.ApplyModifiedProperties();
+        // 상세 칸에서 위치·수명·Prefab을 바꿔도 드래그·배치와 같은 같은 칸 규칙을 지킨다. 어기면 이전 값으로 되돌린다.
+        var changedSpawn = Current.spawnObjects[selected];
+        // 회전은 차지하는 칸이 바뀔 때(가로·세로가 다른 장치)만 같은 칸 규칙을 다시 본다. R 키 회전과 같은 규칙이다.
+        bool placementChanged = changedSpawn.prefab != previousPrefab || changedSpawn.spawnPosition != previousPosition || !Mathf.Approximately(changedSpawn.lifetime, previousLifetime)
+            || WavePrefabVisuals.Footprint(changedSpawn.prefab, changedSpawn.rotationSteps) != WavePrefabVisuals.Footprint(changedSpawn.prefab, previousRotation);
+        var previousSettings = changedSpawn.deviceSettings;
+        if (changedSpawn.prefab != previousPrefab && WavePrefabVisuals.IsEnvironmentTool(changedSpawn.prefab))
+        {
+            // 크기가 다른 장치로 바꾸면 기준점을 새 크기에 맞추고, 새 장치에 없는 설정은 버린다.
+            changedSpawn.spawnPosition = WavePrefabVisuals.Placement(changedSpawn.prefab, changedSpawn.spawnPosition + Offset, changedSpawn.rotationSteps) - Offset;
+            changedSpawn.deviceSettings = KeepSettings(changedSpawn.prefab, changedSpawn.deviceSettings);
+        }
+        if (placementChanged && WavePrefabVisuals.IsEnvironmentTool(changedSpawn.prefab))
+        {
+            int blocking = Conflict(Occupied(changedSpawn), originalTime, changedSpawn.lifetime, selected);
+            if (blocking >= 0)
+            {
+                changedSpawn.prefab = previousPrefab; changedSpawn.spawnPosition = previousPosition; changedSpawn.lifetime = previousLifetime;
+                changedSpawn.rotationSteps = previousRotation; changedSpawn.deviceSettings = previousSettings;
+                EditorUtility.SetDirty(data); serialized = new SerializedObject(data);
+                ShowNotification(new GUIContent($"같은 칸의 #{blocking + 1} {Current.spawnObjects[blocking].prefab?.name}과 있는 시간이 겹쳐 되돌렸습니다."));
+            }
+        }
+        if (nextSettings != null) { int index = selected; Mutate(() => Current.spawnObjects[index].deviceSettings = nextSettings); }
+        if (nextTime != originalTime && device)
+        {
+            int blocking = Conflict(Occupied(Current.spawnObjects[selected]), nextTime, Current.spawnObjects[selected].lifetime, selected);
+            if (blocking >= 0) { ShowNotification(new GUIContent($"그 시각에는 같은 칸의 #{blocking + 1} {Current.spawnObjects[blocking].prefab?.name}이 있어 옮길 수 없습니다.")); nextTime = originalTime; }
+        }
+        if (nextTime != originalTime) ChangeSpawnTime(selected, nextTime);
+        var prefab = selected >= 0 && selected < Current.spawnObjects.Length ? Current.spawnObjects[selected].prefab : null;
+        if (prefab != null && GUILayout.Button("선택 Prefab 원본 상세 열기")) AssetDatabase.OpenAsset(prefab);
+        if (prefab != null && prefab.GetComponentInChildren<TutorialGoal>(true) != null) EditorGUILayout.HelpBox("목표 Prefab의 triggerKey와 Wave 완료 키를 맞추세요. 기존 코스는 도달 키와 마무리 완료 키가 다릅니다.", MessageType.Info);
+    }
+    private void BrushDetails()
+    {
+        GUILayout.Label($"배치할 값 · {brush.name}", EditorStyles.boldLabel);
+        brushRotationSteps = EditorGUILayout.Popup("배치 방향 · R", NormalizeRotation(brushRotationSteps), rotationLabels);
+        brushSettings = DeviceSettingsFields(brush, brushSettings, out _);
+        EditorGUILayout.HelpBox("여기서 정한 값은 앞으로 배치하는 항목에만 저장합니다. Prefab 기본값은 바뀌지 않습니다.\n같은 칸에는 한 번에 하나만 둘 수 있습니다. 먼저 있던 장치의 수명이 끝난 시각부터 설치할 수 있습니다.", MessageType.None);
+    }
+    private void CopyBrushDetails()
+    {
+        var clip = WaveCopySlots.instance[copyBrush];
+        GUILayout.Label($"복사본 {copyBrush + 1} 붙이기", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("범위", $"{clip.size.x}×{clip.size.y}칸 · {clip.items.Length}개");
+        foreach (var item in clip.items.Take(12))
+            EditorGUILayout.LabelField($"+{item.timeOffset:0.##}초", $"{(item.info.prefab != null ? item.info.prefab.name : "참조 없음")} ({item.offset.x:0.#}, {item.offset.y:0.#})");
+        if (clip.items.Length > 12) EditorGUILayout.LabelField("", $"외 {clip.items.Length - 12}개");
+        EditorGUILayout.HelpBox("격자 칸을 누르면 복사한 범위의 왼쪽 아래 칸이 그 칸에 오도록 배치합니다. 생성 시각은 지금 편집 시각에서 원래 간격을 유지하고, 방향·세부 설정·수명도 그대로 복사합니다.", MessageType.None);
+    }
+    // 장치의 세부 설정 칸. 기본값과 다른 값만 돌려준다. 공격 범위 표시는 바뀐 값으로 바로 다시 계산된다.
+    private WaveDeviceSetting[] DeviceSettingsFields(GameObject prefab, WaveDeviceSetting[] current, out bool changed)
+    {
+        changed = false;
+        current ??= WaveDeviceSettings.None;
+        if (prefab == null || !prefab.TryGetComponent<IWaveDeviceSettings>(out var device) || device.Parameters.Length == 0)
+        {
+            EditorGUILayout.LabelField("세부 설정", "없음 · 방향만 바꿀 수 있습니다");
+            return current;
+        }
+        GUILayout.Label("세부 설정", EditorStyles.miniBoldLabel);
+        foreach (var parameter in device.Parameters)
+        {
+            float value = WaveDeviceSettings.Value(current, parameter);
+            bool custom = WaveDeviceSettings.Has(current, parameter.Key);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                var label = new GUIContent($"{parameter.Label} ({parameter.Unit})", $"{parameter.Tooltip}\n기본값 {parameter.Default:0.##}{parameter.Unit} · 범위 {parameter.Min:0.##}~{parameter.Max:0.##}");
+                float next = EditorGUILayout.Slider(label, value, parameter.Min, parameter.Max);
+                using (new EditorGUI.DisabledScope(!custom))
+                    if (GUILayout.Button(new GUIContent("기본", $"Prefab 기본값 {parameter.Default:0.##}{parameter.Unit}로 되돌립니다."), EditorStyles.miniButton, GUILayout.Width(38))) next = parameter.Default;
+                next = parameter.Clamp(next);
+                if (!Mathf.Approximately(next, value)) { current = WaveDeviceSettings.With(current, parameter, next); changed = true; }
+            }
+        }
+        if (WaveDevicePreviewCache.TryGetRange(prefab, current, out var range))
+            EditorGUILayout.LabelField("공격·작동 범위", range.Shape == WaveEnvironmentTool.RangeShape.Circle ? $"반지름 {range.Size.x:0.##}칸" : $"{range.Size.x:0.##} × {range.Size.y:0.##}칸");
+        return current;
+    }
+    private void ResizeObjectPane()
+    {
+        var rect = GUILayoutUtility.GetRect(40, 6, GUILayout.Height(6), GUILayout.ExpandWidth(true));
+        EditorGUI.DrawRect(rect, new Color(.12f, .15f, .19f));
+        EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeVertical);
+        int id = GUIUtility.GetControlID(735, FocusType.Passive);
+        var e = Event.current;
+        if (e.type == EventType.MouseDown && e.button == 0 && rect.Contains(e.mousePosition)) { GUIUtility.hotControl = id; e.Use(); }
+        if (e.type == EventType.MouseDrag && GUIUtility.hotControl == id) { objectPaneHeight = Mathf.Clamp(objectPaneHeight + e.delta.y, 120, position.height * .75f); e.Use(); Repaint(); }
+        if (e.type == EventType.MouseUp && GUIUtility.hotControl == id) { GUIUtility.hotControl = 0; e.Use(); }
+    }
+    private void EnsurePaneStyles()
+    {
+        if (objectPaneStyle != null && objectPaneTexture != null && objectHeaderTexture != null) return;
+        objectPaneTexture = SolidTexture(new Color(.07f, .15f, .17f));
+        objectHeaderTexture = SolidTexture(new Color(.10f, .34f, .38f));
+        objectPaneStyle = new GUIStyle { normal = { background = objectPaneTexture }, padding = new RectOffset(6, 6, 4, 6), margin = new RectOffset(0, 0, 0, 0) };
+        objectHeaderStyle = new GUIStyle(EditorStyles.boldLabel) { normal = { background = objectHeaderTexture, textColor = new Color(.85f, .97f, 1f) }, padding = new RectOffset(6, 6, 3, 3), margin = new RectOffset(0, 0, 0, 4) };
+    }
+    private static Texture2D SolidTexture(Color color)
+    {
+        var texture = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
+        texture.SetPixel(0, 0, color); texture.Apply();
+        return texture;
+    }
+
+    // ───────────────────────────── 같은 칸 중복 금지 ─────────────────────────────
+    private bool Alive(int index, float[] times) => WaveAuthoring.Alive(time, times[index], Current.spawnObjects[index].lifetime);
+    // 오브젝트가 차지하는 칸. 환경 장치는 놓인 칸, Enemy는 발이 닿는 칸이다.
+    private Vector2Int AnchorCell(WaveSpawnInfo spawn)
+    {
+        var point = spawn.spawnPosition + Offset;
+        if (spawn.prefab == null || WavePrefabVisuals.IsEnvironmentTool(spawn.prefab)) return Vector2Int.FloorToInt(point);
+        var shape = WavePrefabVisuals.LocalBounds(spawn.prefab, true);
+        return Vector2Int.FloorToInt(point + new Vector2(shape.center.x, shape.min.y + .001f));
+    }
+    // 오브젝트가 차지하는 칸들. 환경 장치는 점유 크기(2×2 등)만큼, Enemy는 발이 닿는 한 칸이다.
+    private RectInt Occupied(WaveSpawnInfo spawn)
+    {
+        if (spawn.prefab != null && WavePrefabVisuals.IsEnvironmentTool(spawn.prefab))
+            return WavePrefabVisuals.Cells(spawn.spawnPosition + Offset, WavePrefabVisuals.Footprint(spawn.prefab, spawn.rotationSteps));
+        return new RectInt(AnchorCell(spawn), Vector2Int.one);
+    }
+    // 장치를 next 방향으로 돌렸을 때 같은 칸·같은 시간에 걸리는 다른 장치. 가로·세로가 같은 장치는 늘 -1이다.
+    private int RotationBlocked(int index, int next)
+    {
+        var spawn = Current.spawnObjects[index];
+        if (WavePrefabVisuals.Footprint(spawn.prefab, next) == WavePrefabVisuals.Footprint(spawn.prefab, spawn.rotationSteps)) return -1;
+        var turned = WavePrefabVisuals.Cells(spawn.spawnPosition + Offset, WavePrefabVisuals.Footprint(spawn.prefab, next));
+        return Conflict(turned, WaveAuthoring.Times(Current)[index], spawn.lifetime, index);
+    }
+    // 다른 장치로 바꿀 때 새 장치가 받는 설정만 남긴다(값은 새 장치의 범위로 다시 맞춘다).
+    private static WaveDeviceSetting[] KeepSettings(GameObject prefab, WaveDeviceSetting[] settings)
+    {
+        if (settings == null || settings.Length == 0 || prefab == null || !prefab.TryGetComponent<IWaveDeviceSettings>(out var device)) return WaveDeviceSettings.None;
+        var result = WaveDeviceSettings.None;
+        foreach (var parameter in device.Parameters)
+            if (WaveDeviceSettings.Has(settings, parameter.Key)) result = WaveDeviceSettings.With(result, parameter, WaveDeviceSettings.Value(settings, parameter));
+        return result;
+    }
+    // 차지하는 칸이 겹치고 [start, start+lifetime)과 있는 시간이 겹치는 다른 장치의 번호. 없으면 -1.
+    private int Conflict(RectInt cells, float start, float lifetime, int ignore)
+    {
+        var spawns = Current.spawnObjects ?? Array.Empty<WaveSpawnInfo>();
+        var times = WaveAuthoring.Times(Current);
+        for (int i = 0; i < spawns.Length; i++)
+        {
+            if (i == ignore || !WavePrefabVisuals.IsEnvironmentTool(spawns[i].prefab) || !cells.Overlaps(Occupied(spawns[i]))) continue;
+            if (WaveAuthoring.Overlaps(start, lifetime, times[i], spawns[i].lifetime)) return i;
+        }
+        return -1;
+    }
+    // 새 장치를 start에 둘 수 있으면 true. 지금 그 칸에 있는 장치가 있으면 그 수명이 끝난 뒤에만 둔다.
+    // 뒤에 같은 칸 장치가 예약돼 있으면, 그 전까지만 있도록 새 장치의 수명을 정한다.
+    private bool FitLifetime(RectInt cells, float start, int ignore, out float lifetime)
+    {
+        lifetime = 0;
+        var spawns = Current.spawnObjects ?? Array.Empty<WaveSpawnInfo>();
+        var times = WaveAuthoring.Times(Current);
+        float next = float.PositiveInfinity;
+        var cell = cells.position;
+        for (int i = 0; i < spawns.Length; i++)
+        {
+            if (i == ignore || !WavePrefabVisuals.IsEnvironmentTool(spawns[i].prefab) || !cells.Overlaps(Occupied(spawns[i]))) continue;
+            float end = spawns[i].lifetime > 0 ? times[i] + spawns[i].lifetime : float.PositiveInfinity;
+            if (times[i] <= start + .0001f)
+            {
+                if (end <= start + .0001f) continue;
+                string name = spawns[i].prefab != null ? spawns[i].prefab.name : "항목";
+                ShowNotification(new GUIContent(float.IsInfinity(end)
+                    ? $"({cell.x}, {cell.y}) 칸에는 #{i + 1} {name}이 있습니다.\n그 장치의 수명을 정하면 수명이 끝난 시각부터 설치할 수 있습니다."
+                    : $"({cell.x}, {cell.y}) 칸에는 #{i + 1} {name}이 {end:0.##}초까지 있습니다.\n편집 시각을 {end:0.##}초 이후로 옮겨 설치하세요."));
+                return false;
+            }
+            next = Mathf.Min(next, times[i]);
+        }
+        if (!float.IsInfinity(next))
+        {
+            lifetime = next - start;
+            ShowNotification(new GUIContent($"{next:0.##}초에 같은 칸 장치가 생기므로 수명을 {lifetime:0.##}초로 정했습니다."));
+        }
+        return true;
+    }
+    private void MoveSpawn(int index, Vector2 point)
+    {
+        var spawn = Current.spawnObjects[index];
+        var target = WavePrefabVisuals.Placement(spawn.prefab, point + (index == dragIndex ? dragOffset : Vector2.zero), spawn.rotationSteps) - Offset;
+        if (target == spawn.spawnPosition) return;
+        // 같은 시간대에 다른 장치가 있는 칸으로는 옮기지 않는다.
+        if (WavePrefabVisuals.IsEnvironmentTool(spawn.prefab)
+            && Conflict(WavePrefabVisuals.Cells(target + Offset, WavePrefabVisuals.Footprint(spawn.prefab, spawn.rotationSteps)), WaveAuthoring.Times(Current)[index], spawn.lifetime, index) >= 0) return;
+        Mutate(() => Current.spawnObjects[index].spawnPosition = target);
+    }
+
+    // ───────────────────────────── 범위 선택·복사·붙이기 ─────────────────────────────
+    // 두 칸 이상을 고른 경우의 범위. 한 칸 선택은 기존 선택 표시를 쓴다.
+    private RectInt? AreaRect()
+    {
+        if (!areaStart.HasValue || !areaEnd.HasValue) return null;
+        var min = Vector2Int.Min(areaStart.Value, areaEnd.Value);
+        var max = Vector2Int.Max(areaStart.Value, areaEnd.Value);
+        if (min == max) return null;
+        return new RectInt(min, max - min + Vector2Int.one);
+    }
+    private void ContextCopy(Vector2 point)
+    {
+        var cell = Vector2Int.FloorToInt(point);
+        var area = AreaRect();
+        // 고른 범위는 선택 / 이동 모드에서 보일 때만 쓴다. 다른 모드에서는 우클릭한 셀만 복사한다.
+        bool useArea = mode == 0 && area.HasValue && area.Value.Contains(cell);
+        var region = useArea ? area.Value : new RectInt(cell, Vector2Int.one);
+        var times = WaveAuthoring.Times(Current);
+        var picked = new List<int>();
+        for (int i = 0; i < (Current.spawnObjects?.Length ?? 0); i++)
+            if (Current.spawnObjects[i].prefab != null && Alive(i, times) && region.Overlaps(Occupied(Current.spawnObjects[i]))) picked.Add(i);
+        // 여러 칸을 차지하는 Enemy는 발이 닿는 칸이 아니라 몸통을 우클릭해도 그 항목을 복사한다.
+        if (!useArea && picked.Count == 0)
+        {
+            int hit = Hit(point);
+            if (hit >= 0 && Alive(hit, times) && Current.spawnObjects[hit].prefab != null)
+            {
+                picked.Add(hit);
+                region = Occupied(Current.spawnObjects[hit]);
+            }
+        }
+        if (picked.Count == 0)
+        {
+            ShowNotification(new GUIContent(useArea ? "고른 범위에 지금 시각의 오브젝트가 없습니다." : "이 셀에는 지금 시각의 오브젝트가 없습니다."));
+            return;
+        }
+        // 한 칸 복사는 그 칸을 차지한 오브젝트 전체(2×2 장치 등)를 범위로 삼는다. 붙일 때 누른 칸에 그 왼쪽 아래 칸이 온다.
+        if (!useArea)
+            foreach (int i in picked)
+            {
+                var cells = Occupied(Current.spawnObjects[i]);
+                var min = Vector2Int.Min(region.min, cells.min); var max = Vector2Int.Max(region.max, cells.max);
+                region = new RectInt(min, max - min);
+            }
+        string names = string.Join(", ", picked.Take(4).Select(i => Current.spawnObjects[i].prefab.name)) + (picked.Count > 4 ? $" 외 {picked.Count - 4}개" : "");
+        string message = useArea
+            ? $"고른 {region.width}×{region.height}칸의 오브젝트 {picked.Count}개({names}) 정보를 복사하겠습니까?"
+            : $"선택된 셀 ({cell.x}, {cell.y})의 정보({names})를 복사하겠습니까?";
+        if (!ConfirmCopy(message)) return;
+        float first = picked.Min(i => times[i]);
+        Vector2 origin = region.position;
+        var clip = new WaveCopyClip
+        {
+            label = names, size = region.size,
+            items = picked.Select(i => new WaveCopyItem { info = Clone(Current.spawnObjects[i]), offset = Current.spawnObjects[i].spawnPosition + Offset - origin, timeOffset = times[i] - first }).ToArray()
+        };
+        ChooseCopySlot(clip, slot => StoreCopy(slot, clip));
+    }
+    private void StoreCopy(int slot, WaveCopyClip clip)
+    {
+        WaveCopySlots.instance.Set(slot, clip);
+        UseCopyBrush(slot);
+        ShowNotification(new GUIContent($"복사본 {slot + 1}번 칸에 담았습니다.\n배치 모드에서 격자를 누르면 붙입니다."));
+    }
+    private void UseCopyBrush(int slot)
+    {
+        if (WaveCopySlots.instance[slot].IsEmpty) return;
+        copyBrush = slot; brush = null; editPlayerStart = editClearPortal = false;
+        mode = 1; terrainSession = false; selected = -1; selectedBatch = -1; eventIndex = -1; selectedCell = null;
+        ResetGesture(); Repaint();
+    }
+    private void PasteCopy(Vector2Int cell)
+    {
+        var clip = WaveCopySlots.instance[copyBrush];
+        if (clip.IsEmpty) return;
+        // 모든 장치가 들어갈 수 있을 때만 붙인다(일부만 붙지 않게).
+        var planned = new List<(RectInt cells, float start, float life)>();
+        foreach (var item in clip.items)
+        {
+            if (item.info.prefab == null || !WavePrefabVisuals.IsEnvironmentTool(item.info.prefab)) continue;
+            var cells = WavePrefabVisuals.Cells(cell + item.offset, WavePrefabVisuals.Footprint(item.info.prefab, item.info.rotationSteps));
+            var target = cells.position;
+            float start = time + item.timeOffset;
+            int other = Conflict(cells, start, item.info.lifetime, -1);
+            if (other >= 0 || planned.Any(p => p.cells.Overlaps(cells) && WaveAuthoring.Overlaps(p.start, p.life, start, item.info.lifetime)))
+            {
+                ShowNotification(new GUIContent($"({target.x}, {target.y}) 칸에 같은 시간대의 장치가 있어 붙일 수 없습니다." + (other >= 0 ? $"\n#{other + 1} {Current.spawnObjects[other].prefab?.name}" : "")));
+                return;
+            }
+            planned.Add((cells, start, item.info.lifetime));
+        }
+        Mutate(() =>
+        {
+            foreach (var item in clip.items)
+            {
+                if (item.info.prefab == null) continue;
+                var info = Clone(item.info);
+                info.spawnPosition = (Vector2)cell + item.offset - Offset;
+                info.spawnDelay = 0;
+                var list = (Current.spawnObjects ?? Array.Empty<WaveSpawnInfo>()).ToList();
+                list.Add(info);
+                Current.spawnObjects = list.ToArray();
+                selected = WaveAuthoring.SetTime(Current, list.Count - 1, time + item.timeOffset);
+            }
+            selectedBatch = -1; selectedCell = null;
+        });
+    }
+    private static WaveSpawnInfo Clone(WaveSpawnInfo source)
+    {
+        var copy = JsonUtility.FromJson<WaveSpawnInfo>(JsonUtility.ToJson(source));
+        copy.prefab = source.prefab;
+        copy.deviceSettings = source.deviceSettings != null ? (WaveDeviceSetting[])source.deviceSettings.Clone() : WaveDeviceSettings.None;
+        return copy;
+    }
+    // 팔레트 왼쪽 아래의 복사본 3칸.
+    private void CopySlots()
+    {
+        GUILayout.Label(new GUIContent("복사본 (3칸)", "격자 셀을 우클릭하거나, 선택 / 이동 모드에서 빈 곳을 드래그해 고른 범위를 우클릭하면 복사합니다."), EditorStyles.boldLabel);
+        var slots = WaveCopySlots.instance;
+        float width = Mathf.Max(40, (paletteWidth - 18) / WaveCopySlots.Count);
+        using (new EditorGUILayout.HorizontalScope())
+            for (int i = 0; i < WaveCopySlots.Count; i++)
+            {
+                var clip = slots[i];
+                var rect = GUILayoutUtility.GetRect(width, 64, GUILayout.Width(width));
+                var background = GUI.backgroundColor;
+                if (copyBrush == i) GUI.backgroundColor = new Color(.35f, .75f, 1);
+                using (new EditorGUI.DisabledScope(clip.IsEmpty))
+                    if (GUI.Button(rect, new GUIContent("", clip.IsEmpty ? "비어 있음" : $"{clip.size.x}×{clip.size.y}칸 · {clip.label}"))) UseCopyBrush(i);
+                GUI.backgroundColor = background;
+                if (!clip.IsEmpty) DrawClip(new Rect(rect.x + 4, rect.y + 4, rect.width - 8, rect.height - 22), clip);
+                GUI.Label(new Rect(rect.x + 2, rect.yMax - 17, rect.width - 4, 16), clip.IsEmpty ? $"{i + 1} · 비어 있음" : $"{i + 1} · {clip.items.Length}개", cardNameStyle);
+            }
+        if (copyBrush >= 0)
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("붙이기 끝내기", EditorStyles.miniButton)) { copyBrush = -1; ResetGesture(); }
+                if (GUILayout.Button("이 칸 비우기", EditorStyles.miniButton)) { slots.Clear(copyBrush); copyBrush = -1; }
+            }
+    }
+    // 복사한 범위 전체가 카드 안에 들어오도록 줄여 그린다.
+    private void DrawClip(Rect rect, WaveCopyClip clip)
+    {
+        var area = new Rect(0, 0, Mathf.Max(1, clip.size.x), Mathf.Max(1, clip.size.y));
+        var parts = new List<(WaveCopyItem item, Bounds bounds)>();
+        foreach (var item in clip.items)
+        {
+            if (item.info.prefab == null) continue;
+            var bounds = WavePrefabVisuals.RotatedBounds(item.info.prefab, item.info.rotationSteps, item.info.deviceSettings);
+            area = Rect.MinMaxRect(Mathf.Min(area.xMin, item.offset.x + bounds.min.x), Mathf.Min(area.yMin, item.offset.y + bounds.min.y),
+                Mathf.Max(area.xMax, item.offset.x + bounds.max.x), Mathf.Max(area.yMax, item.offset.y + bounds.max.y));
+            parts.Add((item, bounds));
+        }
+        float scale = Mathf.Min(rect.width / Mathf.Max(.01f, area.width), rect.height / Mathf.Max(.01f, area.height));
+        var bottomLeft = new Vector2(rect.center.x - area.width * scale * .5f, rect.center.y + area.height * scale * .5f);
+        foreach (var (item, bounds) in parts)
+        {
+            var corner = bottomLeft + new Vector2((item.offset.x + bounds.min.x - area.xMin) * scale, -(item.offset.y + bounds.max.y - area.yMin) * scale);
+            WavePrefabVisuals.Draw(new Rect(corner, new Vector2(bounds.size.x, bounds.size.y) * scale), item.info.prefab, true, item.info.rotationSteps, item.info.deviceSettings);
+        }
+    }
     private void Mutate(Action change)
     {
         Undo.RecordObject(data, "Wave 격자 편집");
