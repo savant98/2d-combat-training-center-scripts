@@ -134,7 +134,7 @@ public class UIManager : MonoBehaviour
 
         IUIInputReceiver receiver = current.receiver;
 
-        Vector2 move = InputManager.Instance.Move;
+        Vector2 move = InputManager.Instance.MenuMove;
 
         bool hasMoveInput = move.sqrMagnitude > 0.1f;
         bool hadMoveInput = lastMoveInput.sqrMagnitude > 0.1f;
@@ -164,13 +164,13 @@ public class UIManager : MonoBehaviour
                 heldMoveDir = Vector2.zero;
             }
 
-            if (InputManager.Pressed(Button.Jump))
+            if (InputManager.MenuConfirmPressed())
             {
                 receiver.OnConfirm();
                 LockInput();
             }
 
-            if (InputManager.Pressed(Button.Attack))
+            if (InputManager.MenuCancelPressed())
             {
                 receiver.OnCancel();
                 LockInput();

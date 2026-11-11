@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using UnityEditor.Overlays;
 using UnityEngine;
 
 #region [1] 통합 데이터 모델 정의 (SaveData 구조)
@@ -14,6 +13,7 @@ using UnityEngine;
 [Serializable]
 public class SaveData
 {
+    public OptionSettings options = new OptionSettings();
     // [확장 영역] 플레이어 기본 정보 및 재화
     public int currentGold;
 
@@ -75,6 +75,17 @@ public class DataManager : MonoBehaviour
             return instance;
         }
     }
+    public OptionSettings Options => CurrentSaveData.options ??= new OptionSettings();
+
+    public bool SaveOptions(OptionSettings options)
+    {
+        var previous = CurrentSaveData.options;
+        CurrentSaveData.options = options.Copy();
+        if (TrySaveGame()) return true;
+        CurrentSaveData.options = previous;
+        return false;
+    }
+
     private string saveFilePath;
 
     // 게임 내부 시스템(UI, 플레이어 등)에서 실시간으로 읽고 쓸 데이터 원본
@@ -104,7 +115,9 @@ public class DataManager : MonoBehaviour
     /// <summary>
     /// 현재 런타임 데이터를 JSON 파일로 파일에 영구 저장
     /// </summary>
-    public void SaveGame()
+    public void SaveGame() => TrySaveGame();
+
+    private bool TrySaveGame()
     {
         try
         {
@@ -112,12 +125,17 @@ public class DataManager : MonoBehaviour
             SyncCacheToList();
 
             string json = JsonUtility.ToJson(CurrentSaveData, true); // true 옵션으로 JSON을 가독성 좋게 정렬
-            File.WriteAllText(saveFilePath, json);
+            string temporaryPath = saveFilePath + ".tmp";
+            File.WriteAllText(temporaryPath, json);
+            if (File.Exists(saveFilePath)) File.Replace(temporaryPath, saveFilePath, null);
+            else File.Move(temporaryPath, saveFilePath);
             Debug.Log($"[DataManager] 데이터 저장 완료: {saveFilePath}");
+            return true;
         }
         catch (Exception e)
         {
             Debug.LogError($"[DataManager] 데이터 저장 실해: {e.Message}");
+            return false;
         }
     }
 
@@ -156,7 +174,8 @@ public class DataManager : MonoBehaviour
     /// </summary>
     public void ResetSaveData()
     {
-        CurrentSaveData = new SaveData();
+        var options = Options;
+        CurrentSaveData = new SaveData { options = options };
         GenerateCache();
         SaveGame();
         Debug.Log("[DataManager] 세이브 데이터가 초기화 되었습니다.");
@@ -166,6 +185,11 @@ public class DataManager : MonoBehaviour
 
     private void GenerateCache()
     {
+        CurrentSaveData ??= new SaveData();
+        CurrentSaveData.options ??= new OptionSettings();
+        CurrentSaveData.options.Sanitize();
+        CurrentSaveData.weaponRecords ??= new List<WeaponSaveData>();
+        CurrentSaveData.trainingRoomRecords ??= new List<TrainingRoomSaveData>();
         weaponCache.Clear();
         foreach (var data in CurrentSaveData.weaponRecords)
         {

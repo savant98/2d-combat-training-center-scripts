@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 public class InputManager : MonoBehaviour
 {
@@ -12,10 +13,30 @@ public class InputManager : MonoBehaviour
         public bool pressedThisFrame;
     }
 
+    public UnityEngine.InputSystem.InputActionAsset Actions => inputActions.asset;
+    private bool callbacksBound;
+    private readonly List<UnityEngine.InputSystem.InputActionMap> suspendedMaps = new();
+    private bool rebindSuspended;
     private PlayerInputActions inputActions;
     readonly private Dictionary<Button, ButtonData> buttonDatas = new();
 
     public Vector2 Move { get; private set; }
+    public Vector2 MenuMove => inputActions.UI.Navigate.ReadValue<Vector2>();
+    private readonly ButtonData menuConfirm = new();
+    private readonly ButtonData menuCancel = new();
+
+    public static bool MenuConfirmPressed() => Instance != null && ConsumeMenuButton(Instance.menuConfirm);
+    public static bool MenuCancelPressed() => Instance != null && ConsumeMenuButton(Instance.menuCancel);
+    private static bool ConsumeMenuButton(ButtonData data)
+    {
+        if (data.state != ButtonState.Pressed) return false;
+        data.state = ButtonState.Held;
+        return true;
+    }
+
+    private static bool IsMenuControl(UnityEngine.InputSystem.InputAction.CallbackContext context, string keyboardPath) =>
+        !(context.control.device is UnityEngine.InputSystem.Keyboard) ||
+        string.Equals(context.control.path.Substring(context.control.path.LastIndexOf('/') + 1), keyboardPath, System.StringComparison.OrdinalIgnoreCase);
 
     private void Awake()
     {
@@ -28,11 +49,18 @@ public class InputManager : MonoBehaviour
         DontDestroyOnLoad(gameObject);
 
         inputActions = new PlayerInputActions();
+        // 기존 UI map을 메뉴 입력의 원본으로 사용한다. gameplay 키를 바꿔도 메뉴 Z/X는 유지한다.
+        inputActions.UI.Submit.AddBinding("<Keyboard>/z");
+        inputActions.UI.Cancel.AddBinding("<Keyboard>/x");
+        LoadBindings(DataManager.Instance.Options.bindingOverrides);
     }
 
     private void OnEnable()
     {
+        if (inputActions == null) return;
         inputActions.Enable();
+        if (callbacksBound) return;
+        callbacksBound = true;
 
         buttonDatas[Button.Jump] = new ButtonData();
         buttonDatas[Button.Attack] = new ButtonData();
@@ -42,6 +70,17 @@ public class InputManager : MonoBehaviour
         buttonDatas[Button.Interact] = new ButtonData();
         buttonDatas[Button.SwapWeapon] = new ButtonData();
         buttonDatas[Button.Escape] = new ButtonData();
+
+        inputActions.UI.Submit.performed += ctx =>
+        {
+            if (IsMenuControl(ctx, "z")) { menuConfirm.state = ButtonState.Pressed; menuConfirm.pressedThisFrame = true; }
+        };
+        inputActions.UI.Submit.canceled += _ => menuConfirm.state = ButtonState.Released;
+        inputActions.UI.Cancel.performed += ctx =>
+        {
+            if (IsMenuControl(ctx, "x")) { menuCancel.state = ButtonState.Pressed; menuCancel.pressedThisFrame = true; }
+        };
+        inputActions.UI.Cancel.canceled += _ => menuCancel.state = ButtonState.Released;
 
         // Jump
         inputActions.Player.Jump.started += ctx => { buttonDatas[Button.Jump].state = ButtonState.Pressed; buttonDatas[Button.Jump].pressedThisFrame = true; };
@@ -80,8 +119,55 @@ public class InputManager : MonoBehaviour
         inputActions.Player.Escape.canceled += ctx => buttonDatas[Button.Escape].state = ButtonState.Released;
     }
 
+    public void LoadBindings(string json)
+    {
+        inputActions.asset.RemoveAllBindingOverrides();
+        if (string.IsNullOrEmpty(json)) return;
+        try { inputActions.asset.LoadBindingOverridesFromJson(json); }
+        catch (System.Exception e)
+        {
+            inputActions.asset.RemoveAllBindingOverrides();
+            Debug.LogWarning("[InputManager] 저장된 키 설정을 읽지 못해 기본키를 사용합니다: " + e.Message);
+        }
+    }
+
+    public void SuspendForRebind(bool suspend)
+    {
+        if (suspend && !rebindSuspended)
+        {
+            suspendedMaps.Clear();
+            foreach (var map in inputActions.asset.actionMaps) if (map.enabled) suspendedMaps.Add(map);
+            rebindSuspended = true;
+            inputActions.Disable();
+        }
+        else if (!suspend && rebindSuspended)
+        {
+            if (isActiveAndEnabled) foreach (var map in suspendedMaps) map.Enable();
+            suspendedMaps.Clear();
+            rebindSuspended = false;
+        }
+        ClearButtonStates();
+    }
+
+    public void ClearButtonStates()
+    {
+        Move = Vector2.zero;
+        menuConfirm.state = menuCancel.state = ButtonState.None;
+        menuConfirm.pressedThisFrame = menuCancel.pressedThisFrame = false;
+        foreach (var data in buttonDatas.Values) { data.state = ButtonState.None; data.pressedThisFrame = false; }
+    }
+
+    private void OnDisable() { inputActions?.Disable(); ClearButtonStates(); }
+    private void OnDestroy()
+    {
+        inputActions?.Dispose();
+        if (Instance == this) Instance = null;
+    }
+
     private void LateUpdate()
     {
+        UpdateButton(menuConfirm);
+        UpdateButton(menuCancel);
         // Pressed/Released는 한 프레임만 유지
         var keys = new List<Button>(buttonDatas.Keys);
         foreach (var key in keys)

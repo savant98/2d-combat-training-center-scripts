@@ -8,7 +8,7 @@ using UnityEngine.EventSystems;
 public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
 {
     [Header("Input Layer")]
-    [SerializeField] private UIInputLayer inputLayer = UIInputLayer.Gameplay;
+    [SerializeField] protected UIInputLayer inputLayer = UIInputLayer.Gameplay;
 
     [Header("Mapping")]
     [SerializeField] protected RectTransform[] buttons;
@@ -148,8 +148,6 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
                 .SetEase(Ease.OutBack)
                 .SetUpdate(true);
 
-            button.DOPunchScale(Vector3.one * 0.1f, 0.15f)
-                .SetUpdate(true);
         }
     }
     private void HighlightText(int index, bool instant)

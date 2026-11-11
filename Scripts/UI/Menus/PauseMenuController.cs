@@ -11,7 +11,6 @@ public class PauseMenuController : MonoBehaviour
     [SerializeField] private GameObject root;
 
     private bool isOpen;
-
     public bool IsOpen => isOpen;
 
     private void Start()

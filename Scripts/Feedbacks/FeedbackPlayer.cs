@@ -41,6 +41,15 @@ public class FeedbackPlayer : MonoBehaviour
 
     private float defaultVignetteIntensity;
     private float defaultBloomIntensity;
+    private float bloomScale = 1f;
+    private float flashScale = 1f;
+
+    public void ApplyAccessibility(float bloomAmount, float flashAmount)
+    {
+        bloomScale = Mathf.Clamp01(bloomAmount);
+        flashScale = Mathf.Clamp01(flashAmount);
+        if (bloom != null) bloom.intensity.value = defaultBloomIntensity * bloomScale;
+    }
     private float defaultChromatic;
     private Color defaultColorAdjust;
 
@@ -81,8 +90,9 @@ public class FeedbackPlayer : MonoBehaviour
         CacheVolumeComponents();
 
         // 임시코드
-        Application.targetFrameRate = 144;
-        QualitySettings.vSyncCount = 0;
+        var options = OptionSettingsService.Instance != null ? OptionSettingsService.Instance.Current : DataManager.Instance.Options;
+        ApplyAccessibility(options.bloom, options.flash);
+        OptionSettingsService.ApplyTiming(options);
     }
     private void OnDestroy()
     {
@@ -355,13 +365,13 @@ public class FeedbackPlayer : MonoBehaviour
 
     private IEnumerator Flash(PostProcessingOptions fx)
     {
-        if (!fx.useFlash) yield break;
+        if (!fx.useFlash || colorAdjust == null) yield break;
 
         float t = 0;
         while (t < fx.flashDuration)
         {
             t += Time.unscaledDeltaTime;
-            colorAdjust.colorFilter.value = Color.Lerp(fx.flashColor * fx.flashIntensity, defaultColorAdjust, t / fx.flashDuration);
+            colorAdjust.colorFilter.value = Color.Lerp(defaultColorAdjust, Color.Lerp(fx.flashColor * fx.flashIntensity, defaultColorAdjust, t / fx.flashDuration), flashScale);
             yield return null;
         }
 
@@ -398,17 +408,17 @@ public class FeedbackPlayer : MonoBehaviour
 
     private IEnumerator BloomFX(PostProcessingOptions fx)
     {
-        if (!fx.useBloom) yield break;
+        if (!fx.useBloom || bloom == null) yield break;
 
         float t = 0;
         while (t < fx.bloomDuration)
         {
             t += Time.unscaledDeltaTime;
-            bloom.intensity.value = Mathf.Lerp(fx.bloomIntensity, defaultBloomIntensity, t / fx.bloomDuration);
+            bloom.intensity.value = Mathf.Lerp(fx.bloomIntensity, defaultBloomIntensity, t / fx.bloomDuration) * bloomScale;
             yield return null;
         }
 
-        bloom.intensity.value = defaultBloomIntensity;
+        bloom.intensity.value = defaultBloomIntensity * bloomScale;
     }
 
     private IEnumerator VignetteFX(PostProcessingOptions fx)
