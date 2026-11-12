@@ -13,7 +13,7 @@ public class TrainingDummyHealth : EnemyHealth
     public event Action<TrainingDummyHealth, WeaponBaseSO.DamageInfo> Damaged;
 
     private SelfTrainingController training;
-    private EnemyController controller;
+    private EnemyController dummyController;
     private EnemyUI trainingUI;
     private double lastHitTime = double.NegativeInfinity;
     private bool hasDamage;
@@ -27,9 +27,9 @@ public class TrainingDummyHealth : EnemyHealth
     {
         if (HealthData == null) maxHP = TrainingHealth;
         base.Awake();
-        controller = GetComponentInParent<EnemyController>(true);
+        dummyController = GetComponentInParent<EnemyController>(true);
         CaptureSpawnPose();
-        trainingUI = controller != null ? controller.GetComponentInChildren<EnemyUI>(true) : null;
+        trainingUI = dummyController != null ? dummyController.GetComponentInChildren<EnemyUI>(true) : null;
         if (enemyShieldSystem != null)
             enemyShieldSystem.OnShieldDamaged += RecordDamage;
     }
@@ -37,8 +37,8 @@ public class TrainingDummyHealth : EnemyHealth
     private void CaptureSpawnPose()
     {
         // 최초 Prefab 자세만 보관한다. 풀 반환 시 남은 재생 자세를 기준값으로 다시 읽지 않는다.
-        if (spawnTransforms != null || controller == null) return;
-        var model = controller.facingModel != null ? controller.facingModel.transform : controller.model.transform;
+        if (spawnTransforms != null || dummyController == null) return;
+        var model = dummyController.facingModel != null ? dummyController.facingModel.transform : dummyController.model.transform;
         spawnTransforms = model.GetComponentsInChildren<Transform>(true);
         spawnPositions = new Vector3[spawnTransforms.Length];
         spawnRotations = new Quaternion[spawnTransforms.Length];
@@ -143,7 +143,7 @@ public class TrainingDummyHealth : EnemyHealth
     private void LateUpdate()
     {
         // 스폰·브레이크 회수에서도 훈련 표적은 플레이어에게 접촉 피해를 주지 않는다.
-        if (controller != null) controller.CanTouchDamageActive(false);
+        if (dummyController != null) dummyController.CanTouchDamageActive(false);
     }
 
     public void ResetPractice()

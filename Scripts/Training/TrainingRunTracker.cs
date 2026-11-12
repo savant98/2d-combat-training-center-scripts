@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using UnityEngine;
 
 public class TrainingRunTracker : MonoBehaviour
@@ -16,13 +18,13 @@ public class TrainingRunTracker : MonoBehaviour
         {
             if (ended)
                 return lastTimeSeconds;
-            return Time.time - startTime;
+            return accumulatedTime + (timingRunning ? Mathf.Max(0f, Time.time - startTime) : 0f);
         }
     }
 
     // 진행 중에는 지금 끝냈을 때의 예상 등급, 끝난 뒤에는 확정 등급이다.
     public Grade CurrentPredictedGrade => training == null ? Grade.Poor
-        : ended ? LastRunResult.grade : training.Evaluate(hitCount, Time.time - startTime);
+        : ended ? LastRunResult.grade : training.Evaluate(hitCount, CurrentTimeSeconds);
 
     // [추가] Room 등에서 연출 시 가져갈 최근 실행 결과
     public RunResult LastRunResult { get; private set; }
@@ -39,6 +41,17 @@ public class TrainingRunTracker : MonoBehaviour
     private PlayerHealth playerHealth;
     private WaveManager boundWaves;      // 이 판을 시작한 WaveManager(없으면 성적 미흡 감시를 하지 않는다)
     private float startTime;
+    private float accumulatedTime;
+    private bool timingRunning;
+    private int timedWaveNumber;
+    private float waveTimeAtStart;
+    private readonly List<TrainingWaveTimeRecord> waveTimes = new();
+    private ReadOnlyCollection<TrainingWaveTimeRecord> waveTimesView;
+    /// <summary>이번 판에서 완료되거나 중단된 Wave의 읽기 전용 시간 기록이다. Begin에서 초기화한다.</summary>
+    public IReadOnlyList<TrainingWaveTimeRecord> WaveTimes => waveTimesView ??= waveTimes.AsReadOnly();
+    public int WaveCount { get; private set; }
+    /// <summary>지형과 이동 준비 중 제한시간이 정지했는지 UI와 검증 도구가 읽는다.</summary>
+    public bool IsTimerPaused => IsRunActive && !timingRunning;
     private float lastTimeSeconds;
     private int hitCount;
     private bool ended;
@@ -68,6 +81,13 @@ public class TrainingRunTracker : MonoBehaviour
         defeatResultPending = false;
         startTime = Time.time;
         boundWaves = WaveManager.ActiveInstance;
+        accumulatedTime = 0f;
+        lastTimeSeconds = 0f;
+        timingRunning = boundWaves == null;
+        timedWaveNumber = 0;
+        waveTimeAtStart = 0f;
+        waveTimes.Clear();
+        WaveCount = boundWaves != null && boundWaves.Data != null ? boundWaves.Data.waves?.Length ?? 0 : 0;
         Stats.Reset();
 
         if (playerHealth == null)
@@ -80,8 +100,14 @@ public class TrainingRunTracker : MonoBehaviour
         EnemyHealth.DamageApplied += HandleEnemyDamaged;
         EnemyShieldSystem.ShieldDamageApplied += HandleEnemyDamaged;
 
-        if (WaveManager.ActiveInstance != null)
-            WaveManager.ActiveInstance.OnAllWavesCleared += HandleClear;
+        if (boundWaves != null)
+        {
+            boundWaves.OnAllWavesCleared += HandleClear;
+            boundWaves.WaveIntroStarted += BeginWaveTiming;
+            boundWaves.WaveStarted += HandleWaveStarted;
+            boundWaves.WaveEnded += HandleWaveEnded;
+            boundWaves.WavesReset += PauseTiming;
+        }
 
         // Training 진행 중 체크 UI 켜기
         UIManager.Instance.ShowTrainingScoreBoard(true, this);
@@ -89,6 +115,7 @@ public class TrainingRunTracker : MonoBehaviour
 
     private void OnDisable()
     {
+        PauseTiming();
         CleanupSubscriptions();
     }
 
@@ -107,7 +134,44 @@ public class TrainingRunTracker : MonoBehaviour
         if (WaveManager.ActiveInstance != null)
             WaveManager.ActiveInstance.OnAllWavesCleared -= HandleClear;
         if (boundWaves != null)
+        {
             boundWaves.OnAllWavesCleared -= HandleClear;
+            boundWaves.WaveIntroStarted -= BeginWaveTiming;
+            boundWaves.WaveStarted -= HandleWaveStarted;
+            boundWaves.WaveEnded -= HandleWaveEnded;
+            boundWaves.WavesReset -= PauseTiming;
+        }
+    }
+
+    private void BeginWaveTiming(int waveNumber)
+    {
+        if (!IsRunActive || (timingRunning && timedWaveNumber == waveNumber)) return;
+        waveTimeAtStart = CurrentTimeSeconds;
+        timedWaveNumber = waveNumber;
+        startTime = Time.time;
+        timingRunning = true;
+    }
+
+    // 시작 안내를 생략하는 실행 경로에서도 실제 Wave 시작부터 잰다.
+    private void HandleWaveStarted(Wave wave) => BeginWaveTiming(boundWaves.currentWaveIndex + 1);
+
+    private void PauseTiming()
+    {
+        if (timingRunning) accumulatedTime = CurrentTimeSeconds;
+        timingRunning = false;
+    }
+
+    private void FinishWaveTiming(bool cleared)
+    {
+        PauseTiming();
+        if (timedWaveNumber == 0) return;
+        waveTimes.Add(new TrainingWaveTimeRecord(timedWaveNumber, Mathf.Max(0f, accumulatedTime - waveTimeAtStart), cleared));
+        timedWaveNumber = 0;
+    }
+
+    private void HandleWaveEnded()
+    {
+        if (IsRunActive) FinishWaveTiming(true);
     }
 
     private void Update() => Watch();
@@ -125,7 +189,7 @@ public class TrainingRunTracker : MonoBehaviour
             return;
         }
         if (!IsRunActive || !IsBoundWaveRunning()) return;
-        if (training.Evaluate(hitCount, Time.time - startTime) == Grade.Poor)
+        if (training.Evaluate(hitCount, CurrentTimeSeconds) == Grade.Poor)
             Fail();
     }
 
@@ -155,7 +219,7 @@ public class TrainingRunTracker : MonoBehaviour
         if (ended) return;
         hitCount++;
         // 이 피격으로 성적이 미흡이 되면 그 자리에서 패배를 확정한다(같은 프레임에 마지막 적이 쓰러져도 훈련 완료가 되지 않는다).
-        if (IsBoundWaveRunning() && training.Evaluate(hitCount, Time.time - startTime) == Grade.Poor)
+        if (IsBoundWaveRunning() && training.Evaluate(hitCount, CurrentTimeSeconds) == Grade.Poor)
         {
             Fail();
             // 피격 처리 도중이므로 PlayerHealth가 이 피격을 끝내는 자리에서 바로 사망 처리한다(피격 경직·히트스톱·위치 되돌림 없이).
@@ -189,7 +253,7 @@ public class TrainingRunTracker : MonoBehaviour
     {
         if (ended) return;
         // 클리어한 순간의 성적이 미흡이면(제한 시간, 피격 한도를 넘는 것과 거의 동시) 훈련 완료가 아니라 패배다.
-        if (training.Evaluate(hitCount, Time.time - startTime) == Grade.Poor)
+        if (training.Evaluate(hitCount, CurrentTimeSeconds) == Grade.Poor)
         {
             Fail();
             return;
@@ -199,9 +263,9 @@ public class TrainingRunTracker : MonoBehaviour
 
     private void EndRun(bool cleared, TrainingFailReason failReason)
     {
+        float timeSeconds = CurrentTimeSeconds;
+        FinishWaveTiming(cleared);
         ended = true;
-
-        float timeSeconds = Time.time - startTime;
         lastTimeSeconds = timeSeconds;
         Grade grade = cleared ? training.Evaluate(hitCount, timeSeconds) : Grade.Poor;
 

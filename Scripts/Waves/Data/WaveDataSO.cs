@@ -23,7 +23,8 @@ public enum WaveClearType
 {
     DefeatAllTargets,
     SurviveForTime,
-    CustomTrigger
+    CustomTrigger,
+    ReachGoal
 }
 
 [System.Serializable]

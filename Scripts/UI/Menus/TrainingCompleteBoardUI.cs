@@ -11,6 +11,7 @@ using UnityEngine.UI;
 //   왼쪽 영역만 1쪽(피격 횟수, 걸린 시간, 획득 골드)과 2쪽(가한 피해, 받은 피해, 회복량, 무장별 기록)으로 넘긴다. 상하(승리 화면은 좌우도)로 넘긴다.
 //   무장 줄에는 실제 피해와 함께 가한 피해 전체 대비 비율(%)과 비율 막대를 적는다(2026-11-11, 사용자 요청 "정산 화면에서 데미지를 %로 계산해서
 //   실제 데미지와 함께 보여줘. 이미 자율훈련장에서 그런 걸 쓰고 있어"). 계산과 표기는 자율 훈련장의 기여 비율과 같다.
+// - Wave 시간: 요약·전투 기록 다음 쪽에 이번 판의 완료/중단/미진행 Wave와 소요 시간을 표시한다.
 // - 패배 화면(사용자 요청 "DestroyUI도 전면 개편. 패배 시에도 훈련 종료 시 panel처럼 결과창을"): UIManager.ShowDeathUI가 ShowDefeat를 부른다.
 //   붉은 "훈련 실패" 띠와 사유, 같은 결과 보드(등급 미흡, 3행은 실패 사유), 재도전 / 포기 메뉴(TrainingDefeatMenu)로 짠다.
 //   훈련 기록이 없는 사망(자율 훈련 등)은 결과 보드 없이 띠와 메뉴만 띄운다. MainScene의 옛 PlayerDeathMenu는 2026-11-11에 지웠다.
@@ -73,6 +74,9 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     [SerializeField] private Image[] pageChevrons;
     [SerializeField] private TextMeshProUGUI pageText;
 
+    [Header("Page 3 (Wave별 시간)")]
+    [SerializeField] private TrainingWaveTimesPageUI waveTimesPage;
+
     [Header("Defeat")]
     [SerializeField] private TrainingDefeatMenu defeatMenu;
     [SerializeField] private RectTransform menuRoot;
@@ -132,6 +136,7 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     public bool IsDefeatOpen { get; private set; }
     public bool HasDefeatScreen => defeatMenu != null;
     public int Page => page;
+    public int PageCount => 2 + (waveTimesPage != null ? waveTimesPage.PageCount : 0);
 
     private float ReleaseTime => mode == BoardMode.Victory ? inputReleaseTime
         : mode == BoardMode.Defeat ? defeatBoardDelay + inputReleaseTime / defeatBoardSpeed
@@ -285,17 +290,25 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
 
     private void HandlePageRequest(int delta)
     {
-        SetPage(delta > 0 ? 1 : 0);
+        SetPage(page + (delta > 0 ? 1 : -1));
     }
 
     private void SetPage(int value)
     {
         if (mode == BoardMode.DefeatNoRecord) return;
-        page = Mathf.Clamp(value, 0, 1);
+        page = Mathf.Clamp(value, 0, PageCount - 1);
+        if (page >= 2 && waveTimesPage != null) waveTimesPage.ShowPage(page - 2);
     }
 
     private void LoadResult(RunResult result)
     {
+        if (waveTimesPage != null)
+        {
+            var tracker = TrainingRunTracker.Instance;
+            bool sameRun = tracker != null && tracker.LastRunResult.trainingId == result.trainingId
+                && tracker.LastRunResult.endedAtIso == result.endedAtIso;
+            waveTimesPage.SetRecords(sameRun ? tracker.WaveTimes : null, sameRun ? tracker.WaveCount : 0, result.timeSeconds);
+        }
         hits = result.hitCount;
         seconds = result.timeSeconds;
         grade = result.grade;
@@ -586,14 +599,16 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
         ApplyPage();
     }
 
-    // 쪽 넘김: 1쪽이 위로 밀려 나가고 2쪽이 아래에서 올라온다. 2쪽의 무장 줄은 차례로 켜지고 비율 막대가 왼쪽에서 자란다.
+    // 요약, 전투 기록, Wave 시간 순서로 넘긴다. 전투 기록의 무장 줄과 비율 막대는 기존 연출을 유지한다.
     private void ApplyPage()
     {
-        float b = TrainingBoardMotion.Smooth(pageBlend);
-        page1Group.alpha = 1f - b;
-        page2Group.alpha = b;
-        ((RectTransform)page1Group.transform).anchoredPosition = page1Base + new Vector2(0f, 18f * b);
-        ((RectTransform)page2Group.transform).anchoredPosition = page2Base + new Vector2(0f, -18f * (1f - b));
+        float first = TrainingBoardMotion.Smooth(Mathf.Clamp01(1f - Mathf.Abs(pageBlend)));
+        float second = TrainingBoardMotion.Smooth(Mathf.Clamp01(1f - Mathf.Abs(pageBlend - 1f)));
+        page1Group.alpha = first;
+        page2Group.alpha = second;
+        ((RectTransform)page1Group.transform).anchoredPosition = page1Base + new Vector2(0f, 18f * (1f - first));
+        ((RectTransform)page2Group.transform).anchoredPosition = page2Base + new Vector2(0f, -18f * (1f - second));
+        if (waveTimesPage != null) waveTimesPage.Group.alpha = TrainingBoardMotion.Smooth(Mathf.Clamp01(pageBlend - 1f));
         for (int i = 0; i < weaponRows.Length; i++)
         {
             float start = 0.2f + 0.035f * i;
@@ -603,11 +618,11 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
             fill.anchorMax = new Vector2((i < ratioValues.Length ? ratioValues[i] : 0f) * grow, fill.anchorMax.y);
         }
 
-        // 갈 수 있는 쪽의 셰브론만 깜빡인다(위 = 1쪽으로, 아래 = 2쪽으로)
+        // 이전/다음으로 갈 수 있는 쪽의 셰브론만 깜빡인다.
         float blink = 0.4f + 0.6f * Mathf.Clamp01(Mathf.Sin(Time.unscaledTime * 5f));
         for (int i = 0; i < pageChevrons.Length; i++)
         {
-            bool canGo = i == 0 ? page == 1 : page == 0;
+            bool canGo = i == 0 ? page > 0 : page < PageCount - 1;
             Color c = canGo ? (Color)TrainingBoardStyle.Line : (Color)TrainingBoardStyle.LineDim;
             c.a = canGo ? blink : 0.5f;
             pageChevrons[i].color = c;
@@ -615,11 +630,11 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
 
         if (page == shownPage) return;
         shownPage = page;
-        pageText.text = page == 0 ? "PAGE 1 / 2" : "PAGE 2 / 2";
+        pageText.text = $"PAGE {page + 1} / {PageCount}";
         for (int i = 0; i < pagePips.Length; i++)
         {
-            pagePips[i].sprite = i == page ? ladderLitSprite : ladderSlotSprite;
-            pagePips[i].color = i == page ? (Color)TrainingBoardStyle.LineBright : (Color)TrainingBoardStyle.LineDim;
+            pagePips[i].sprite = i == Mathf.Min(page, 2) ? ladderLitSprite : ladderSlotSprite;
+            pagePips[i].color = i == Mathf.Min(page, 2) ? (Color)TrainingBoardStyle.LineBright : (Color)TrainingBoardStyle.LineDim;
         }
     }
 
@@ -669,12 +684,12 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
         Hide();
     }
 
-    // 아래(또는 오른쪽) = 2쪽 전투 기록, 위(또는 왼쪽) = 1쪽 요약
+    // 아래/오른쪽은 다음 쪽, 위/왼쪽은 이전 쪽으로 이동한다.
     public void OnMove(Vector2 dir)
     {
         if (!IsOpen) return;
-        if (dir.y < -0.5f || dir.x > 0.5f) SetPage(1);
-        else if (dir.y > 0.5f || dir.x < -0.5f) SetPage(0);
+        if (dir.y < -0.5f || dir.x > 0.5f) SetPage(page + 1);
+        else if (dir.y > 0.5f || dir.x < -0.5f) SetPage(page - 1);
     }
 
     #endregion

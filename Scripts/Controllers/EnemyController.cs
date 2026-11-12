@@ -14,6 +14,9 @@ public class EnemyController : CharacterController2D
     public EnemyController Poolkey { get; set; }
     public EnemyHealth Health => enemyHealth;
     public AiBrain Brain => brain;
+    [SerializeField, Tooltip("TrainingDummy는 종류와 쉴드 상태에 관계없이 끕니다.")]
+    private bool weaponKnockbackEnabled = true;
+    public bool CanReceiveWeaponKnockback => weaponKnockbackEnabled && !(enemyHealth is TrainingDummyHealth);
     private AnimatorOverrideController animatorOverride;
     private bool canTouchDamage = true;
     private EnemyShieldSystem shieldSystem;
@@ -58,7 +61,7 @@ public class EnemyController : CharacterController2D
     {
         // 쉴드 종류는 소진·브레이크 중에도 일반 피격 넉백을 받지 않는다.
         // 쉴드 브레이크 순간의 기존 전용 외력은 HandleBreak에서 별도로 처리한다.
-        if (enemyHealth == null || enemyHealth.enemyShieldSystem != null ||
+        if (!CanReceiveWeaponKnockback || enemyHealth == null || enemyHealth.enemyShieldSystem != null ||
             IgnoreExternalForces || !isActiveAndEnabled || info.knockbackFacing == 0 ||
             info.sourceWeapon == null)
             return;
@@ -78,6 +81,9 @@ public class EnemyController : CharacterController2D
         Velocity = Vector2.zero;
         externalForce = Vector2.zero;
         CanTouchDamageActive(false);
+
+        // Dummy는 무장 피격과 쉴드 소진 모두 위치를 밀지 않는다. 브레이크 상태 전환은 유지한다.
+        if (!CanReceiveWeaponKnockback) return;
 
         Vector2 force = knockbackForce;
         force.x *= GameManager.Instance.Player.transform.position.x - transform.position.x < 0 ? -1f : 1f;

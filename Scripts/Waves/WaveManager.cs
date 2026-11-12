@@ -21,8 +21,11 @@ public class WaveManager : MonoBehaviour
     public bool IsPreparingWave => playerStartSequence != null && playerStartSequence.IsHoldingPlayer;
     public bool NextWaveTeleports => waveData != null && currentWaveIndex + 1 < waveData.waves.Length && waveData.waves[currentWaveIndex + 1].teleportAtStart;
     public event Action<Wave> WaveStarted;
+    /// <summary>지형과 이동 준비가 끝나고 시작 안내가 표시되는 시점이다. Wave 번호는 1부터 시작한다.</summary>
+    public event Action<int> WaveIntroStarted;
     public event Action WaveEnded;
     private readonly List<GameObject> looseObjects = new();
+    private readonly HashSet<TutorialGoal> activeGoals = new();
     public void Configure(WaveDataSO data, Transform root, TrainingDefinitionSO training)
     {
         waveData = data;
@@ -103,14 +106,11 @@ public class WaveManager : MonoBehaviour
         if (clearDelay > 0f)
             yield return new WaitForSeconds(clearDelay);
 
-        UIManager.Instance.StartWavePanelEffect(currentWaveIndex + 1);
-
-        yield return new WaitForSeconds(2f);
-
         UIManager.Instance.ShowBossHP(false);
-        yield return PrepareAndSpawn();
+        yield return PrepareWave(true);
     }
-    private IEnumerator PrepareAndSpawn()
+    private IEnumerator PrepareAndSpawn() => PrepareWave(false);
+    private IEnumerator PrepareWave(bool showWaveIntro)
     {
         var wave = waveData.waves[currentWaveIndex];
         PlayerStartSequence.Hold();
@@ -148,6 +148,12 @@ public class WaveManager : MonoBehaviour
             for (var step = Unwound(PlayerStartSequence.FinishCarry()); step.MoveNext();) yield return step.Current;
         }
         finally { playerStartSequence?.Release(); }
+        if (showWaveIntro)
+        {
+            WaveIntroStarted?.Invoke(currentWaveIndex + 1);
+            UIManager.Instance.StartWavePanelEffect(currentWaveIndex + 1);
+            yield return new WaitForSeconds(2f);
+        }
         SpawnWave(wave);
     }
     // 여러 겹의 순서(순서 안에서 다시 순서를 넘기는 것)를 한 겹으로 펴서 돌린다. 기다리는 대상(null·WaitForSeconds 등)은 그대로 넘긴다.
@@ -301,7 +307,8 @@ public class WaveManager : MonoBehaviour
     {
         foreach (var goal in item.GetComponentsInChildren<TutorialGoal>(true))
         {
-            goal.ConfigureWaveGoal(info.goalKeyOverride);
+            goal.ConfigureWaveGoal(info.goalKeyOverride, this, currentWave.clearType == WaveClearType.ReachGoal);
+            if (currentWave.clearType == WaveClearType.ReachGoal) activeGoals.Add(goal);
             goal.InitializeGoalSetting();
         }
         var lifetime = item.GetComponent<WaveSpawnLifetime>();
@@ -363,6 +370,17 @@ public class WaveManager : MonoBehaviour
         }
     }
 
+    public bool IsGoalActive(TutorialGoal goal) => goal != null && goal.isActiveAndEnabled && isWaveActive && currentWave != null
+        && currentWave.clearType == WaveClearType.ReachGoal && activeGoals.Contains(goal);
+
+    public bool CanReachGoal(TutorialGoal goal) => IsGoalActive(goal)
+        && (GameManager.Instance == null || GameManager.Instance.Player == null || !GameManager.Instance.Player.Health.IsDead);
+
+    public void HandleGoalReached(TutorialGoal goal)
+    {
+        if (CanReachGoal(goal)) CompleteWave();
+    }
+
     private void ClearActiveWaveHandlers()
     {
         foreach (var enemy in activeEnemies)
@@ -412,6 +430,7 @@ public class WaveManager : MonoBehaviour
     }
     private void ClearCurrentWaveEntities()
     {
+        activeGoals.Clear();
         foreach (var entity in currentWaveEntities)
         {
             if (entity != null && entity.gameObject.activeInHierarchy)

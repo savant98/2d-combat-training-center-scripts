@@ -8,7 +8,7 @@ using UnityEngine.Tilemaps;
 // 팔레트와 배치 항목이 같은 이미지·크기 정보를 사용한다.
 public static class WavePrefabVisuals
 {
-    public enum Category { Enemy, Platform, Other }
+    public enum Category { Enemy, Platform, Other, Goal }
     private static readonly Dictionary<int, Sprite> sprites = new();
     private static readonly Dictionary<int, Rect> previewUVs = new();
     private static readonly Dictionary<(int, bool), Bounds> boundsCache = new();
@@ -65,6 +65,7 @@ public static class WavePrefabVisuals
     public static Category Classify(GameObject prefab)
     {
         if (prefab == null) return Category.Other;
+        if (prefab.GetComponent<TutorialGoal>() != null) return Category.Goal;
         if (prefab.GetComponent<EnemyController>() != null) return Category.Enemy;
         if (prefab.GetComponent<WaveTerrainCellView>() != null || IsEnvironmentTool(prefab)) return Category.Platform;
         return Category.Other;

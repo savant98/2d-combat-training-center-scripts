@@ -64,6 +64,8 @@ public static class WaveAuthoring
             if (wave.clearType == WaveClearType.CustomTrigger && string.IsNullOrWhiteSpace(wave.customTriggerKey)) issues.Add(prefix + ": 목표 트리거 키가 비었습니다.");
             if (wave.surviveTime < 0 || wave.clearDelay < 0 || wave.startDelay < 0) issues.Add(prefix + ": 음수 시간을 수정하세요.");
             var spawns = wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>();
+            if (wave.clearType == WaveClearType.ReachGoal && !spawns.Any(s => s.prefab != null && s.prefab.activeSelf && s.prefab.GetComponentInChildren<TutorialGoal>() != null))
+                issues.Add(prefix + ": 목표지점 도달 조건입니다. 활성 목표지점 Prefab을 배치하세요.");
             for (int i = 0; i < spawns.Length; i++)
             {
                 var spawn = spawns[i];

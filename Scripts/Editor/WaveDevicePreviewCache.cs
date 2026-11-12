@@ -138,6 +138,22 @@ public static class WaveDevicePreviewCache
             return layer != 0 ? layer : a.sortingOrder.CompareTo(b.sortingOrder);
         });
         bool found = false;
+        // uGUI 목표 Panel은 Renderer가 없으므로 원본 Graphic의 벡터 메시를 읽는다.
+        foreach (var panel in root.GetComponentsInChildren<WaveGoalPanelGraphic>(true))
+        {
+            var mesh = new Mesh();
+            try
+            {
+                panel.BuildPanelMesh(mesh);
+                var matrix = toRoot * panel.transform.localToWorldMatrix;
+                Encapsulate(ref shape.Bounds, ref found, matrix, mesh.bounds);
+                var vertices = mesh.vertices; var colors = mesh.colors; var indices = mesh.triangles;
+                for (int i = 0; i < indices.Length; i += 3)
+                    shape.Parts.Add((colors[indices[i]], new[] { (Vector2)matrix.MultiplyPoint3x4(vertices[indices[i]]),
+                        (Vector2)matrix.MultiplyPoint3x4(vertices[indices[i + 1]]), (Vector2)matrix.MultiplyPoint3x4(vertices[indices[i + 2]]) }));
+            }
+            finally { UnityEngine.Object.DestroyImmediate(mesh); }
+        }
         foreach (var renderer in renderers)
         {
             var matrix = toRoot * renderer.transform.localToWorldMatrix;

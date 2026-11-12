@@ -220,12 +220,12 @@ public sealed class WaveEditorWindow : EditorWindow
             GUILayout.Label("생성 Prefab 팔레트", EditorStyles.boldLabel);
             if (GUILayout.Button("공통 마감 규칙 보기")) Selection.activeObject = WaveRoomRulesSO.Default;
             if (GUILayout.Button("상세 사용법 열기")) Application.OpenURL(System.IO.Path.GetFullPath("docs/WAVE_EDITOR.md"));
-            paletteCategory = GUILayout.Toolbar(paletteCategory, new[] { "Enemy", "Platform" });
+            paletteCategory = GUILayout.Toolbar(paletteCategory, new[] { "Enemy", "Platform", "목표지점" });
             search = EditorGUILayout.TextField(search, EditorStyles.toolbarSearchField);
             iconSize = EditorGUILayout.Slider("미리보기 크기", iconSize, 40, 100);
             if (WavePrefabVisuals.IsEnvironmentTool(brush))
                 EditorGUILayout.HelpBox("셀 중심에 배치 · R: 반시계 90° 회전\n방향·세부 설정은 오른쪽 '배치 오브젝트 상세'에서 정합니다.", MessageType.None);
-            var category = paletteCategory == 0 ? WavePrefabVisuals.Category.Enemy : WavePrefabVisuals.Category.Platform;
+            var category = paletteCategory == 0 ? WavePrefabVisuals.Category.Enemy : paletteCategory == 1 ? WavePrefabVisuals.Category.Platform : WavePrefabVisuals.Category.Goal;
             var items = palette.Where(p => p != null && WavePrefabVisuals.Classify(p) == category && p.name.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
             GUILayout.Label($"{items.Length}개 · 클릭 후 격자에 배치", EditorStyles.miniLabel);
             paletteScroll = EditorGUILayout.BeginScrollView(paletteScroll);
@@ -937,7 +937,9 @@ public sealed class WaveEditorWindow : EditorWindow
             if (portalOverride.boolValue) EditorGUILayout.PropertyField(serialized.FindProperty("clearPortalPosition"), new GUIContent("Lobby 복귀 포탈 좌표"));
             EditorGUILayout.HelpBox("전체 Wave에서 공유하는 완료 포탈 위치입니다. 상단 완료 포탈 이동을 선택하면 격자에서도 옮길 수 있습니다. Lobby 도착 위치는 유지합니다.", MessageType.None);
             EditorGUILayout.LabelField("Enemy / 발판 생성 기준", $"({Offset.x:0.###}, {Offset.y:0.###})");
-            Property(wave, "clearType", "클리어 조건");
+            var clearType = wave.FindPropertyRelative("clearType");
+            clearType.enumValueIndex = EditorGUILayout.Popup("클리어 조건", clearType.enumValueIndex, new[] { "필수 목표 모두 처치", "일정 시간 생존", "커스텀 트리거", "목표지점 도달" });
+            if (clearType.enumValueIndex == (int)WaveClearType.ReachGoal) EditorGUILayout.HelpBox("목표지점 팔레트의 WaveGoal을 이 Wave에 배치하세요. 생성된 목표 중 한 곳에 도달하면 클리어됩니다. 키 설정은 필요하지 않습니다.", MessageType.Info);
             if (Current.clearType == WaveClearType.SurviveForTime) Property(wave, "surviveTime", "생존 시간 (초)");
             if (Current.clearType == WaveClearType.CustomTrigger) Property(wave, "customTriggerKey", "목표 도달 / 완료 키");
             Property(wave, "clearDelay", "클리어 후 대기 (초)");
@@ -1186,7 +1188,9 @@ public sealed class WaveEditorWindow : EditorWindow
         if (nextTime != originalTime) ChangeSpawnTime(selected, nextTime);
         var prefab = selected >= 0 && selected < Current.spawnObjects.Length ? Current.spawnObjects[selected].prefab : null;
         if (prefab != null && GUILayout.Button("선택 Prefab 원본 상세 열기")) AssetDatabase.OpenAsset(prefab);
-        if (prefab != null && prefab.GetComponentInChildren<TutorialGoal>(true) != null) EditorGUILayout.HelpBox("목표 Prefab의 triggerKey와 Wave 완료 키를 맞추세요. 기존 코스는 도달 키와 마무리 완료 키가 다릅니다.", MessageType.Info);
+        if (prefab != null && prefab.GetComponentInChildren<TutorialGoal>(true) != null) EditorGUILayout.HelpBox(Current.clearType == WaveClearType.ReachGoal
+            ? "현재 Wave에 생성된 목표 중 한 곳에 도달하면 클리어됩니다. 목표 도달 키와 처치 필수 설정은 사용하지 않습니다. 화면 밖 목표는 가장자리 화살표로 안내합니다."
+            : "도달로 클리어하려면 Wave의 클리어 조건을 목표지점 도달로 설정하세요. 기존 코스의 커스텀 트리거는 도달 키와 마무리 완료 키를 유지합니다.", MessageType.Info);
     }
     private void BrushDetails()
     {
