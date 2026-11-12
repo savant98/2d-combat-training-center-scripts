@@ -83,6 +83,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
         public Color flash;     // 맞물림 섬광의 색
     }
     private readonly Dictionary<WaveMapCell, PanelMotion> panels = new();
+    // 물리 수명과 별개로 생성·OneWay 그림의 곡선을 화면 프레임마다 평가한다.
+    private readonly Dictionary<WaveMapCell, (float start, float duration, bool add, int token)> visualAnimations = new();
     private WaveTerrainPanelRig rig;
     private bool rigFilled;
     // 패널 연출의 시계. 지형 갱신이 몰려 튄 프레임에도 연출이 건너뛰지 않도록 평소 프레임보다 훨씬 긴 프레임은 잘라서 흐른다.
@@ -128,9 +130,6 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private const float CarryCameraDamping = .3f;
     private CinemachineFollow carryFollow;
     private Vector3 carryFollowDamping;
-    private CinemachineBrain carryBrain;
-    private CinemachineBrain.UpdateMethods carryBrainUpdate;
-    private CinemachineBrain.BrainUpdateMethods carryBrainBlendUpdate;
     // 지형 공간은 즉시 확정하고, 도착 카메라의 축소만 짧게 완화한다. 확장은 이동 경로를 먼저 확보한다.
     private const float CameraSettleDuration = .5f;
     private Vector2 cameraSettleFromSize, cameraSettleToSize;
@@ -428,6 +427,18 @@ public sealed class WaveCellTerrain : MonoBehaviour
         UpdateCameraSettlement();
         UpdatePanels();
         TrackGroupMotion();
+        foreach (var item in visualAnimations)
+        {
+            var cell = item.Key; var motion = item.Value;
+            if (!generations.TryGetValue(cell, out var token) || token != motion.token) continue;
+            float time = Mathf.Clamp(Time.time - motion.start, 0f, motion.duration);
+            var view = pool[cell]; view.SetProgress(time / motion.duration, motion.add, time);
+            if (animationPivots.TryGetValue(cell, out var pivot))
+            {
+                Vector2 localPivot = pivot - owners[cell].origin;
+                view.transform.localPosition = localPivot + Vector2.Scale(CellCenter(cell) - localPivot, view.transform.localScale);
+            }
+        }
     }
     private IEnumerator WaitPanels(float length)
     {
@@ -806,17 +817,15 @@ public sealed class WaveCellTerrain : MonoBehaviour
     // 방을 떠나면 진행 중이던 패널 연출을 제자리 모습으로 마친다(코루틴은 비활성화와 함께 멈춘다).
     private void OnDisable()
     {
-        RestoreCarryCameraUpdate();
         CancelCameraSettlement(true);
         if (IsPreloaded) ClearPanels();
     }
 
     private void ResetMap()
     {
-        RestoreCarryCameraUpdate();
         CancelCameraSettlement(true);
         roomSpaceReset = true;
-        StopAllCoroutines(); ClearPanels(); ClearCustom(); temporary.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
+        StopAllCoroutines(); ClearPanels(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
         ApplyBackground();
         roomSolids = null;
         ConnectedBounds = null;
@@ -884,19 +893,6 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         CancelCameraSettlement(true);
         carrying = true; carryFrom = from; carryTo = to; carryLift = Mathf.Max(0f, lift);
-        if (carryBrain == null)
-        {
-            var camera = Camera.main;
-            if (camera != null && camera.TryGetComponent(out carryBrain))
-            {
-                carryBrainUpdate = carryBrain.UpdateMethod;
-                carryBrainBlendUpdate = carryBrain.BlendUpdateMethod;
-                // 물리 틱으로 움직이는 Player를 SmartUpdate가 Fixed로 분류하면 빠른 하강에서 같은 카메라 프레임이 반복된다.
-                // 이동 물리는 유지하고 Follow 감쇠와 최종 출력만 렌더 프레임마다 계산한다.
-                carryBrain.UpdateMethod = CinemachineBrain.UpdateMethods.LateUpdate;
-                carryBrain.BlendUpdateMethod = CinemachineBrain.BrainUpdateMethods.LateUpdate;
-            }
-        }
         if (carryFollow == null && roomConfiner != null && roomConfiner.TryGetComponent(out carryFollow))
         {
             carryFollowDamping = carryFollow.TrackerSettings.PositionDamping;
@@ -921,14 +917,6 @@ public sealed class WaveCellTerrain : MonoBehaviour
         RefreshRoomSpace(immediateCamera: !arrived);
         if (arrived && pendingPresentationCamera.HasValue) SetPresentationCamera(pendingPresentationCamera.Value);
         pendingPresentationCamera = null;
-        if (!IsCameraSettling) RestoreCarryCameraUpdate();
-    }
-    private void RestoreCarryCameraUpdate()
-    {
-        if (carryBrain == null) return;
-        carryBrain.UpdateMethod = carryBrainUpdate;
-        carryBrain.BlendUpdateMethod = carryBrainBlendUpdate;
-        carryBrain = null;
     }
     /// <summary>
     /// index번째 Wave로 넘어가면 방 좌표 사각형 area에 지형(Platform) 칸이 새로 생기는지. 그 Wave의 지형을 준비하기 전에 묻는다.
@@ -1221,7 +1209,6 @@ public sealed class WaveCellTerrain : MonoBehaviour
         {
             IsCameraSettling = false;
             WriteCameraBounds(size, position);
-            if (!carrying) RestoreCarryCameraUpdate();
             return;
         }
         cameraSettleFromSize = originalCameraBounds.size;
@@ -1249,7 +1236,6 @@ public sealed class WaveCellTerrain : MonoBehaviour
         {
             IsCameraSettling = false;
             WriteCameraBounds(size, position);
-            RestoreCarryCameraUpdate();
             return;
         }
         cameraSettleTime = 0;
@@ -1274,7 +1260,6 @@ public sealed class WaveCellTerrain : MonoBehaviour
             Vector3.Lerp(cameraSettleFromPosition, cameraSettleToPosition, eased));
         if (t < 1f) return;
         IsCameraSettling = false;
-        RestoreCarryCameraUpdate();
         RefreshRoomSpace();
     }
     private void CancelCameraSettlement(bool complete)
@@ -1331,6 +1316,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         foreach (var cell in cells)
         {
             Preload(cell);
+            visualAnimations.Remove(cell);
             unsettled.Add(cell);
             // 다른 묶음이 이 칸을 끼우거나 빼던 중이면 그 패널 연출을 여기서 마감한다(그 묶음은 아래에서 순번을 넘겨받아 끝 처리를 건너뛴다).
             // 마감하지 않으면 연출 항목이 남아 칸이 숨겨지거나 한 칸 테두리가 켜진 채 남는다. 새 연출이 필요하면 아래에서 다시 예약한다.
@@ -1395,6 +1381,10 @@ public sealed class WaveCellTerrain : MonoBehaviour
         RefreshOutlines();
         // OneWay는 등장 시작부터, 생성 발판은 빼기 시작부터 충돌이 바뀐다. 연결 공간은 이 프레임의 LateUpdate가 한 번만 다시 구한다.
         if (cells.Any(c=>c.kind==WaveCellKind.OneWayPlatform&&add || c.kind==WaveCellKind.Platform&&!add&&Style(c).generated)) { ProcessCollision(); roomSpaceDirty = true; }
+        if (duration > 0f)
+            foreach (var cell in cells)
+                if ((!add || !visible.Contains(cell)) && !movingSet.Contains(cell) && !instant.Contains(cell))
+                    visualAnimations[cell] = (Time.time, duration, add, tokens[cell]);
         for (float time = 0; time < duration; time += Time.fixedDeltaTime)
         {
             float t = time / duration;
@@ -1414,6 +1404,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         foreach (var cell in cells)
         {
             if (generations[cell] != tokens[cell]) continue;
+            visualAnimations.Remove(cell);
             if (movingSet.Contains(cell)) { panels.Remove(cell); pool[cell].HidePanelOutline(); }
             pool[cell].SetAmount(1); pool[cell].transform.localPosition = CellCenter(cell); pool[cell].gameObject.SetActive(add); Collision(cell, add);
             unsettled.Remove(cell);

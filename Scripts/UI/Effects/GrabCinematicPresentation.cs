@@ -534,8 +534,9 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
         public void Sync(Vector3 offset)
         {
             if (source == null) return;
-            copy.localPosition = root ? source.position + offset - copy.parent.position : source.localPosition;
-            copy.localRotation = root ? source.rotation : source.localRotation;
+            FixedMotionBody.GetPresentationPose(source, out var position, out var rotation);
+            copy.localPosition = root ? position + offset - copy.parent.position : source.localPosition;
+            copy.localRotation = root ? rotation : source.localRotation;
             copy.localScale = root ? source.lossyScale : source.localScale;
         }
     }

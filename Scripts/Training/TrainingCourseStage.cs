@@ -187,6 +187,7 @@ public sealed class TrainingCourseStage : MonoBehaviour
             // 닫힐 때 막히는 경계를 실제 타일 범위로 계산하도록 범위를 맞춘다.
             tilemap.CompressBounds();
             bodies[i] = tilemap.GetComponent<Rigidbody2D>();
+            FixedMotionBody.Attach(tilemap.transform);
         }
         cached = true;
     }

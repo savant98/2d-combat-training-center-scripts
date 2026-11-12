@@ -56,6 +56,7 @@ public class PlayerController : CharacterController2D
         if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
         motor.ResetOneWayState();
         transform.position = spawnPos;
+        if (TryGetComponent<FixedMotionBody>(out var presentation)) presentation.ResetPose();
         // 구속 상자에 갇힌 채 옮겨졌으면 구속도 도착한 자리로 옮긴다(남겨 두면 다음 물리 틱에 원래 자리로 끌려간다).
         motor.RefitConfinement();
         Velocity = Vector2.zero;

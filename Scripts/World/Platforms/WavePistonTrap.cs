@@ -118,6 +118,9 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         for (int i = 0; i < slides.Length; i++) if (slides[i] != null) slideRest[i] = slides[i].localPosition;
         stretchRest = new Vector3[stretches.Length];
         for (int i = 0; i < stretches.Length; i++) if (stretches[i] != null) stretchRest[i] = stretches[i].localScale;
+        FixedMotionBody.Attach(head);
+        foreach (var part in slides) FixedMotionBody.Attach(part);
+        foreach (var part in stretches) FixedMotionBody.Attach(part);
     }
 
     protected override void ResetDevice()

@@ -40,6 +40,7 @@ public class RaycastMotor2D : MonoBehaviour
         this.skinWidth = skinWidth;
         this.horizontalRayCount = horizontalRayCount;
         this.verticalRayCount = verticalRayCount;
+        FixedMotionBody.Attach(transform);
     }
     public void SetCollideLayer(LayerMask collisionLayer)
     {

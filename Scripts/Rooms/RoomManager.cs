@@ -46,6 +46,7 @@ public class RoomManager : MonoBehaviour
         if (request.teleportPoint != null)
         {
             GameManager.Instance.Player.transform.position = request.teleportPoint.position;
+            if (GameManager.Instance.Player.TryGetComponent<FixedMotionBody>(out var presentation)) presentation.ResetPose();
         }
 
         // UI 시스템 등에게 알리기

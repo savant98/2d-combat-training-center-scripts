@@ -37,6 +37,7 @@ public sealed class PlayerGrabVisual : MonoBehaviour
             line.sortingLayerID = source.sortingLayerID; line.sortingOrder = source.sortingOrder + 12;
         }
         UpdatePose();
+        if (player.TryGetComponent<FixedMotionBody>(out var presentation)) presentation.RefreshGraphics();
     }
     public void SetRotation(float degrees) => heldRotation = degrees;
     private void LateUpdate() { if (playing) UpdatePose(); }
