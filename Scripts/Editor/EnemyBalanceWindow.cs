@@ -16,6 +16,7 @@ public sealed class EnemyBalanceWindow : EditorWindow
         public AiBrain Brain;
         public AiAbility[] Abilities;
         public EnemyShieldSystem Shield;
+        public AiPatternProfileSO Profile;
     }
 
     private readonly List<EnemyEntry> enemies = new List<EnemyEntry>();
@@ -30,11 +31,14 @@ public sealed class EnemyBalanceWindow : EditorWindow
     private string selectedPath;
     private EnemyController runtimeEnemy;
     [SerializeField] private int selectedPatternIndex;
+    // 페이즈를 나눈 Enemy에서 보고 있는 페이즈. 이때 selectedPatternIndex는 그 페이즈의 등록 순번이다.
+    [SerializeField] private int selectedPhaseIndex;
     [SerializeField] private bool showVitals;
     [SerializeField] private bool showProfile;
     private GUIStyle cardTitleStyle;
     private GUIStyle cardValueStyle;
     private GUIStyle enemyNameStyle;
+    private GUIStyle badgeStyle;
     private static readonly string[] CommonPatternFields = {
         "baseWeight", "weightChangeOnUse", "weightRecoveryPerSecond", "cooldown"
     };
@@ -129,6 +133,7 @@ public sealed class EnemyBalanceWindow : EditorWindow
             }
             var director = root.GetComponent<AiPatternDirector>();
             var profile = ReadAsset(director, "profile");
+            entry.Profile = profile as AiPatternProfileSO;
             RegisterUser(profile, enemy.name + " / Profile");
             RegisterRuleUsers(profile, enemy.name, new HashSet<int>());
         }
@@ -204,6 +209,8 @@ public sealed class EnemyBalanceWindow : EditorWindow
         cardTitleStyle = new GUIStyle(EditorStyles.boldLabel) { wordWrap = true, fontSize = 12 };
         cardValueStyle = new GUIStyle(EditorStyles.label) { fontSize = 11 };
         enemyNameStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 15 };
+        badgeStyle = new GUIStyle(EditorStyles.miniBoldLabel) { alignment = TextAnchor.MiddleCenter };
+        badgeStyle.normal.textColor = Color.black;
     }
 
     private static string EnemyListLabel(EnemyEntry entry)
@@ -236,6 +243,7 @@ public sealed class EnemyBalanceWindow : EditorWindow
                 {
                     selectedPath = entry.Path;
                     selectedPatternIndex = 0;
+                    selectedPhaseIndex = 0;
                     detailScroll = Vector2.zero;
                 }
                 GUILayout.Space(4);
@@ -288,10 +296,12 @@ public sealed class EnemyBalanceWindow : EditorWindow
         }
         EditorGUILayout.Space(10);
         EditorGUILayout.LabelField("패턴 선택", EditorStyles.boldLabel);
-        DrawPatternCards(entry);
+        // 페이즈를 나눈 Enemy는 페이즈마다 등록한 패턴과 그 페이즈의 선택 수치를 보여 준다.
+        bool phased = DrawPhasedPatterns(entry);
+        if (!phased) DrawPatternCards(entry);
         using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
         {
-            DrawSelectedPattern(entry);
+            if (!phased) DrawSelectedPattern(entry);
             EditorGUILayout.Space(8);
             showProfile = EditorGUILayout.Foldout(showProfile, "PatternProfile · 예외 조건", true);
             if (showProfile) DrawProfile(entry);
@@ -367,22 +377,351 @@ public sealed class EnemyBalanceWindow : EditorWindow
                 int index = first + column;
                 var ability = entry.Abilities[index];
                 var rect = new Rect(row.x + column * (width + 7), row.y, width, row.height);
-                var previous = GUI.backgroundColor;
-                bool selected = index == selectedPatternIndex;
-                if (selected) GUI.backgroundColor = new Color(.4f, .72f, 1f);
-                bool clicked = GUI.Button(rect, new GUIContent("", ability.AbilityKey));
-                GUI.backgroundColor = previous;
-                if (selected) EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3, rect.height), new Color(.25f, .65f, 1f));
-                var icon = EnemyBalanceVisuals.GetPatternIcon(ability);
-                if (icon != null) GUI.DrawTexture(new Rect(rect.x + 10, rect.y + 14, 54, 54), icon, ScaleMode.ScaleToFit, true);
-                GUI.Label(new Rect(rect.x + 73, rect.y + 10, rect.width - 82, 39), PatternName(ability), cardTitleStyle);
-                var summary = PatternSummary(ability);
-                for (int line = 0; line < summary.Length; line++)
-                    GUI.Label(new Rect(rect.x + 12, rect.y + 72 + line * 18, rect.width - 20, 19), summary[line], cardValueStyle);
-                if (clicked) SelectPattern(entry, index);
+                if (DrawCard(rect, index == selectedPatternIndex, ability, PatternName(ability), ability.AbilityKey, PatternSummary(ability), null))
+                    SelectPattern(entry, index);
             }
             GUILayout.Space(7);
         }
+    }
+
+    // 패턴 카드 하나를 그리고 눌렸는지 돌려준다. badge는 카드 오른쪽의 작은 표식이다.
+    private bool DrawCard(Rect rect, bool selected, AiAbility ability, string title, string tooltip, string[] summary, string badge)
+    {
+        var previous = GUI.backgroundColor;
+        if (selected) GUI.backgroundColor = new Color(.4f, .72f, 1f);
+        bool clicked = GUI.Button(rect, new GUIContent("", tooltip));
+        GUI.backgroundColor = previous;
+        if (selected) EditorGUI.DrawRect(new Rect(rect.x, rect.y, 3, rect.height), new Color(.25f, .65f, 1f));
+        var icon = EnemyBalanceVisuals.GetPatternIcon(ability);
+        if (icon != null) GUI.DrawTexture(new Rect(rect.x + 10, rect.y + 14, 54, 54), icon, ScaleMode.ScaleToFit, true);
+        GUI.Label(new Rect(rect.x + 73, rect.y + 10, rect.width - 82, 39), title, cardTitleStyle);
+        for (int line = 0; line < summary.Length; line++)
+            GUI.Label(new Rect(rect.x + 12, rect.y + 72 + line * 18, rect.width - 20, 19), summary[line], cardValueStyle);
+        if (!string.IsNullOrEmpty(badge))
+        {
+            float badgeWidth = badgeStyle.CalcSize(new GUIContent(badge)).x + 10f;
+            var area = new Rect(rect.xMax - badgeWidth - 8f, rect.y + 50f, badgeWidth, 17f);
+            EditorGUI.DrawRect(area, new Color(1f, .6f, .15f, .92f));
+            GUI.Label(area, badge, badgeStyle);
+        }
+        return clicked;
+    }
+
+    private void MarkEdited(ScriptableObject asset)
+    {
+        if (asset != null && !editedAssets.Contains(asset)) editedAssets.Add(asset);
+    }
+
+    // AiBrain과 같은 규칙으로 키의 패턴을 찾는다. 같은 키가 여러 개면 AiBrain 목록의 앞쪽이다.
+    private static AiAbility FindAbility(EnemyEntry entry, string abilityKey)
+    {
+        if (string.IsNullOrEmpty(abilityKey)) return null;
+        if (entry.Brain != null)
+            foreach (var ability in entry.Brain.Abilities)
+                if (ability != null && ability.AbilityKey == abilityKey) return ability;
+        foreach (var ability in entry.Abilities)
+            if (ability != null && ability.AbilityKey == abilityKey) return ability;
+        return null;
+    }
+
+    private static string PhaseTitle(SerializedProperty phase, int index)
+    {
+        string name = phase.FindPropertyRelative("displayName").stringValue;
+        if (string.IsNullOrWhiteSpace(name)) name = (index + 1) + "페이즈";
+        string condition = index == 0 ? "스폰부터"
+            : "체력 " + (phase.FindPropertyRelative("enterBelowHealthRatio").floatValue * 100f).ToString("0.#") + "% 미만";
+        return name + " · " + condition;
+    }
+
+    private static string[] PhaseSummary(SerializedProperty pattern)
+    {
+        float use = pattern.FindPropertyRelative("weightChangeOnUse").floatValue;
+        return new[] {
+            $"가중치 {pattern.FindPropertyRelative("baseWeight").floatValue:0.##}   사용 {use:+0.##;-0.##;0}",
+            $"회복 {pattern.FindPropertyRelative("weightRecoveryPerSecond").floatValue:0.##}/초   쿨타임 {pattern.FindPropertyRelative("cooldown").floatValue:0.##}초"
+        };
+    }
+
+    private static bool IsRegistered(SerializedProperty patterns, string abilityKey)
+    {
+        for (int i = 0; i < patterns.arraySize; i++)
+            if (patterns.GetArrayElementAtIndex(i).FindPropertyRelative("abilityKey").stringValue == abilityKey) return true;
+        return false;
+    }
+
+    // 패턴 SO의 공통 수치를 페이즈 등록의 초기값으로 옮긴다. 이후에는 페이즈마다 따로 조절한다.
+    private static void WritePattern(SerializedProperty pattern, AiAbility ability, bool resetEntryFlag)
+    {
+        var data = ability.Data;
+        pattern.FindPropertyRelative("abilityKey").stringValue = ability.AbilityKey;
+        if (resetEntryFlag) pattern.FindPropertyRelative("useOnPhaseEnter").boolValue = false;
+        pattern.FindPropertyRelative("baseWeight").floatValue = data.baseWeight;
+        pattern.FindPropertyRelative("weightChangeOnUse").floatValue = data.weightChangeOnUse;
+        pattern.FindPropertyRelative("weightRecoveryPerSecond").floatValue = data.weightRecoveryPerSecond;
+        pattern.FindPropertyRelative("cooldown").floatValue = data.cooldown;
+    }
+
+    private static bool CanRegister(AiAbility ability)
+        => ability != null && ability.Data != null && !string.IsNullOrWhiteSpace(ability.AbilityKey);
+
+    /// <summary>페이즈 탭·진입 조건·페이즈별 패턴 카드·선택한 패턴의 페이즈 수치를 그린다. 페이즈를 쓰지 않으면 false다.</summary>
+    private bool DrawPhasedPatterns(EnemyEntry entry)
+    {
+        bool locked = EditorApplication.isPlayingOrWillChangePlaymode;
+        if (entry.Profile == null || !entry.Profile.UsesPhases)
+        {
+            if (entry.Abilities.Length == 0) return false;
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField("페이즈 구분 없음 · 모든 패턴을 처음부터 같은 수치로 고릅니다.", EditorStyles.miniLabel);
+                using (new EditorGUI.DisabledScope(locked))
+                    if (GUILayout.Button(new GUIContent("페이즈 나누기", "지금 패턴과 SO의 공통 수치를 1페이즈로 등록합니다. 이후 체력 비율로 들어가는 페이즈를 추가할 수 있습니다."), GUILayout.Width(110)))
+                        BeginPhases(entry);
+            }
+            return false;
+        }
+        var settings = Serialized(entry.Profile);
+        var phases = settings.FindProperty("phases");
+        selectedPhaseIndex = Mathf.Clamp(selectedPhaseIndex, 0, phases.arraySize - 1);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            for (int i = 0; i < phases.arraySize; i++)
+            {
+                bool selected = i == selectedPhaseIndex;
+                var previous = GUI.backgroundColor;
+                if (selected) GUI.backgroundColor = new Color(.4f, .72f, 1f);
+                bool pressed = GUILayout.Toggle(selected, PhaseTitle(phases.GetArrayElementAtIndex(i), i), EditorStyles.miniButton,
+                    GUILayout.Height(24), GUILayout.MinWidth(150));
+                GUI.backgroundColor = previous;
+                if (pressed && !selected)
+                {
+                    selectedPhaseIndex = i;
+                    selectedPatternIndex = 0;
+                    GUI.FocusControl(null);
+                }
+            }
+            using (new EditorGUI.DisabledScope(locked))
+                if (GUILayout.Button("+ 페이즈 추가", EditorStyles.miniButton, GUILayout.Height(24), GUILayout.Width(100)))
+                    AddPhase(entry, phases);
+            GUILayout.FlexibleSpace();
+        }
+        var phase = phases.GetArrayElementAtIndex(selectedPhaseIndex);
+        using (new EditorGUI.DisabledScope(locked))
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            DrawSharedWarning(entry.Profile);
+            EditorGUILayout.PropertyField(phase.FindPropertyRelative("displayName"), new GUIContent("페이즈 이름"));
+            if (selectedPhaseIndex == 0) EditorGUILayout.LabelField("진입 조건", "스폰부터 적용");
+            else
+            {
+                var ratio = phase.FindPropertyRelative("enterBelowHealthRatio");
+                EditorGUI.BeginChangeCheck();
+                float percent = EditorGUILayout.Slider(new GUIContent("진입 조건 · 체력 % 미만",
+                    "체력 비율이 이 값 미만이 되면 이 페이즈로 들어갑니다. 실행 중인 패턴이 끝난 뒤 넘어가며, 한번 들어온 페이즈는 되돌아가지 않습니다."),
+                    ratio.floatValue * 100f, 0f, 100f);
+                if (EditorGUI.EndChangeCheck()) ratio.floatValue = Mathf.Round(percent * 10f) / 1000f;
+                if (selectedPhaseIndex > 1 && ratio.floatValue >= phases.GetArrayElementAtIndex(selectedPhaseIndex - 1)
+                    .FindPropertyRelative("enterBelowHealthRatio").floatValue)
+                    EditorGUILayout.HelpBox("앞 페이즈보다 낮은 체력 비율이어야 차례로 지나갑니다. 지금 값이면 앞 페이즈를 건너뜁니다.", MessageType.Warning);
+            }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(phases.arraySize == 1 ? "페이즈 구분 해제" : "이 페이즈 삭제", GUILayout.Width(120)))
+                    RemovePhase(entry, phases, selectedPhaseIndex);
+            }
+        }
+        DrawPhaseCards(entry, phase);
+        using (new EditorGUI.DisabledScope(locked)) DrawSelectedPhasePattern(entry, phase, selectedPhaseIndex);
+        if (settings.ApplyModifiedProperties()) MarkEdited(entry.Profile);
+        return true;
+    }
+
+    private void DrawPhaseCards(EnemyEntry entry, SerializedProperty phase)
+    {
+        var patterns = phase.FindPropertyRelative("patterns");
+        if (patterns.arraySize == 0)
+            EditorGUILayout.HelpBox("이 페이즈에 등록한 패턴이 없습니다. 아래에서 패턴을 등록하세요.", MessageType.Info);
+        selectedPatternIndex = Mathf.Clamp(selectedPatternIndex, 0, Mathf.Max(0, patterns.arraySize - 1));
+        int columns = Mathf.Max(1, Mathf.FloorToInt((position.width - 310f) / 268f));
+        for (int first = 0; first < patterns.arraySize; first += columns)
+        {
+            Rect row = GUILayoutUtility.GetRect(0, 116, GUILayout.ExpandWidth(true));
+            float width = (row.width - (columns - 1) * 7f) / columns;
+            for (int column = 0; column < columns && first + column < patterns.arraySize; column++)
+            {
+                int index = first + column;
+                var pattern = patterns.GetArrayElementAtIndex(index);
+                string key = pattern.FindPropertyRelative("abilityKey").stringValue;
+                var ability = FindAbility(entry, key);
+                string badge = pattern.FindPropertyRelative("useOnPhaseEnter").boolValue ? "진입 시 최우선"
+                    : ability != null && !ability.AllowWeightedSelection ? "보조 패턴" : null;
+                var rect = new Rect(row.x + column * (width + 7), row.y, width, row.height);
+                if (DrawCard(rect, index == selectedPatternIndex, ability, ability != null ? PatternName(ability) : "패턴 없음", key,
+                    PhaseSummary(pattern), badge))
+                {
+                    selectedPatternIndex = index;
+                    GUI.FocusControl(null);
+                    Repaint();
+                }
+            }
+            GUILayout.Space(7);
+        }
+        var unregistered = entry.Abilities.Where(a => CanRegister(a) && !IsRegistered(patterns, a.AbilityKey))
+            .GroupBy(a => a.AbilityKey).Select(group => group.First()).ToList();
+        if (unregistered.Count == 0) return;
+        EditorGUILayout.LabelField("이 페이즈에 등록하지 않은 패턴 · 점수 선택에서 빠집니다.", EditorStyles.miniBoldLabel);
+        using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
+        {
+            const int perRow = 4;
+            for (int first = 0; first < unregistered.Count; first += perRow)
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    for (int i = first; i < Mathf.Min(first + perRow, unregistered.Count); i++)
+                    {
+                        var ability = unregistered[i];
+                        if (!GUILayout.Button(new GUIContent("+ " + PatternName(ability), ability.AbilityKey + " 등록"), GUILayout.Width(170))) continue;
+                        int index = patterns.arraySize++;
+                        WritePattern(patterns.GetArrayElementAtIndex(index), ability, true);
+                        patterns.serializedObject.ApplyModifiedProperties();
+                        MarkEdited(entry.Profile);
+                        selectedPatternIndex = index;
+                        GUIUtility.ExitGUI();
+                    }
+                    GUILayout.FlexibleSpace();
+                }
+        }
+    }
+
+    private void DrawSelectedPhasePattern(EnemyEntry entry, SerializedProperty phase, int phaseIndex)
+    {
+        var patterns = phase.FindPropertyRelative("patterns");
+        if (patterns.arraySize == 0) return;
+        var pattern = patterns.GetArrayElementAtIndex(Mathf.Clamp(selectedPatternIndex, 0, patterns.arraySize - 1));
+        string key = pattern.FindPropertyRelative("abilityKey").stringValue;
+        var ability = FindAbility(entry, key);
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            EditorGUILayout.LabelField("선택한 패턴 · " + (ability != null ? PatternName(ability) : "패턴 없음") + "   |   " + PhaseTitle(phase, phaseIndex), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("패턴 키", key);
+            if (ability == null)
+                EditorGUILayout.HelpBox("이 키의 패턴이 Prefab에 없습니다. 등록을 해제하거나 패턴 SO의 키를 확인하세요.", MessageType.Warning);
+            else
+            {
+                using (new EditorGUI.DisabledScope(true))
+                    EditorGUILayout.Toggle("가중치 자동 선택 대상", ability.AllowWeightedSelection);
+                if (!ability.AllowWeightedSelection)
+                    EditorGUILayout.HelpBox("다른 패턴이나 전환 규칙이 불러 쓰는 보조 패턴입니다. 점수 경쟁에는 참여하지 않고 아래 수치(쿨타임 등)만 적용됩니다.", MessageType.None);
+                if (entry.Brain == null || !entry.Brain.Abilities.Contains(ability))
+                    EditorGUILayout.HelpBox("AiBrain에 등록되지 않은 패턴입니다.", MessageType.Warning);
+            }
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("이 페이즈의 선택 수치", EditorStyles.miniBoldLabel);
+            foreach (string field in CommonPatternFields)
+                EditorGUILayout.PropertyField(pattern.FindPropertyRelative(field), new GUIContent(Label(field)));
+            EditorGUILayout.PropertyField(pattern.FindPropertyRelative("useOnPhaseEnter"), new GUIContent(Label("useOnPhaseEnter"),
+                "이 페이즈에 들어온 뒤 다른 패턴보다 먼저 한 번 사용합니다. 쿨타임을 기다리지 않습니다."));
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+                using (new EditorGUI.DisabledScope(ability == null || ability.Data == null))
+                    if (GUILayout.Button(new GUIContent("SO 공통 수치 가져오기", "패턴 SO의 가중치·쿨타임을 이 페이즈 수치로 덮어씁니다."), GUILayout.Width(150)))
+                        WritePattern(pattern, ability, false);
+                if (GUILayout.Button("이 페이즈에서 등록 해제", GUILayout.Width(150)))
+                {
+                    patterns.DeleteArrayElementAtIndex(Mathf.Clamp(selectedPatternIndex, 0, patterns.arraySize - 1));
+                    patterns.serializedObject.ApplyModifiedProperties();
+                    MarkEdited(entry.Profile);
+                    selectedPatternIndex = Mathf.Max(0, selectedPatternIndex - 1);
+                    GUIUtility.ExitGUI();
+                }
+            }
+            if (ability == null) return;
+            EditorGUILayout.Space(4);
+            var data = ability.Data;
+            DrawConnection(entry, ability, "data", data != null ? data.GetType() : typeof(EnemyAbilityDataSO), "패턴 SO 연결");
+            if (data == null) return;
+            DrawReference(data, "고유 설정 SO");
+            DrawSharedWarning(data);
+            EditorGUILayout.LabelField("페이즈를 나눈 Enemy는 위 페이즈 수치로 선택합니다. SO의 공통 수치는 페이즈에 등록하지 않은 패턴에만 쓰입니다. 고유 설정은 SO의 선택 버튼으로 Inspector에서 편집합니다.",
+                EditorStyles.wordWrappedMiniLabel);
+        }
+    }
+
+    // 지금 패턴 구성과 SO의 공통 수치를 1페이즈로 옮겨 페이즈 구분을 시작한다. Profile이 없으면 만들어 연결한다.
+    private void BeginPhases(EnemyEntry entry)
+    {
+        var profile = entry.Profile;
+        if (profile == null)
+        {
+            profile = CreateProfileAsset(entry, entry.Prefab.GetComponent<AiPatternDirector>());
+            if (profile == null) return;
+        }
+        using (var settings = new SerializedObject(profile))
+        {
+            var phases = settings.FindProperty("phases");
+            phases.ClearArray();
+            phases.arraySize = 1;
+            var first = phases.GetArrayElementAtIndex(0);
+            first.FindPropertyRelative("displayName").stringValue = "1페이즈";
+            first.FindPropertyRelative("enterBelowHealthRatio").floatValue = 1f;
+            var patterns = first.FindPropertyRelative("patterns");
+            patterns.ClearArray();
+            // AiBrain 등록 순서를 따른다. 점수와 사용 이력이 같을 때의 순서는 여전히 AiBrain 목록이 정한다.
+            IEnumerable<AiAbility> ordered = entry.Abilities;
+            if (entry.Brain != null) ordered = entry.Brain.Abilities.Concat(entry.Abilities);
+            foreach (var ability in ordered)
+            {
+                if (!CanRegister(ability) || IsRegistered(patterns, ability.AbilityKey)) continue;
+                WritePattern(patterns.GetArrayElementAtIndex(patterns.arraySize++), ability, true);
+            }
+            settings.ApplyModifiedProperties();
+        }
+        EditorUtility.SetDirty(profile);
+        AssetDatabase.SaveAssetIfDirty(profile);
+        // 바로 저장하지만, Undo로 되돌린 뒤 'SO 저장'을 누르면 되돌린 상태도 저장되도록 편집 목록에 넣는다.
+        MarkEdited(profile);
+        selectedPhaseIndex = 0;
+        selectedPatternIndex = 0;
+        Refresh();
+        GUIUtility.ExitGUI();
+    }
+
+    private void AddPhase(EnemyEntry entry, SerializedProperty phases)
+    {
+        // 배열을 늘리면 마지막 페이즈가 복제된다. 같은 패턴·수치에서 시작해 이 페이즈만 따로 조절한다.
+        int index = phases.arraySize++;
+        var phase = phases.GetArrayElementAtIndex(index);
+        phase.FindPropertyRelative("displayName").stringValue = (index + 1) + "페이즈";
+        float previous = index > 1 ? phases.GetArrayElementAtIndex(index - 1).FindPropertyRelative("enterBelowHealthRatio").floatValue : 1f;
+        phase.FindPropertyRelative("enterBelowHealthRatio").floatValue = Mathf.Round(previous * 50f) / 100f;
+        var patterns = phase.FindPropertyRelative("patterns");
+        for (int i = 0; i < patterns.arraySize; i++)
+            patterns.GetArrayElementAtIndex(i).FindPropertyRelative("useOnPhaseEnter").boolValue = false;
+        phases.serializedObject.ApplyModifiedProperties();
+        MarkEdited(entry.Profile);
+        selectedPhaseIndex = index;
+        selectedPatternIndex = 0;
+        GUIUtility.ExitGUI();
+    }
+
+    private void RemovePhase(EnemyEntry entry, SerializedProperty phases, int index)
+    {
+        string message = phases.arraySize == 1
+            ? "페이즈 구분을 해제하면 모든 패턴이 다시 SO의 공통 수치로 선택됩니다."
+            : "'" + PhaseTitle(phases.GetArrayElementAtIndex(index), index) + "'의 패턴 등록과 수치를 지웁니다.";
+        if (!EditorUtility.DisplayDialog("페이즈 삭제", message + "\nUndo로 되돌릴 수 있습니다.", "삭제", "취소")) return;
+        DeletePhase(entry, phases, index);
+        GUIUtility.ExitGUI();
+    }
+
+    private void DeletePhase(EnemyEntry entry, SerializedProperty phases, int index)
+    {
+        phases.DeleteArrayElementAtIndex(index);
+        phases.serializedObject.ApplyModifiedProperties();
+        MarkEdited(entry.Profile);
+        selectedPhaseIndex = Mathf.Max(0, index - 1);
+        selectedPatternIndex = 0;
     }
 
     private void DrawSelectedPattern(EnemyEntry entry)
@@ -572,17 +911,27 @@ public sealed class EnemyBalanceWindow : EditorWindow
 
     private void CreateProfile(EnemyEntry entry, AiPatternDirector director)
     {
+        var asset = CreateProfileAsset(entry, director);
+        if (asset == null) return;
+        Refresh();
+        EditorGUIUtility.PingObject(asset);
+        GUIUtility.ExitGUI();
+    }
+
+    // 빈 Profile을 만들어 Director에 연결한다(Director가 없으면 추가). 연결에 실패하면 null이다.
+    private AiPatternProfileSO CreateProfileAsset(EnemyEntry entry, AiPatternDirector director)
+    {
         string folder = "Assets/Data/Abilities/Enemies/" + entry.Prefab.name + "/Selection";
         EnsureFolder(folder);
         var asset = ScriptableObject.CreateInstance<AiPatternProfileSO>();
         string path = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + entry.Prefab.name + "PatternProfile.asset");
         AssetDatabase.CreateAsset(asset, path);
-        if (ApplyReference(entry, director, "profile", asset, typeof(AiPatternProfileSO)))
+        if (!ApplyReference(entry, director, "profile", asset, typeof(AiPatternProfileSO)))
         {
-            Refresh();
-            GUIUtility.ExitGUI();
+            EditorGUIUtility.PingObject(asset);
+            return null;
         }
-        EditorGUIUtility.PingObject(asset);
+        return asset;
     }
 
     private void DrawAsset(ScriptableObject asset, string title, bool foldout)
@@ -621,6 +970,13 @@ public sealed class EnemyBalanceWindow : EditorWindow
         {
             children = false;
             if (iterator.name == "m_Script") continue;
+            // 페이즈별 패턴은 위 '패턴 선택'의 페이즈 탭에서 편집한다.
+            if (asset is AiPatternProfileSO && iterator.name == "phases")
+            {
+                EditorGUILayout.LabelField(Label("phases"), iterator.arraySize > 0
+                    ? iterator.arraySize + "개 · 위 '패턴 선택'의 페이즈 탭에서 편집합니다." : "구분 없음");
+                continue;
+            }
             EditorGUILayout.PropertyField(iterator, new GUIContent(Label(iterator.name), iterator.tooltip), true);
         }
         if (settings.ApplyModifiedProperties() && !editedAssets.Contains(asset)) editedAssets.Add(asset);
@@ -681,6 +1037,8 @@ public sealed class EnemyBalanceWindow : EditorWindow
             case "minimumDistanceX": return "최소 수평 거리";
             case "maximumDistanceX": return "최대 수평 거리";
             case "previousAbilityKey": return "직전 시작 패턴 키 · 빈 값은 제한 없음";
+            case "phases": return "페이즈";
+            case "useOnPhaseEnter": return "페이즈 진입 시 최우선 사용";
             default: return ObjectNames.NicifyVariableName(name);
         }
     }
@@ -696,6 +1054,16 @@ public sealed class EnemyBalanceWindow : EditorWindow
         }
         var brain = runtimeEnemy.GetComponent<AiBrain>();
         EditorGUILayout.LabelField("현재 패턴", brain != null && brain.current != null ? brain.current.GetType().Name : "없음");
+        // 페이즈는 패턴을 고를 때 갱신된 값을 읽기만 한다. 표시를 위해 다시 평가하지 않는다.
+        var director = runtimeEnemy.GetComponent<AiPatternDirector>();
+        bool phased = director != null && director.Profile != null && director.Profile.UsesPhases;
+        if (phased)
+        {
+            int phaseIndex = director.PhaseIndex;
+            string phaseName = phaseIndex >= 0 && phaseIndex < director.Profile.Phases.Count && director.Profile.Phases[phaseIndex] != null
+                ? director.Profile.Phases[phaseIndex].displayName : "첫 선택 전";
+            EditorGUILayout.LabelField("현재 페이즈", phaseIndex >= 0 ? (phaseIndex + 1) + "번째 · " + phaseName : phaseName);
+        }
         if (runtimeEnemy.Health != null)
         {
             EditorGUILayout.LabelField("현재 체력", $"{runtimeEnemy.Health.currentHP:0.##} / {runtimeEnemy.Health.maxHP:0.##}");
@@ -705,7 +1073,8 @@ public sealed class EnemyBalanceWindow : EditorWindow
         }
         foreach (var ability in runtimeEnemy.GetComponentsInChildren<AiAbility>(true))
         {
-            EditorGUILayout.LabelField(ability.GetType().Name, $"점수 {ability.CurrentWeight:0.##} | 쿨타임 {ability.CooldownRemaining:0.##}초 | {ability.State}");
+            string note = phased && director.PhaseIndex >= 0 && !ability.HasSelectionTuning ? " | 이 페이즈에 미등록" : string.Empty;
+            EditorGUILayout.LabelField(ability.GetType().Name, $"점수 {ability.CurrentWeight:0.##} | 쿨타임 {ability.CooldownRemaining:0.##}초 | {ability.State}{note}");
         }
     }
 

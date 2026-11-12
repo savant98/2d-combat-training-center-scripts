@@ -31,9 +31,39 @@ public abstract class AiAbility : MonoBehaviour
     private float weightTimestamp;
     public long LastSelectionOrder { get; private set; }
     public float CurrentWeight => storedWeight + (data != null && !IsRunning
-        ? Mathf.Max(0f, data.weightRecoveryPerSecond) * Mathf.Max(0f, Time.time - weightTimestamp) : 0f);
+        ? Mathf.Max(0f, WeightRecoveryPerSecond) * Mathf.Max(0f, Time.time - weightTimestamp) : 0f);
     public float CooldownRemaining => data == null ? 0f
-        : Mathf.Max(0f, lastUseTime + Mathf.Max(0f, data.cooldown) - Time.time);
+        : Mathf.Max(0f, lastUseTime + Mathf.Max(0f, Cooldown) - Time.time);
+
+    // 페이즈별 선택 수치. 적용 중에는 SO의 공통 수치 대신 쓴다. 런타임 값이며 SO 원본은 바꾸지 않는다.
+    private bool hasSelectionTuning;
+    private float tunedBaseWeight, tunedWeightChangeOnUse, tunedWeightRecovery, tunedCooldown;
+    public bool HasSelectionTuning => hasSelectionTuning;
+    public float BaseWeight => hasSelectionTuning ? tunedBaseWeight : data != null ? data.baseWeight : 0f;
+    public float WeightChangeOnUse => hasSelectionTuning ? tunedWeightChangeOnUse : data != null ? data.weightChangeOnUse : 0f;
+    public float WeightRecoveryPerSecond => hasSelectionTuning ? tunedWeightRecovery : data != null ? data.weightRecoveryPerSecond : 0f;
+    public float Cooldown => hasSelectionTuning ? tunedCooldown : data != null ? data.cooldown : 0f;
+
+    /// <summary>페이즈에 들어올 때 그 페이즈의 선택 수치를 적용하고 점수를 새 기본값에서 시작한다. 지난 종료 시각은 유지해 쿨타임이 이어진다.</summary>
+    public void ApplySelectionTuning(float baseWeight, float weightChangeOnUse, float weightRecoveryPerSecond, float cooldown)
+    {
+        hasSelectionTuning = true;
+        tunedBaseWeight = baseWeight;
+        tunedWeightChangeOnUse = weightChangeOnUse;
+        tunedWeightRecovery = weightRecoveryPerSecond;
+        tunedCooldown = cooldown;
+        storedWeight = baseWeight;
+        weightTimestamp = Time.time;
+    }
+
+    /// <summary>현재 페이즈에 등록하지 않은 패턴은 SO의 공통 수치로 돌아간다.</summary>
+    public void ClearSelectionTuning()
+    {
+        if (!hasSelectionTuning) return;
+        hasSelectionTuning = false;
+        storedWeight = BaseWeight;
+        weightTimestamp = Time.time;
+    }
     private float stateStartTime;
 
     public AbilityState State { get; private set; } = AbilityState.None;
@@ -117,7 +147,7 @@ public abstract class AiAbility : MonoBehaviour
         if (!IsRunning)
             return;
         // OnStop에서 후속 패턴을 예약해도 이번 실행의 종료는 한 번만 기록한다.
-        storedWeight += data.weightChangeOnUse;
+        storedWeight += WeightChangeOnUse;
         lastUseTime = Time.time;
         weightTimestamp = Time.time;
         State = AbilityState.None;
@@ -128,7 +158,8 @@ public abstract class AiAbility : MonoBehaviour
     {
         State = AbilityState.None;
         lastUseTime = float.NegativeInfinity;
-        storedWeight = data != null ? data.baseWeight : 0f;
+        hasSelectionTuning = false;
+        storedWeight = BaseWeight;
         weightTimestamp = Time.time;
         LastSelectionOrder = 0;
     }

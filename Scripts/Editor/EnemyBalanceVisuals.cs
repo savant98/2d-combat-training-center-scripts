@@ -60,6 +60,7 @@ public static class EnemyBalanceVisuals
         else if (kind.Contains("cubebomb") || kind.Contains("bomb")) DrawBomb(canvas, color);
         else if (kind.Contains("cubebounce") || kind.Contains("bounce")) DrawBounce(canvas, color);
         else if (kind.Contains("shockwave") || kind.Contains("groundwave") || kind.Contains("centralarea")) DrawWave(canvas, color);
+        else if (kind.Contains("leapslam")) DrawLeapSlam(canvas, color);
         else if (kind.Contains("slam") || kind.Contains("downattack")) DrawSlam(canvas, color);
         else if (kind.Contains("laser")) DrawLaser(canvas, color, kind.Contains("rain") || kind.Contains("storm"));
         else if (kind.Contains("teleport") || kind.Contains("backjump")) DrawTeleport(canvas, color);
@@ -180,6 +181,16 @@ public static class EnemyBalanceVisuals
         c.Line(new Vector2(13, 16), new Vector2(51, 16), 3f, color);
         c.Line(new Vector2(17, 24), new Vector2(12, 29), 2f, color);
         c.Line(new Vector2(47, 24), new Vector2(52, 29), 2f, color);
+    }
+
+    // 화면 밖으로 솟았다가 넓은 사각 범위 한가운데로 내려찍는다.
+    private static void DrawLeapSlam(IconCanvas c, Color color)
+    {
+        c.Box(new Rect(11, 14, 42, 26), 2f, new Color(color.r, color.g, color.b, .55f));
+        Arrow(c, new Vector2(20, 30), new Vector2(20, 55), color, 2.5f);
+        Arrow(c, new Vector2(40, 57), new Vector2(40, 22), color, 4f);
+        c.Line(new Vector2(31, 15), new Vector2(26, 20), 2f, color);
+        c.Line(new Vector2(49, 15), new Vector2(54, 20), 2f, color);
     }
 
     private static void DrawJump(IconCanvas c, Color color)
