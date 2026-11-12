@@ -56,6 +56,26 @@ public class WorldEntityPool : MonoBehaviour
         return (T)Spawn((WorldEntityBase)prefab, pos, rot);
     }
 
+    // 풀이 비어 있으면 미리 채워 둔다(TrainingRoom 입장 로딩). 처음 꺼내는 순간에 한꺼번에 만드느라 화면이 끊기지 않게 한다.
+    public bool Prewarm(WorldEntityBase prefab)
+    {
+        if (prefab == null)
+            return false;
+
+        if (!pools.ContainsKey(prefab))
+            pools[prefab] = new Queue<WorldEntityBase>();
+
+        var pool = pools[prefab];
+        while (pool.Count > 0 && pool.Peek() == null)
+            pool.Dequeue();
+
+        if (pool.Count > 0)
+            return false;
+
+        CreateObjects(prefab);
+        return true;
+    }
+
     // ───────────────────────────────────────
     // RETURN to Pool
     // ───────────────────────────────────────
@@ -77,6 +97,11 @@ public class WorldEntityPool : MonoBehaviour
             pools[prefab] = new Queue<WorldEntityBase>();
 
         pools[prefab].Enqueue(instance);
+    }
+    // 지금 꺼내져 있는 것의 목록(복사본). 특정 형식의 장치를 찾을 때 씬 전체를 훑는 대신 쓴다.
+    public WorldEntityBase[] ActiveSnapshot()
+    {
+        return activeWorldEntities.ToArray();
     }
     public void DespawnAll()
     {

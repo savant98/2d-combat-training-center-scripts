@@ -9,7 +9,8 @@ public static class WaveCellRoomSpace
     private static readonly Vector2Int[] Directions =
         { Vector2Int.left, Vector2Int.right, Vector2Int.down, Vector2Int.up };
 
-    public static bool TryGetBounds(HashSet<Vector2Int> solids, Vector2 seed, out Rect bounds)
+    // region을 주면 찾은 공간의 빈 칸을 거기에 담는다(비운 집합을 넘긴다. 실패하면 내용은 믿지 않는다).
+    public static bool TryGetBounds(HashSet<Vector2Int> solids, Vector2 seed, out Rect bounds, HashSet<Vector2Int> region = null)
     {
         bounds = default;
         if (solids.Count == 0 || !float.IsFinite(seed.x) || !float.IsFinite(seed.y)) return false;
@@ -20,7 +21,8 @@ public static class WaveCellRoomSpace
         var start = Vector2Int.FloorToInt(seed);
         if (solids.Contains(start) || start.x <= left || start.x >= right || start.y <= bottom || start.y >= top) return false;
 
-        var visited = new HashSet<Vector2Int> { start };
+        var visited = region ?? new HashSet<Vector2Int>();
+        visited.Add(start);
         var queue = new Queue<Vector2Int>();
         queue.Enqueue(start);
         var min = start;

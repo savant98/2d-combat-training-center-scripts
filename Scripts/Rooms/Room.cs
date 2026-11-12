@@ -94,13 +94,24 @@ public class Room : MonoBehaviour
 
         if (roomType == RoomType.Training && !SuppressAutomaticWaves)
         {
-            waveManager.BeginWaves(); // Wave 시작
+            // 입장 로딩(Wave에 쓸 것을 미리 만들어 두는 단계)이 진행 중이면 끝난 뒤에 Wave를 시작한다.
+            var host = GetComponent<TrainingRoomHost>();
+            if (host != null && host.IsLoading) StartCoroutine(BeginWavesAfterLoading(host));
+            else waveManager.BeginWaves(); // Wave 시작
         }
 
         virtualCamera.enabled = true;
         currentSpawnPoint = spawnPoint;
 
         defaultOrthographicSize = virtualCamera.Lens.OrthographicSize;
+    }
+    private IEnumerator BeginWavesAfterLoading(TrainingRoomHost host)
+    {
+        var content = rootObject;
+        while (host != null && host.IsLoading) yield return null;
+        // 로딩 도중 방을 떠났거나 내용이 바뀌었으면 시작하지 않는다.
+        if (content == rootObject && rootObject.activeInHierarchy && RoomManager.Instance.CurrentRoom == this && !SuppressAutomaticWaves)
+            waveManager.BeginWaves();
     }
     public IEnumerator ActivateBossEntryCamera(Transform bossTr)
     {

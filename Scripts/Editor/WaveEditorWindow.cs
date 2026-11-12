@@ -159,7 +159,7 @@ public sealed class WaveEditorWindow : EditorWindow
                         new GUIContent("Wave 시작 지형","처음부터 있을 바닥·벽·발판을 칠합니다."),
                         new GUIContent("시간별 지형 편집","기존 지형과 새 발판의 생성·소멸·수명·Wave 종료 후 유지를 함께 편집합니다.") },middleWidth<340?1:2,EditorStyles.miniButton);
                     if(nextTarget!=target){terrainTarget=nextTarget==0?1:2;selectedBatch=-1;eventIndex=-1;selectedCell=null;ResetGesture();}
-                    EditorGUILayout.HelpBox(terrainTarget==1?"처음부터 있을 전체 맵입니다. Wave 전환 때 달라진 칸만 애니메이션으로 교체합니다.":$"{time:G9}초 예약 · 칸을 선택해 생성/소멸 시각과 수명을 설정하세요. 지우기는 예약 취소입니다.",MessageType.None);
+                    EditorGUILayout.HelpBox(terrainTarget==1?"처음부터 있을 전체 맵입니다. Wave 전환 때 달라진 칸만 기계팔 패널 연출로 끼우고 뺍니다(기본 지형·생성 발판·OneWay 모두).":$"{time:G9}초 예약 · 칸을 선택해 생성/소멸 시각과 수명을 설정하세요. 지우기는 예약 취소입니다. 생성·소멸은 묶음 중심에서 가까운 칸부터 기계팔 패널로 끼우고 뺍니다.",MessageType.None);
                 }
                 canvas = GUILayoutUtility.GetRect(200, 200, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
                 DrawGrid();
@@ -927,7 +927,7 @@ public sealed class WaveEditorWindow : EditorWindow
             Vector2 nextStart = EditorGUILayout.Vector2Field("Wave 시작 좌표", startOverride.boolValue ? startPoint.vector2Value : data.playerStart);
             if (EditorGUI.EndChangeCheck()) { startOverride.boolValue = true; startPoint.vector2Value = nextStart; }
             Property(wave, "teleportAtStart", "시작 시 텔레포트 · Spawn 연출");
-            EditorGUILayout.HelpBox("지형 준비 중에는 이동·공격을 잠급니다. 체크하면 준비가 끝난 뒤 시작 좌표로 이동하고 기존 Spawn 연출을 재생한 다음 Wave를 시작합니다. 체크하지 않으면 현재 위치를 유지합니다.", MessageType.None);
+            EditorGUILayout.HelpBox("지형 준비 중에는 Player를 구속 상자에 가둬 이동만 막습니다(공격·회복·드론 소환은 계속 쓸 수 있고 진행 중인 무장도 끊기지 않습니다). 체크하면 준비가 끝난 뒤 시작 좌표로 이동하고 기존 Spawn 연출을 재생한 다음 Wave를 시작합니다. 체크하지 않으면 현재 위치를 유지합니다.", MessageType.None);
             GUILayout.Space(6);
             GUILayout.Label("모든 Wave 완료 · Lobby 복귀", EditorStyles.boldLabel);
             var portalOverride = serialized.FindProperty("overrideClearPortalPosition");
@@ -952,7 +952,10 @@ public sealed class WaveEditorWindow : EditorWindow
                 if (data.customRoom)
                 {
                     EditorGUILayout.PropertyField(serialized.FindProperty("adaptCameraToRoom"), new GUIContent("카메라 범위를 실내 크기에 맞춤"));
-                    EditorGUILayout.HelpBox("커스텀 Room은 기존 카메라·코스 연출을 유지합니다. 실내 크기가 변하는 관리자 평가에서 위 설정을 사용합니다.", MessageType.None);
+                    bool measuredRoom = data.roomTemplate != null && data.roomTemplate.GetComponentInChildren<TrainingRoomPresentation>(true) != null;
+                    EditorGUILayout.HelpBox(measuredRoom
+                        ? "이 Room은 실내 치수 연출(TrainingRoomPresentation)을 가진 커스텀 Room입니다. 위 설정을 켜면 저장된 실내 범위에 카메라를 맞춥니다(관리자 평가)."
+                        : "이 커스텀 Room은 코스 카메라·마무리 연출을 유지하면서, 일반 Platform으로 둘러싸인 연결 공간에 카메라·배경·통창을 자동으로 맞춥니다. 위 설정은 실내 치수 연출을 가진 Room(관리자 평가)에서만 쓰입니다.", MessageType.None);
                 }
                 else EditorGUILayout.HelpBox("일반 Room은 일반 Platform으로 둘러싸인 연결 공간에 카메라·배경·통창을 자동으로 맞춥니다. OneWayPlatform은 경계를 막지 않습니다. 외부로 열렸거나 공간을 계산할 수 없으면 저장된 실내 범위를 사용합니다.", MessageType.None);
                 int backgroundIndex = backgrounds.IndexOf(pendingBackground) + 1;

@@ -12,13 +12,19 @@ public static class WaveCellContours
         foreach(var p in cells.Distinct())
         {Edge(p,p+Vector2Int.right);Edge(p+Vector2Int.right,p+Vector2Int.one);Edge(p+Vector2Int.one,p+Vector2Int.up);Edge(p+Vector2Int.up,p);}
         var result=new List<Vector2[]>();
+        // 수천 칸 덩어리도 한 번에 따라가도록 남은 변을 시작점으로 찾는다(변마다 전체를 다시 훑지 않는다).
+        var byStart=new Dictionary<Vector2Int,List<(Vector2Int a,Vector2Int b)>>();
+        foreach(var e in edges){if(!byStart.TryGetValue(e.a,out var list))byStart[e.a]=list=new List<(Vector2Int a,Vector2Int b)>(2);list.Add(e);}
+        // 외곽선은 가장 아래·왼쪽 변부터 시작한다(선의 시작 위치가 늘 같아 발광 무늬가 흔들리지 않는다).
+        var ordered=edges.OrderBy(e=>e.a.y).ThenBy(e=>e.a.x).ThenBy(e=>e.b.y).ThenBy(e=>e.b.x).ToList();int cursor=0;
         while(edges.Count>0)
         {
-            var edge=edges.OrderBy(e=>e.a.y).ThenBy(e=>e.a.x).First();var start=edge.a;var points=new List<Vector2Int>();
+            while(!edges.Contains(ordered[cursor]))cursor++;
+            var edge=ordered[cursor];var start=edge.a;var points=new List<Vector2Int>();
             while(true)
             {
-                points.Add(edge.a);edges.Remove(edge);if(edge.b==start)break;
-                var incoming=edge.b-edge.a;var candidates=edges.Where(e=>e.a==edge.b).ToArray();if(candidates.Length==0)break;
+                points.Add(edge.a);edges.Remove(edge);byStart[edge.a].Remove(edge);if(edge.b==start)break;
+                var incoming=edge.b-edge.a;if(!byStart.TryGetValue(edge.b,out var candidates)||candidates.Count==0)break;
                 int Turn((Vector2Int a,Vector2Int b) e){var d=e.b-e.a;int cross=incoming.x*d.y-incoming.y*d.x;return cross>0?0:incoming.x*d.x+incoming.y*d.y>0?1:cross<0?2:3;}
                 edge=candidates.OrderBy(Turn).First();
             }

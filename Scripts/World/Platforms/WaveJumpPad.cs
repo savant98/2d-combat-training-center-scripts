@@ -170,6 +170,8 @@ public sealed class WaveJumpPad : WaveEnvironmentDevice
     {
         // 입력이 막힌 동안(Wave 시작 연출·UI·잡기)에는 속도가 매 프레임 0으로 되돌려진다.
         if (!player.CanReceiveInput) return false;
+        // Wave 준비 중 구속 상자에 갇힌 동안에는 쏘지 않는다. 발사는 대시·공격을 끊는데, 갇힌 동안에는 무장을 끊지 않기로 했고 이동도 상자가 막는다.
+        if (player.Motor != null && player.Motor.IsConfined) return false;
         if (player.Health != null && player.Health.IsDead) return false;
         Vector2 up = transform.up;
         // 발판 쪽으로 다가오거나 멈춰 있을 때만 쏜다. 발사 방향으로 지나가는 중에는 반응하지 않는다.

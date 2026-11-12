@@ -34,7 +34,12 @@ public class RoomManager : MonoBehaviour
         // 새로운 Room 활성화
         CurrentRoom = request.targetRoom;
         var host = CurrentRoom.GetComponent<TrainingRoomHost>();
-        if (host != null) host.Load(request.waveData);
+        if (host != null)
+        {
+            host.Load(request.waveData);
+            // 처음 불러온 내용이면 입장 로딩을 시작한다. 방 전환 연출과 Wave 시작이 이 로딩을 기다린다.
+            host.BeginLoading();
+        }
         CurrentRoom.ActivateRoom(request.teleportPoint.position);
 
         // Player 이동

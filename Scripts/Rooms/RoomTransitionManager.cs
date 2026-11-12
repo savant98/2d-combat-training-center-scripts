@@ -46,6 +46,9 @@ public class RoomTransitionManager : MonoBehaviour
         else
             context.SwitchRoom();
 
+        // TrainingRoom 입장 로딩이 남아 있으면 끝날 때까지 입력 차단과 전환 상태를 유지한다.
+        yield return context.WaitForLoading();
+
         // 잠시 대기 -> 후처리
         yield return new WaitForSeconds(0.25f);
 

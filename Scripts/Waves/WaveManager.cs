@@ -117,12 +117,18 @@ public class WaveManager : MonoBehaviour
         try
         {
             var cells = GetComponentInParent<WaveCellTerrain>(true);
-            if (cells != null) yield return cells.Prepare(currentWaveIndex);
+            var room = GetComponentInParent<Room>(true);
+            var coordinates = cells != null ? cells.transform : room != null ? room.transform : transform;
+            // 시작 좌표로 옮기는 Wave: 지형이 바뀌는 동안 크레인이 구속 상자를 들어 옮긴다(둘을 함께 진행한다).
+            PlayerStartSequence.BeginCarry(waveData, currentWaveIndex, coordinates);
+            // 안쪽 준비 순서는 Unity에 맡기지 않고(yield return 순서) 직접 돌린다. 맡기면 안쪽에서 예외가 났을 때 이 순서가 그대로 멈춰
+            // 아래 finally가 실행되지 않고, Player가 구속된 채(옮기는 Wave면 크레인에 들린 채) 남는다.
+            if (cells != null) { for (var step = Unwound(cells.Prepare(currentWaveIndex)); step.MoveNext();) yield return step.Current; }
             else
             {
-                if (roomLayout != null && roomLayout.isActiveAndEnabled) yield return roomLayout.PrepareWave(currentWaveIndex);
+                if (roomLayout != null && roomLayout.isActiveAndEnabled) { for (var step = Unwound(roomLayout.PrepareWave(currentWaveIndex)); step.MoveNext();) yield return step.Current; }
                 var builder = GetComponentInParent<WaveRoomBuilder>();
-                if (builder != null) yield return builder.Prepare(waveData.waves[currentWaveIndex]);
+                if (builder != null) { for (var step = Unwound(builder.Prepare(waveData.waves[currentWaveIndex])); step.MoveNext();) yield return step.Current; }
             }
             // 코스 벽의 열림도 공통 준비 단계에 넣고 나머지 예약 시각은 Wave 시작 이후로 유지한다.
             foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
@@ -132,14 +138,31 @@ public class WaveManager : MonoBehaviour
                 if (!info.keepAfterWave) currentWaveEntities.Add(entity);
                 preparedCourses.Add(info, entity);
             }
-            var room = GetComponentInParent<Room>(true);
             if (room != null)
-                while (Array.Exists(room.GetComponentsInChildren<TrainingCourseStage>(true), stage => stage.IsMoving)) yield return null;
-            var coordinates = cells != null ? cells.transform : room != null ? room.transform : transform;
-            yield return PlayerStartSequence.Play(waveData, currentWaveIndex, coordinates);
+            {
+                // 방 전체(셀·배경 모듈 수만 개)를 훑지 않고 방이 찾아 둔 구간 목록을 쓴다.
+                var stages = RoomViewRules.CourseStagesIn(room);
+                while (Array.Exists(stages, stage => stage != null && stage.IsMoving)) yield return null;
+            }
+            // 지형이 다 바뀐 뒤에 내려놓는다. 들고 옮기는 쪽이 보통 더 오래 걸려 지형이 먼저 끝난다.
+            for (var step = Unwound(PlayerStartSequence.FinishCarry()); step.MoveNext();) yield return step.Current;
         }
         finally { playerStartSequence?.Release(); }
         SpawnWave(wave);
+    }
+    // 여러 겹의 순서(순서 안에서 다시 순서를 넘기는 것)를 한 겹으로 펴서 돌린다. 기다리는 대상(null·WaitForSeconds 등)은 그대로 넘긴다.
+    // 어느 깊이에서 예외가 나도 이 순서를 돌리던 쪽의 finally까지 풀려 나온다.
+    private static IEnumerator Unwound(IEnumerator routine)
+    {
+        var levels = new Stack<IEnumerator>();
+        levels.Push(routine);
+        while (levels.Count > 0)
+        {
+            var top = levels.Peek();
+            if (!top.MoveNext()) { levels.Pop(); continue; }
+            if (top.Current is IEnumerator inner) levels.Push(inner);
+            else yield return top.Current;
+        }
     }
     private void OnDisable()
     {

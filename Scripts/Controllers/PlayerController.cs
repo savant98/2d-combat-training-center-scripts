@@ -17,7 +17,7 @@ public class PlayerController : CharacterController2D
     {
         get
         {
-            if (WavePlayerStart.IsHolding(this)) return false;
+            // Wave 준비 중 구속(WavePlayerStart)은 입력을 막지 않는다. 이동만 모터의 구속 영역이 막는다.
             if (abilityManager != null && abilityManager.Grab != null && abilityManager.Grab.IsActive) return false;
             if (UIManager.Instance != null && UIManager.Instance.BlocksGameplayInput)
                 return false;
@@ -56,6 +56,8 @@ public class PlayerController : CharacterController2D
         if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
         motor.ResetOneWayState();
         transform.position = spawnPos;
+        // 구속 상자에 갇힌 채 옮겨졌으면 구속도 도착한 자리로 옮긴다(남겨 두면 다음 물리 틱에 원래 자리로 끌려간다).
+        motor.RefitConfinement();
         Velocity = Vector2.zero;
     }
     public void ResetPlayerStatus()

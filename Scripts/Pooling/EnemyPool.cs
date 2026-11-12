@@ -43,6 +43,26 @@ public class EnemyPool : MonoBehaviour
         return enemy;
     }
 
+    // 미리 만들어 풀에 넣어 둔다(TrainingRoom 입장 로딩). 처음 등장하는 순간에 Prefab을 새로 만드느라 화면이 끊기지 않게 한다.
+    // 풀에 쉬고 있는 수가 count가 될 때까지 한 번에 perCall개씩 만들고, 만든 수를 돌려준다.
+    public int Prewarm(EnemyController prefab, int count, int perCall = 1)
+    {
+        if (prefab == null) return 0;
+        if (!pool.ContainsKey(prefab))
+            pool[prefab] = new Queue<EnemyController>();
+
+        int made = 0;
+        while (pool[prefab].Count < count && made < perCall)
+        {
+            EnemyController enemy = Instantiate(prefab);
+            enemy.Poolkey = prefab;
+            enemy.gameObject.SetActive(false);
+            pool[prefab].Enqueue(enemy);
+            made++;
+        }
+        return made;
+    }
+
     public void Despawn(EnemyController enemy)
     {
         if (!activeEnemies.Remove(enemy))

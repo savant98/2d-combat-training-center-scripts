@@ -12,10 +12,35 @@ public sealed class RoomViewRules : MonoBehaviour
     private float blinderDepth;
     private GameObject blinderContent;
     private GameObject outlinedContent;
+    // 방 내용의 훈련 구간 목록. 방 아래에는 지형 칸과 반복 배경 모듈까지 수만 개의 오브젝트가 있어 한 번 훑는 데 여러 ms가 든다.
+    // 구간은 방 내용(Prefab)의 고정 구성원이므로 내용이 바뀔 때만 다시 찾는다.
+    private GameObject stagedContent;
+    private bool stagesFound;
+    private TrainingCourseStage[] stages=System.Array.Empty<TrainingCourseStage>();
     public BoxCollider2D CurrentBounds { get; private set; }
     public SpriteRenderer Blinder => blinder;
 
     private void Awake() => room=GetComponent<Room>();
+
+    /// <summary>이 방 내용에 놓인 훈련 구간 목록. 구간이 필요한 곳은 방을 직접 훑지 말고 이것을 쓴다.</summary>
+    public TrainingCourseStage[] CourseStages()
+    {
+        if(room == null) room=GetComponent<Room>();
+        if(room.ContentRoot != stagedContent || !stagesFound)
+        {
+            stagedContent=room.ContentRoot;
+            stagesFound=true;
+            stages=room.GetComponentsInChildren<TrainingCourseStage>(true);
+        }
+        return stages;
+    }
+    /// <summary>방의 훈련 구간 목록. 방이 없으면 빈 목록이다.</summary>
+    public static TrainingCourseStage[] CourseStagesIn(Room room)
+    {
+        if(room == null) return System.Array.Empty<TrainingCourseStage>();
+        var rules=room.GetComponent<RoomViewRules>();
+        return rules != null ? rules.CourseStages() : room.GetComponentsInChildren<TrainingCourseStage>(true);
+    }
     private void OnEnable() => CinemachineCore.CameraUpdatedEvent.AddListener(Apply);
     private void OnDisable() => CinemachineCore.CameraUpdatedEvent.RemoveListener(Apply);
 
@@ -29,9 +54,8 @@ public sealed class RoomViewRules : MonoBehaviour
         var camera=Leaf(brain.ActiveBlend != null ? brain.ActiveBlend.CamB : brain.ActiveVirtualCamera);
         var confiner=camera != null ? camera.GetComponent<CinemachineConfiner2D>() : null;
         if(confiner != null && confiner.BoundingShape2D is BoxCollider2D own) return own;
-        if(room.ContentRoot != null)
-            foreach(var stage in room.ContentRoot.GetComponentsInChildren<TrainingCourseStage>(true))
-                if(camera != null && stage.RevealCamera==camera)
+        foreach(var stage in CourseStages())
+                if(stage != null && camera != null && stage.RevealCamera==camera)
                 {
                     var course=stage.CourseCamera != null ? stage.CourseCamera.GetComponent<CinemachineConfiner2D>() : null;
                     if(course != null && course.BoundingShape2D is BoxCollider2D bounds) return bounds;

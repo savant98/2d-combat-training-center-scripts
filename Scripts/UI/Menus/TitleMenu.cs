@@ -133,6 +133,10 @@ public class TitleMenu : SelectableMenuUI
 
         FeedbackPlayer.Instance.Play(warpFeedback, new Vector3(playerTransform.position.x, playerTransform.position.y + 1.5f, 0));
 
+        // 화면이 다 어두워진 지금부터 MainScene을 뒤에서 불러온다. 남은 전환 연출이 재생되는 시간도 불러오는 데 쓰고,
+        // 그동안 암전 위에 로딩 표시를 띄운다(한 번에 불러오면 그동안 화면이 멈춘다).
+        var loading = SceneLoadingSequence.Begin(mainSceneName);
+
         UIManager.Instance.StartWireframeEffect(3f, Color.red, 0.2f);
 
         // 암전 시작
@@ -142,7 +146,7 @@ public class TitleMenu : SelectableMenuUI
         yield return new WaitForSeconds(0.5f);
 
         // 이동 완료
-        SceneManager.LoadScene(mainSceneName);
+        yield return loading.Finish();
     }
 
     private void OpenOption()

@@ -12,15 +12,16 @@ public sealed class TrainingCourseActivator : WorldEntityBase
     private bool returnPlayerOnFinish;
 
     private TrainingCourseStage stage;
+    public string CourseKey => courseKey;
 
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
         var room = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
         stage = null;
-        if (room != null)
-            foreach (var candidate in room.GetComponentsInChildren<TrainingCourseStage>(true))
-                if (candidate.CourseKey == courseKey) { stage = candidate; break; }
+        // 방 전체를 훑지 않고 방이 찾아 둔 구간 목록에서 고른다.
+        foreach (var candidate in RoomViewRules.CourseStagesIn(room))
+            if (candidate != null && candidate.CourseKey == courseKey) { stage = candidate; break; }
         if (stage == null)
         {
             Debug.LogWarning($"현재 방에 {courseKey} 구간(TrainingCourseStage)이 없어 열지 않습니다.", this);

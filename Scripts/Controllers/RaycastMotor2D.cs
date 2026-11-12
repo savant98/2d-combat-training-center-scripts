@@ -57,13 +57,100 @@ public class RaycastMotor2D : MonoBehaviour
         return CircleCastEnvironment(origin, 0f, direction, distance, blockLayer);
     }
 
+    // 몸 바닥이 feet 높이에 놓인다고 보고 그 몸이 설 바닥을 찾는다(Wave 준비 중 크레인이 구속 상자를 내려놓을 높이).
+    // feet보다 above만큼 위에서 아래로 above + below만큼 본다. 통과 발판은 윗면이 feet보다 높으면 바닥으로 보지 않는다
+    // (그 자리에 선 몸은 발판 아래에 있다). 지금 몸이 어디에 떠 있는지와는 관계없다.
+    public RaycastHit2D RaycastFloorBelow(Vector2 feet, float above, float below)
+    {
+        return RaycastMovement(feet + Vector2.up * above, Vector2.down, above + below, true, feet.y);
+    }
+
+    // 몸통을 지금 자리에서 offset만큼 옮긴 곳이 이동을 막는 지형과 겹치는지(통과 발판은 제외).
+    // 구속 상자에 실려 지형을 지나던 몸을 그 자리에 풀어도 되는지, 옮겨 놓을 자리가 비어 있는지 볼 때 쓴다.
+    // 바닥에 서 있거나 벽에 붙어 있는 것은 겹친 것이 아니다. 물리 질의는 맞닿은 도형도(접촉 여유만큼 떨어져 있어도) 겹쳤다고 알리므로 몸통을 조금 줄여서 본다.
+    public bool IsBodyBlockedAt(Vector2 offset)
+    {
+        if (col == null) return false;
+        // Transform을 방금 옮겼어도 지금 위치의 몸통을 읽는다.
+        Physics2D.SyncTransforms();
+        Bounds body = col.bounds;
+        float inset = (skinWidth + .06f) * 2f;
+        var size = new Vector2(Mathf.Max(.01f, body.size.x - inset), Mathf.Max(.01f, body.size.y - inset));
+        var filter = new ContactFilter2D();
+        filter.SetLayerMask(collisionLayer); filter.useTriggers = Physics2D.queriesHitTriggers;
+        bodyOverlaps.Clear();
+        Physics2D.OverlapBox((Vector2)body.center + offset, size, 0f, filter, bodyOverlaps);
+        bool blocked = false;
+        foreach (var other in bodyOverlaps)
+        {
+            if (other == null || other == col || OneWayPlatform.IsSurface(other)) continue;
+            blocked = true;
+            break;
+        }
+        bodyOverlaps.Clear();
+        return blocked;
+    }
+
     private static readonly System.Collections.Generic.List<RaycastHit2D> environmentCastHits = new();
+    private static readonly System.Collections.Generic.List<Collider2D> bodyOverlaps = new();
     private readonly System.Collections.Generic.List<RaycastHit2D> movementHits = new();
     private Collider2D groundCollider;
     private Collider2D ignoredOneWay;
     private float ignoreOneWayUntil;
     private static int OneWayLayer => 1 << LayerMask.NameToLayer("TransparentPlatform");
     public bool SupportsOneWayPlatforms { get; set; }
+
+    // 이동 구속: 켜져 있는 동안 몸통이 이 월드 사각형 밖으로 나가지 못한다.
+    // 실제 Collider를 만들지 않고 이 모터의 이동량만 막으므로 탄환·적·다른 물리 질의에는 영향이 없다(Wave 준비 중 Player 구속 상자).
+    private bool confined;
+    private Rect confinement;
+    private Vector2 confinedBodyOffset;   // 몸통 중심의 Transform 기준 위치
+    private Vector2 confinedBodySize;
+    private float confinedSide, confinedTop;
+    // 구속 영역을 옮기라고 받아 둔 양. 다음 이동에서 영역과 몸통에 함께 더한다.
+    private Vector2 confinementCarry;
+    public bool IsConfined => confined;
+    public Rect Confinement => confinement;
+    // 구속 계산에 쓰는 지금 몸통 사각형(Transform 기준). 구속 상자 표시가 어느 벽에 닿았는지 볼 때 쓴다.
+    public Rect ConfinedBody
+    {
+        get
+        {
+            Vector2 center = (Vector2)transform.position + confinedBodyOffset;
+            return new Rect(center - confinedBodySize * 0.5f, confinedBodySize);
+        }
+    }
+
+    // 지금 몸통 둘레로 구속 영역을 잡는다. side는 좌우 여유, top은 머리 위 여유다. 바닥은 넓히지 않아 그 자리(공중이어도)에 선다.
+    public Rect ConfineAroundBody(float side, float top)
+    {
+        // Transform을 방금 옮겼어도(텔레포트) 지금 위치의 몸통을 읽는다. 이후 계산은 Transform 기준이라 물리 동기화를 기다리지 않는다.
+        Physics2D.SyncTransforms();
+        Bounds body = col.bounds;
+        confinedBodyOffset = (Vector2)body.center - (Vector2)transform.position;
+        confinedBodySize = body.size;
+        confinement = Rect.MinMaxRect(body.min.x - Mathf.Max(0f, side), body.min.y, body.max.x + Mathf.Max(0f, side), body.max.y + Mathf.Max(0f, top));
+        confinedSide = side; confinedTop = top;
+        confinementCarry = Vector2.zero;
+        confined = true;
+        return confinement;
+    }
+    // 구속 영역을 통째로 옮긴다(Wave 준비 중 크레인이 구속 상자를 들어 옮긴다). 다음 이동에서 영역과 몸통이 같은 양만큼 함께 옮겨지므로
+    // 영역 안에서의 위치·접지·움직임(점프·무장)은 그대로다. 지형 충돌보다 구속이 우선하므로 옮기는 동안에는 지형을 지나간다.
+    public void ShiftConfinement(Vector2 delta)
+    {
+        if (confined) confinementCarry += delta;
+    }
+    // 구속된 채 다른 곳이 몸을 순간이동시켰을 때 구속 영역도 같은 여유로 그 자리에 다시 잡는다.
+    public void RefitConfinement()
+    {
+        if (confined) ConfineAroundBody(confinedSide, confinedTop);
+    }
+    public void ClearConfinement()
+    {
+        confined = false;
+        confinementCarry = Vector2.zero;
+    }
 
     // 모든 투사체는 OneWay를 통과하고 일반 지형의 가장 가까운 차단점만 사용한다.
     public static RaycastHit2D CircleCastEnvironment(Vector2 origin, float radius, Vector2 direction,
@@ -103,7 +190,8 @@ public class RaycastMotor2D : MonoBehaviour
         return true;
     }
 
-    private RaycastHit2D RaycastMovement(Vector2 origin, Vector2 direction, float distance, bool allowOneWay)
+    // bodyBottom을 주면 통과 발판을 막을지 정할 때 몸 바닥이 그 높이에 있는 것으로 본다(주지 않으면 지금 몸통).
+    private RaycastHit2D RaycastMovement(Vector2 origin, Vector2 direction, float distance, bool allowOneWay, float bodyBottom = float.NaN)
     {
         int mask = collisionLayer.value | (allowOneWay && SupportsOneWayPlatforms ? OneWayLayer : 0);
         var filter = new ContactFilter2D();
@@ -119,7 +207,7 @@ public class RaycastMotor2D : MonoBehaviour
             if (oneWay)
             {
                 if (!allowOneWay || !SupportsOneWayPlatforms || hit.collider == ignoredOneWay) continue;
-                if (col == null || col.bounds.min.y < hit.collider.bounds.max.y - skinWidth * 2f) continue;
+                if (col == null || (float.IsNaN(bodyBottom) ? col.bounds.min.y : bodyBottom) < hit.collider.bounds.max.y - skinWidth * 2f) continue;
             }
             else if ((collisionLayer.value & (1 << hit.collider.gameObject.layer)) == 0) continue;
             if (hit.distance >= nearestDistance) continue;
@@ -233,11 +321,48 @@ public class RaycastMotor2D : MonoBehaviour
         else
             collisionInfo.down = HasGroundSupport(move.x);
 
+        if (confined)
+        {
+            ApplyConfinement(ref move, ref collisionInfo);
+            if (confinementCarry != Vector2.zero)
+            {
+                // 영역이 서 있는 것처럼 구속을 적용한 뒤 영역과 몸통을 함께 옮긴다.
+                confinement.position += confinementCarry;
+                move += confinementCarry;
+                confinementCarry = Vector2.zero;
+            }
+        }
+
         return new RaycastMoveResult2D
         {
             move = move,
             info = collisionInfo
         };
+    }
+
+    // 지형 충돌을 처리한 이동량을 구속 영역 안으로 다시 줄인다. 막힌 면은 실제 벽·바닥·천장과 같은 충돌 정보로 알린다.
+    private void ApplyConfinement(ref Vector2 move, ref RaycastCollisionInfo2D info)
+    {
+        Vector2 center = (Vector2)transform.position + confinedBodyOffset;
+        Vector2 min = center - confinedBodySize * 0.5f;
+        Vector2 max = center + confinedBodySize * 0.5f;
+
+        // 영역이 몸통보다 좁은 축은 가운데에 맞춘다.
+        float left = confinement.xMin - min.x;
+        float right = confinement.xMax - max.x;
+        if (left > right) left = right = (left + right) * 0.5f;
+
+        if (move.x < left) { move.x = left; info.left = true; }
+        else if (move.x > right) { move.x = right; info.right = true; }
+
+        float down = confinement.yMin - min.y;
+        float up = confinement.yMax - max.y;
+        if (down > up) down = up = (down + up) * 0.5f;
+
+        if (move.y < down) { move.y = down; info.down = true; }
+        else if (move.y > up) { move.y = up; info.up = true; }
+        // 구속 바닥에 닿아 서 있으면 실제 바닥처럼 접지로 본다(공중에서 갇혀도 그 자리에 선다).
+        else if (move.y <= 0f && move.y - down <= skinWidth + 0.001f) info.down = true;
     }
 
     private bool HasGroundSupport(float horizontalMove)

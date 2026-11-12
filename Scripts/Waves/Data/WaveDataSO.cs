@@ -9,7 +9,7 @@ public class WaveDataSO : ScriptableObject
     public WaveRoomLayout room = new WaveRoomLayout();
     [Tooltip("기존 훈련의 카메라·목표 마무리·보스 연출을 보존하는 명시적 커스텀 모듈입니다.")]
     public bool customRoom;
-    [Tooltip("커스텀 Room에서 저장된 실내 크기에 카메라를 맞춥니다. 일반 Room의 셀 연결 공간은 이 설정 없이 자동 적용합니다.")]
+    [Tooltip("실내 치수 연출(TrainingRoomPresentation)을 가진 커스텀 Room에서 저장된 실내 크기에 카메라를 맞춥니다. 그 밖의 Room은 커스텀이어도 셀 연결 공간을 이 설정 없이 자동 적용합니다.")]
     public bool adaptCameraToRoom;
     public GameObject backgroundPrefab;
     [Tooltip("모든 Wave를 클리어한 뒤 나타나는 Lobby 복귀 포탈의 위치를 Tool에서 지정합니다.")]

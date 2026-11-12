@@ -95,7 +95,8 @@ public sealed class ChasingLaserWall : WorldEntityBase
     {
         base.OnSpawnedFromPool();
         var room = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
-        courseStages = room != null ? room.GetComponentsInChildren<TrainingCourseStage>(true) : null;
+        // 방 전체를 훑지 않고 방이 찾아 둔 구간 목록을 쓴다.
+        courseStages = RoomViewRules.CourseStagesIn(room);
         if (!ActiveWalls.Contains(this)) ActiveWalls.Add(this);
         Subscribe();
         Hold();

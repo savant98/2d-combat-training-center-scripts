@@ -32,7 +32,8 @@ public sealed class PlayerGrabController : MonoBehaviour
     public bool TryBegin(Object attacker, PlayerGrabDataSO settings, out uint session)
     {
         session = 0;
-        if (IsActive || !player.isActiveAndEnabled || !player.CanReceiveInput || attacker == null || settings == null || settings.presentationPrefab == null || settings.restrainedLoop == null || settings.wireMaterial == null
+        // Wave 준비 중 구속 상자에 갇힌 동안에는 잡히지 않는다(갇힌 동안의 피해 차단·무장 유지와 같은 기준).
+        if (IsActive || !player.isActiveAndEnabled || !player.CanReceiveInput || WavePlayerStart.IsHolding(player) || attacker == null || settings == null || settings.presentationPrefab == null || settings.restrainedLoop == null || settings.wireMaterial == null
             || settings.letterboxPrefab == null || player.Health.currentHP <= 0
             || (RoomTransitionManager.Instance != null && RoomTransitionManager.Instance.IsTransitioning)) return false;
         // 반격 창이 열려 있으면 잡기도 다른 공격처럼 반격으로 받아낸다. 잡기는 실패하고 공격자는 빗나간 경로로 간다.

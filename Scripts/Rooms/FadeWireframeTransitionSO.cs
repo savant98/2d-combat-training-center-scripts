@@ -48,6 +48,8 @@ public class FadeWireframeTransitionSO : RoomTransitionEffectSO
         yield return new WaitForSeconds(fadeOutTime);
 
         ctx.SwitchRoom();
+        // TrainingRoom 입장 로딩이 끝날 때까지 암전을 유지한다(로딩이 없으면 바로 넘어간다).
+        yield return ctx.WaitForLoading();
 
         UIManager.Instance.StartWireframeEffect(0f, wireColor, fadeInTime);
         UIManager.Instance.StartScreenFade(0f, fadeInTime);

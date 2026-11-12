@@ -7,6 +7,8 @@ using UnityEngine.Tilemaps;
 
 // 훈련실의 특수 구간(등반·달리기) 동안 지형 조각들을 옮겨 길을 열고 구간 전체를 담는 카메라로 전환한다.
 // 조각마다 시작 시차와 잠금 해제 동작(반대쪽으로 살짝 물러났다가 움직임)을 줄 수 있어, 벽이 기계처럼 열리는 연출을 만든다.
+// 셀 지형(WaveCellTerrain)을 쓰는 방에서는 조각을 통째로 미끄러뜨리지 않고, 조각의 칸마다 기계팔이 패널을 떼어 낸 뒤
+// 옮긴 자리에 다시 끼운다(Wave 사이 지형 전환과 같은 연출). 조각의 시차는 그대로 쓰고, 통창·배경은 연결 공간 쪽이 맞춘다.
 // 목표 지점이 도달 키를 보내면 레이저·길 안내·코스 적(CourseEnemySpawner)을 거두고, 발판을 없앤 뒤
 // 플레이어가 바닥에 내려오면(또는 시작 위치로 돌려보내거나, 그 자리에서 다음 구간을 연 뒤) 완료 키로 웨이브를 끝낸다.
 // 웨이브를 처음부터 다시 시작하거나 방을 떠나면 옮긴 지형·카메라 범위·장식·위치를 원래대로 되돌린다.
@@ -124,7 +126,11 @@ public sealed class TrainingCourseStage : MonoBehaviour
     private Vector3[] keptWorld = new Vector3[0];
     private bool relocated;
     private bool holdingPlayer;
+    private WavePlayerStart restraint;
     private bool returnOnFinish;
+
+    // 셀 연결 공간을 따라 통창·배경을 자동으로 맞추는 방(WaveCellTerrain)에서는 그쪽이 장식을 늘리므로 이 구간의 장식 늘리기를 쓰지 않는다.
+    public bool AutomaticRoomSpace { get; set; }
 
     public string CourseKey => courseKey;
     public bool IsOpen { get; private set; }
@@ -156,6 +162,8 @@ public sealed class TrainingCourseStage : MonoBehaviour
         }
     }
     public CinemachineCamera CourseCamera => courseCamera;
+    /// <summary>HandOff로 마칠 때 이어서 여는 구간(없으면 null).</summary>
+    public TrainingCourseStage HandoffStage => handoffStage;
     public CinemachineCamera RevealCamera => revealCamera;
     public Transform PlayerReturnPoint => playerReturnPoint;
     public float FloorHeight => floorHeight;
@@ -267,12 +275,17 @@ public sealed class TrainingCourseStage : MonoBehaviour
         HoldPlayer(false);
     }
 
-    // 입력을 막아 플레이어를 그 자리에 멈춘다(PlayerController는 입력이 막히면 속도를 0으로 둔다).
+    // 플레이어를 구속 상자에 가둬 그 자리에 둔다. 입력과 무장은 막지 않고 이동만 막는다(Wave 준비와 같은 WavePlayerStart 구속).
     private void HoldPlayer(bool on)
     {
-        if (holdingPlayer == on || UIManager.Instance == null) return;
-        if (on) UIManager.Instance.PushGameplayBlock();
-        else UIManager.Instance.PopGameplayBlock();
+        if (holdingPlayer == on) return;
+        if (on)
+        {
+            if (restraint == null && !TryGetComponent(out restraint)) restraint = gameObject.AddComponent<WavePlayerStart>();
+            restraint.Hold();
+            if (!restraint.IsHoldingPlayer) return;
+        }
+        else if (restraint != null) restraint.Release();
         holdingPlayer = on;
     }
 
@@ -324,7 +337,7 @@ public sealed class TrainingCourseStage : MonoBehaviour
 
     private void ApplyStretch(float amount)
     {
-        if (stretch == null) return;
+        if (stretch == null || AutomaticRoomSpace) return;
         if (stretchStartSide) stretch.ApplyStart(amount);
         else stretch.Apply(amount);
     }
@@ -367,13 +380,16 @@ public sealed class TrainingCourseStage : MonoBehaviour
     private IEnumerator Finish()
     {
         CurrentStep = FinishStep.Success;
-        foreach (var laser in FindObjectsByType<ChasingLaserWall>(FindObjectsSortMode.None))
-            if (laser.gameObject.activeInHierarchy) laser.Halt();
-        foreach (var guide in FindObjectsByType<CourseGuideField>(FindObjectsSortMode.None))
-            if (guide.gameObject.activeInHierarchy) guide.ForceReturnToPool();
+        // 코스 장치(레이저 벽·안내 화살표·적 생성기)는 모두 풀에서 꺼낸 것이므로 풀이 꺼내 둔 목록에서 찾는다.
+        // 씬 전체에서 형식으로 찾으면 방 아래의 지형 칸·반복 배경 모듈 수만 개를 세 번 훑는다.
+        var entities = WorldEntityPool.Instance != null ? WorldEntityPool.Instance.ActiveSnapshot() : Array.Empty<WorldEntityBase>();
+        foreach (var entity in entities)
+            if (entity is ChasingLaserWall laser && laser.gameObject.activeInHierarchy) laser.Halt();
+        foreach (var entity in entities)
+            if (entity is CourseGuideField guide && guide.gameObject.activeInHierarchy) guide.ForceReturnToPool();
         // 코스에 놓은 적도 목표에 닿으면 모두 거두고 다시 꺼내지 않는다.
-        foreach (var spawner in FindObjectsByType<CourseEnemySpawner>(FindObjectsSortMode.None))
-            if (spawner.gameObject.activeInHierarchy) spawner.Halt();
+        foreach (var entity in entities)
+            if (entity is CourseEnemySpawner spawner && spawner.gameObject.activeInHierarchy) spawner.Halt();
         yield return new WaitForSeconds(successPause);
 
         CurrentStep = FinishStep.Vanishing;
@@ -477,8 +493,15 @@ public sealed class TrainingCourseStage : MonoBehaviour
     private void StartSegment(int index, Vector3 targetLocal, float delay, float duration, float unlock)
     {
         if (segments[index].tilemap == null) return;
-        if (motions[index] != null) StopCoroutine(motions[index]);
+        if (motions[index] != null) { StopCoroutine(motions[index]); SettleSegment(index); }
         motions[index] = StartCoroutine(MoveSegment(index, targetLocal, delay, duration, unlock));
+    }
+    // 이동이 도중에 끊겼으면(열리다가 닫히는 경우) 그때 떼어 내거나 끼우던 패널을 바로 제자리 모습으로 돌린다.
+    // 새 이동의 시차를 기다리는 동안 칸이 숨겨진 채 충돌만 남지 않는다.
+    private void SettleSegment(int index)
+    {
+        var cellTerrain = GetComponentInParent<WaveCellTerrain>(true);
+        if (cellTerrain != null && segments[index].tilemap != null) cellTerrain.SettleGroup(segments[index].tilemap.transform);
     }
 
     private IEnumerator MoveSegment(int index, Vector3 targetLocal, float delay, float duration, float unlock)
@@ -489,14 +512,24 @@ public sealed class TrainingCourseStage : MonoBehaviour
         Vector3 travel = targetLocal - start;
         if (segments[index].playSound && travel.sqrMagnitude > .01f)
             PlaySound(segmentSound, tilemap.transform.TransformPoint(TerrainBounds(tilemap).center));
-        // 잠금이 풀리듯 반대쪽으로 살짝 물러났다가 움직인다.
-        if (unlock > 0f && travel.sqrMagnitude > .01f)
+        var cellTerrain = GetComponentInParent<WaveCellTerrain>(true);
+        if (cellTerrain != null && travel.sqrMagnitude > .01f && cellTerrain.CanRelocate(tilemap.transform))
         {
-            Vector3 back = start - travel.normalized * unlock;
-            yield return Move(index, start, back, unlockDuration);
-            start = back;
+            // 셀 지형은 조각을 통째로 미끄러뜨리지 않는다. 칸마다 기계팔이 패널을 떼어 내고 옮긴 자리에 다시 끼운다.
+            // 잠금 풀림 동작은 패널마다 따로 나오므로 그 시간까지 연출에 쓴다.
+            yield return cellTerrain.RelocateGroup(tilemap.transform, targetLocal, () => SetSegmentLocal(index, targetLocal), duration + (unlock > 0f ? unlockDuration : 0f));
         }
-        yield return Move(index, start, targetLocal, duration);
+        else
+        {
+            // 잠금이 풀리듯 반대쪽으로 살짝 물러났다가 움직인다.
+            if (unlock > 0f && travel.sqrMagnitude > .01f)
+            {
+                Vector3 back = start - travel.normalized * unlock;
+                yield return Move(index, start, back, unlockDuration);
+                start = back;
+            }
+            yield return Move(index, start, targetLocal, duration);
+        }
         SetSegmentLocal(index, targetLocal);
         motions[index] = null;
         if (!IsOpen && !stretchFollowsTerrain && !Array.Exists(motions, m => m != null)) ApplyStretch(0f);
@@ -552,7 +585,7 @@ public sealed class TrainingCourseStage : MonoBehaviour
     {
         for (int i = 0; i < segments.Length; i++)
         {
-            if (motions.Length > i && motions[i] != null) StopCoroutine(motions[i]);
+            if (motions.Length > i && motions[i] != null) { StopCoroutine(motions[i]); SettleSegment(i); }
             if (motions.Length > i) motions[i] = null;
             if (segments[i].tilemap != null && cached) segments[i].tilemap.transform.localPosition = restLocal[i] + (open ? segments[i].openOffset : Vector3.zero);
         }
