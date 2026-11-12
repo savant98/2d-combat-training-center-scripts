@@ -64,6 +64,10 @@ public sealed class WavePlayerContainment : MonoBehaviour
     private float releaseFrom = 1f; // 해체를 시작할 때 조립이 얼마나 진행돼 있었는지(조립 도중에 풀리면 그만큼만 되돌린다)
     private PlayerController target;
     private Rect area;
+    private Rect? carryRenderArea;
+    private Rect DrawArea => carryRenderArea ?? area;
+    // 렌더 시에만 표시 영역을 바꾼다. Area와 모터 판정은 원래 값을 유지한다.
+    internal void SetCarryRenderArea(Rect? value) { carryRenderArea = value; Draw(); }
     private readonly float[] impact = new float[4];     // 왼쪽·오른쪽·위·아래 벽을 민 세기(감쇠)
     private readonly bool[] touching = new bool[4];
     private float ring = -1f;       // 조립 순간 퍼지는 충격 고리의 경과 시간
@@ -237,7 +241,8 @@ public sealed class WavePlayerContainment : MonoBehaviour
     private void Draw()
     {
         if (body == null) return;
-        transform.position = new Vector3(area.center.x, area.center.y, 0f);
+        var drawArea = DrawArea;
+        transform.position = new Vector3(drawArea.center.x, drawArea.center.y, 0f);
         bodyVertices.Clear(); bodyColors.Clear(); bodyTriangles.Clear();
         glowVertices.Clear(); glowColors.Clear(); glowTriangles.Clear();
 
@@ -270,7 +275,7 @@ public sealed class WavePlayerContainment : MonoBehaviour
             lockFlash = phase == Phase.Held ? 0f : Seg(t, .5f, .56f) * (1f - Seg(t, .56f, .9f));
         }
 
-        float halfWidth = area.width * .5f, halfHeight = area.height * .5f;
+        float halfWidth = drawArea.width * .5f, halfHeight = drawArea.height * .5f;
         float pulse = .78f + .22f * Mathf.Sin(heldTime * 5.2f);
         DrawBrackets(halfWidth, halfHeight, away, opacity, lockFlash, pulse);
         DrawLines(halfWidth, halfHeight, lines, pulse);
@@ -283,10 +288,10 @@ public sealed class WavePlayerContainment : MonoBehaviour
 
         if (field != null)
         {
-            field.transform.localScale = new Vector3(area.width, area.height, 1f);
+            field.transform.localScale = new Vector3(drawArea.width, drawArea.height, 1f);
             properties.SetFloat(RevealId, Mathf.Clamp01(glass));
             properties.SetVector(ImpactId, new Vector4(impact[0], impact[1], impact[2], impact[3]));
-            properties.SetVector(SizeId, new Vector4(area.width, area.height, 0f, 0f));
+            properties.SetVector(SizeId, new Vector4(drawArea.width, drawArea.height, 0f, 0f));
             field.SetPropertyBlock(properties);
             field.enabled = glass > .001f;
         }
@@ -412,8 +417,8 @@ public sealed class WavePlayerContainment : MonoBehaviour
         // 줄 두 가닥: 블록 윗면에서 화면 위 바깥까지. 옮기는 쪽으로 위 끝이 앞선다.
         float blockTop = beamTop + craneBlockSize.y;
         if (view == null) view = Camera.main;
-        float viewTop = view != null && view.orthographic ? view.transform.position.y + view.orthographicSize + 2f : area.center.y + 30f;
-        float topY = Mathf.Max(blockTop + 3f, viewTop - area.center.y);
+        float viewTop = view != null && view.orthographic ? view.transform.position.y + view.orthographicSize + 2f : DrawArea.center.y + 30f;
+        float topY = Mathf.Max(blockTop + 3f, viewTop - DrawArea.center.y);
         float lean = Mathf.Tan(craneLean) * (topY - blockTop);
         Color cable = Color.Lerp(bodyColor, rimColor, .55f); cable.a = appear;
         for (int side = -1; side <= 1; side += 2)

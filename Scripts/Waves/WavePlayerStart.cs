@@ -28,6 +28,8 @@ public sealed class WavePlayerStart : MonoBehaviour
     private static float confinedAt;
     private PlayerController player;
     private Coroutine carry;
+    private Coroutine presentationSampling;
+    private WaveCarryPresentation carryPresentation;
     private bool terrainReady;
     private bool lifted;            // 크레인이 상자를 들기 시작했는지(그 전에 끊기면 제자리에 둔다)
     private Vector3 carryOrigin, carryDestination;   // 들기 전에 서 있던 자리와 옮겨 놓을 시작 좌표(월드)
@@ -119,6 +121,7 @@ public sealed class WavePlayerStart : MonoBehaviour
         target.externalForce = Vector2.zero;
         Vector3 before = target.transform.position;
         target.ResetPlayerPosition(position);
+        foreach (var holder in holders) if (holder != null && holder.player == target) holder.carryPresentation?.ResetPose();
         CinemachineCore.OnTargetObjectWarped(target.transform, target.transform.position - before);
         // 갇힌 채 옮기면 구속은 ResetPlayerPosition이 도착한 자리로 옮긴다. 떠난 자리의 상자는 풀고, 계속 갇혀 있으면 잠시 뒤 그 자리에 다시 조립한다.
         if (IsHolding(target))
@@ -183,7 +186,9 @@ public sealed class WavePlayerStart : MonoBehaviour
     public IEnumerator FinishCarry()
     {
         terrainReady = true;
-        while (IsCarrying) yield return null;
+        var terrain = GetComponentInParent<WaveCellTerrain>();
+        // 마지막 카메라 경계가 정착한 뒤 구속을 풀고 Wave를 시작한다.
+        while (IsCarrying || (terrain != null && terrain.IsCameraSettling)) yield return null;
     }
 
     // 크레인 이동: 내려와 물기 → 들기 → 옮기기 → (지형이 다 바뀔 때까지 들고 기다리기) → 내려놓기.
@@ -202,6 +207,9 @@ public sealed class WavePlayerStart : MonoBehaviour
             var motor = target.Motor;
             // 옮길 것이 정해져 있으므로 상자를 바로 조립하고 크레인을 내린다.
             ShowContainment(target);
+            StopCarryPresentation();
+            carryPresentation = new WaveCarryPresentation(target, containment);
+            presentationSampling = StartCoroutine(SampleCarryPresentation());
             if (containment != null) containment.AttachCrane();
             float limit = Time.time + AttachLimit;
             while (containment != null && containment.Target == target && !containment.CraneAttached && Time.time < limit) yield return null;
@@ -287,7 +295,11 @@ public sealed class WavePlayerStart : MonoBehaviour
         {
             try { if (terrain != null) terrain.EndCarry(arrived); }
             // 걸쇠를 풀고 올려 보낸다. 상자는 Release가 푼다.
-            finally { if (containment != null) containment.DetachCrane(); }
+            finally
+            {
+                if (end != CarryEnd.Arrived) StopCarryPresentation();
+                if (containment != null) containment.DetachCrane();
+            }
         }
     }
     // 들어 옮기던 도중에 끊겼을 때 Player를 둘 자리를 정한다. 시작 좌표로 옮겼으면 true.
@@ -307,6 +319,22 @@ public sealed class WavePlayerStart : MonoBehaviour
         return true;
     }
 
+    private IEnumerator SampleCarryPresentation()
+    {
+        var tick = new WaitForFixedUpdate();
+        while (IsHoldingPlayer && carryPresentation != null)
+        {
+            yield return tick;
+            carryPresentation?.SamplePhysics();
+        }
+    }
+    private void StopCarryPresentation()
+    {
+        if (presentationSampling != null) StopCoroutine(presentationSampling);
+        presentationSampling = null;
+        carryPresentation?.Dispose();
+        carryPresentation = null;
+    }
     public void Release()
     {
         bool held = IsHoldingPlayer;
@@ -315,6 +343,7 @@ public sealed class WavePlayerStart : MonoBehaviour
         try { EndCarry(CarryEnd.Interrupted); }
         finally
         {
+            StopCarryPresentation();
             holders.Remove(this);
             IsHoldingPlayer = false;
             player = null;

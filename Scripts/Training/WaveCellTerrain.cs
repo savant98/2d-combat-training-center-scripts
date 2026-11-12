@@ -49,6 +49,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private readonly Dictionary<WaveMapCell, (float time, int token)> expiry = new();
     private readonly Dictionary<WaveMapCell, int> removing = new();
     private Tile oneWayTile;
+    // 구형 Template의 이동 기능 없이 좌표 보존용으로 복원한 그룹은 같은 고정 지형이다.
+    private readonly HashSet<int> fixedOutlineGroups = new();
     private readonly Dictionary<WaveMapCell, int> outlineGroups = new();
     private int nextOutlineGroup;
     private readonly Dictionary<WaveMapCell, Vector2> animationPivots = new();
@@ -126,6 +128,15 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private const float CarryCameraDamping = .3f;
     private CinemachineFollow carryFollow;
     private Vector3 carryFollowDamping;
+    private CinemachineBrain carryBrain;
+    private CinemachineBrain.UpdateMethods carryBrainUpdate;
+    private CinemachineBrain.BrainUpdateMethods carryBrainBlendUpdate;
+    // 지형 공간은 즉시 확정하고, 도착 카메라의 축소만 짧게 완화한다. 확장은 이동 경로를 먼저 확보한다.
+    private const float CameraSettleDuration = .5f;
+    private Vector2 cameraSettleFromSize, cameraSettleToSize;
+    private Vector3 cameraSettleFromPosition, cameraSettleToPosition;
+    private float cameraSettleTime;
+    public bool IsCameraSettling { get; private set; }
     public Rect? ConnectedBounds { get; private set; }
     public bool IsPreloaded { get; private set; }
     public bool IsTransitioning { get; private set; }
@@ -168,7 +179,24 @@ public sealed class WaveCellTerrain : MonoBehaviour
             courseStages = GetComponentsInChildren<TrainingCourseStage>(true);
             foreach (var stage in courseStages) stage.AutomaticRoomSpace = true;
         }
-        groupAnchors = data.cellMap.groups.Select(g => transform.Find(g.path)).ToArray();
+        // 구형 TrainingRoom의 Tilemap을 삭제해도 저장된 그룹 원점에서 같은 배치를 복원한다.
+        // 전용 방에 실제 앵커가 있으면 기존 코스 이동 연결을 그대로 사용한다.
+        Transform generatedGroups = null;
+        groupAnchors = data.cellMap.groups.Select((group, index) =>
+        {
+            var anchor = string.IsNullOrEmpty(group.path) ? null : transform.Find(group.path);
+            if (anchor != null) return anchor;
+            if (generatedGroups == null)
+            {
+                generatedGroups = new GameObject("CellGroupAnchors").transform;
+                generatedGroups.SetParent(transform, false);
+            }
+            anchor = new GameObject("CellGroup_" + (index + 1)).transform;
+            anchor.SetParent(generatedGroups, false);
+            anchor.localPosition = group.origin;
+            fixedOutlineGroups.Add(index + 1);
+            return anchor;
+        }).ToArray();
         groupPositions = groupAnchors.Select(a => a != null ? a.localPosition : Vector3.zero).ToArray();
         var background = gameObject.AddComponent<WaveRoomBackground>(); background.Configure(data);
         staticRoot = new GameObject("CellTerrain").transform; staticRoot.SetParent(transform, false);
@@ -217,7 +245,13 @@ public sealed class WaveCellTerrain : MonoBehaviour
         }
     }
     private (int group, int style, int assembly) OutlineKey(WaveMapCell cell)
-        => (cell.group, cell.style, Style(cell).generated && outlineGroups.TryGetValue(cell, out int id) ? id : 0);
+    {
+        bool generated = Style(cell).generated;
+        // 좌표 보존용 그룹 경계를 지형의 노출 면으로 그리지 않는다. 붙거나 겹친 일반 칸은 합집합의 윤곽만 남긴다.
+        // 실제 이동용 Template 앵커와 생성 발판은 기존의 독립 묶음·연출을 유지한다.
+        int group = !generated && fixedOutlineGroups.Contains(cell.group) ? 0 : cell.group;
+        return (group, cell.style, generated && outlineGroups.TryGetValue(cell, out int id) ? id : 0);
+    }
     private void RefreshOutlines()
     {
         outlineSums.Clear(); outlineFixedSums.Clear();
@@ -391,6 +425,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     }
     private void LateUpdate()
     {
+        UpdateCameraSettlement();
         UpdatePanels();
         TrackGroupMotion();
     }
@@ -681,7 +716,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (cell.group > 0 && cell.group <= data.cellMap.groups.Length)
         {
             var binding = data.cellMap.groups[cell.group - 1];
-            anchor = transform.Find(binding.path); if (anchor == null) anchor = staticRoot; origin = binding.origin;
+            anchor = groupAnchors[cell.group - 1]; origin = binding.origin;
         }
         var node = new GameObject($"{cell.kind}_{cell.group}_{key.Item2}");
         node.transform.SetParent(anchor, false);
@@ -769,10 +804,18 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private void OnEnable() { if (IsPreloaded) Rebuild(); }
     private void Start() { if (IsPreloaded) Rebuild(); }
     // 방을 떠나면 진행 중이던 패널 연출을 제자리 모습으로 마친다(코루틴은 비활성화와 함께 멈춘다).
-    private void OnDisable() { if (IsPreloaded) ClearPanels(); }
+    private void OnDisable()
+    {
+        RestoreCarryCameraUpdate();
+        CancelCameraSettlement(true);
+        if (IsPreloaded) ClearPanels();
+    }
 
     private void ResetMap()
     {
+        RestoreCarryCameraUpdate();
+        CancelCameraSettlement(true);
+        roomSpaceReset = true;
         StopAllCoroutines(); ClearPanels(); ClearCustom(); temporary.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
         ApplyBackground();
         roomSolids = null;
@@ -839,7 +882,21 @@ public sealed class WaveCellTerrain : MonoBehaviour
     /// </summary>
     public void BeginCarry(Vector2 from, Vector2 to, float lift)
     {
+        CancelCameraSettlement(true);
         carrying = true; carryFrom = from; carryTo = to; carryLift = Mathf.Max(0f, lift);
+        if (carryBrain == null)
+        {
+            var camera = Camera.main;
+            if (camera != null && camera.TryGetComponent(out carryBrain))
+            {
+                carryBrainUpdate = carryBrain.UpdateMethod;
+                carryBrainBlendUpdate = carryBrain.BlendUpdateMethod;
+                // 물리 틱으로 움직이는 Player를 SmartUpdate가 Fixed로 분류하면 빠른 하강에서 같은 카메라 프레임이 반복된다.
+                // 이동 물리는 유지하고 Follow 감쇠와 최종 출력만 렌더 프레임마다 계산한다.
+                carryBrain.UpdateMethod = CinemachineBrain.UpdateMethods.LateUpdate;
+                carryBrain.BlendUpdateMethod = CinemachineBrain.BrainUpdateMethods.LateUpdate;
+            }
+        }
         if (carryFollow == null && roomConfiner != null && roomConfiner.TryGetComponent(out carryFollow))
         {
             carryFollowDamping = carryFollow.TrackerSettings.PositionDamping;
@@ -861,9 +918,17 @@ public sealed class WaveCellTerrain : MonoBehaviour
         carrying = false;
         if (carryFollow != null) { carryFollow.TrackerSettings.PositionDamping = carryFollowDamping; carryFollow = null; }
         forceRoomSpace = true;
-        RefreshRoomSpace();
+        RefreshRoomSpace(immediateCamera: !arrived);
         if (arrived && pendingPresentationCamera.HasValue) SetPresentationCamera(pendingPresentationCamera.Value);
         pendingPresentationCamera = null;
+        if (!IsCameraSettling) RestoreCarryCameraUpdate();
+    }
+    private void RestoreCarryCameraUpdate()
+    {
+        if (carryBrain == null) return;
+        carryBrain.UpdateMethod = carryBrainUpdate;
+        carryBrain.BlendUpdateMethod = carryBrainBlendUpdate;
+        carryBrain = null;
     }
     /// <summary>
     /// index번째 Wave로 넘어가면 방 좌표 사각형 area에 지형(Platform) 칸이 새로 생기는지. 그 Wave의 지형을 준비하기 전에 묻는다.
@@ -941,7 +1006,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         var rules = WaveRoomRulesSO.Default;
         if (rules == null) return;
-        foreach (var group in source.Where(c => c.kind == WaveCellKind.Platform && !Style(c).generated && Style(c).color.a > 0).GroupBy(c => (c.group, c.style, 0)))
+        foreach (var group in source.Where(c => c.kind == WaveCellKind.Platform && !Style(c).generated && Style(c).color.a > 0).GroupBy(OutlineKey))
         {
             var cells = group.Distinct().OrderBy(c => c.position.y).ThenBy(c => c.position.x).ToArray();
             if (cells.Length < ShapeCacheMinimum) continue;
@@ -1052,7 +1117,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         automaticBackdrop.Resize(union);
     }
     private static Rect Union(Rect a, Rect b) => Rect.MinMaxRect(Mathf.Min(a.xMin, b.xMin), Mathf.Min(a.yMin, b.yMin), Mathf.Max(a.xMax, b.xMax), Mathf.Max(a.yMax, b.yMax));
-    private void RefreshRoomSpace(bool resetting = false)
+    private void RefreshRoomSpace(bool resetting = false, bool immediateCamera = false)
     {
         if (!automaticRoomSpace) return;
         // 켜진 Platform 칸과 그룹 위치가 그대로면 지난번에 모은 것을 그대로 쓴다(수천 칸을 호출마다 다시 모으지 않는다).
@@ -1090,26 +1155,26 @@ public sealed class WaveCellTerrain : MonoBehaviour
         }
         // Wave 전환 중에는 미리 넓혀 둔 배경·통창을 줄이지 않는다(끼우기가 먼저 끝나도 뒤이어 빠질 벽 뒤에 배경이 있어야 한다).
         // 전환이 끝나면 Prepare가 한 번 더 불러 실제 공간에 맞춘다.
-        Rect backdrop = IsTransitioning && backdropBounds.HasValue ? Union(backdropBounds.Value, bounds) : bounds;
-        if (ConnectedBounds.HasValue && ConnectedBounds.Value == bounds && backdropBounds.HasValue && backdropBounds.Value == backdrop) return;
         bool cameraChanged = !ConnectedBounds.HasValue || ConnectedBounds.Value != bounds;
+        if (cameraChanged) SetCameraBounds(bounds, resetting || immediateCamera || !ConnectedBounds.HasValue);
+        // 정착 중인 카메라가 아직 이전 범위를 볼 수 있으므로 배경·통창은 마지막에 줄인다.
+        Rect backdrop = (IsTransitioning || IsCameraSettling) && backdropBounds.HasValue ? Union(backdropBounds.Value, bounds) : bounds;
+        if (ConnectedBounds.HasValue && ConnectedBounds.Value == bounds && backdropBounds.HasValue && backdropBounds.Value == backdrop) return;
         ConnectedBounds = bounds;
-        if (cameraChanged) SetCameraBounds(bounds);
         if (backdropBounds.HasValue && backdropBounds.Value == backdrop) return;
         backdropBounds = backdrop;
         automaticBackdrop.Resize(backdrop);
     }
-    private void SetCameraBounds(Rect bounds)
+    private void SetCameraBounds(Rect bounds, bool immediate = false)
     {
         var frame = originalCameraBounds.transform;
         var horizontal = frame.InverseTransformVector(transform.TransformVector(Vector3.right * (bounds.width + 2)));
         var vertical = frame.InverseTransformVector(transform.TransformVector(Vector3.up * (bounds.height + 3)));
-        originalCameraBounds.size = new Vector2(Mathf.Abs(horizontal.x) + Mathf.Abs(vertical.x), Mathf.Abs(horizontal.y) + Mathf.Abs(vertical.y));
+        var size = new Vector2(Mathf.Abs(horizontal.x) + Mathf.Abs(vertical.x), Mathf.Abs(horizontal.y) + Mathf.Abs(vertical.y));
         Vector3 center = transform.TransformPoint(bounds.center + Vector2.down * 1.5f);
         Vector3 position = center - frame.TransformVector(originalCameraBounds.offset);
         position.z = frame.position.z;
-        frame.position = position;
-        roomConfiner.InvalidateBoundingShapeCache();
+        ApplyCameraBounds(size, position, immediate);
     }
     private void ApplyRoomPresentation(WaveRoomLayout layout)
     {
@@ -1133,13 +1198,90 @@ public sealed class WaveCellTerrain : MonoBehaviour
     }
     private void SetPresentationCamera(Rect bounds)
     {
+        bool immediate = roomSpaceReset || !presentationCamera.HasValue;
         presentationCamera = bounds;
-        originalCameraBounds.size = bounds.size + new Vector2(2, 3);
         Vector3 center = transform.TransformPoint(bounds.center + Vector2.down * 1.5f);
         Vector3 position = center - originalCameraBounds.transform.TransformVector(originalCameraBounds.offset);
         position.z = originalCameraBounds.transform.position.z;
+        ApplyCameraBounds(bounds.size + new Vector2(2, 3), position, immediate);
+    }
+    private void ApplyCameraBounds(Vector2 size, Vector3 position, bool immediate)
+    {
+        if (IsCameraSettling && size == cameraSettleToSize && position == cameraSettleToPosition && !immediate) return;
+        var frame = originalCameraBounds.transform;
+        Vector2 shift = frame.InverseTransformVector(position - frame.position);
+        var oldHalf = originalCameraBounds.size * .5f;
+        var nextHalf = size * .5f;
+        bool expands = shift.x - nextHalf.x <= -oldHalf.x && shift.x + nextHalf.x >= oldHalf.x
+            && shift.y - nextHalf.y <= -oldHalf.y && shift.y + nextHalf.y >= oldHalf.y;
+        var room = GetComponentInParent<Room>();
+        bool live = Application.isPlaying && isActiveAndEnabled && room != null
+            && RoomManager.Instance != null && RoomManager.Instance.CurrentRoom == room;
+        if (immediate || carrying || expands || !live)
+        {
+            IsCameraSettling = false;
+            WriteCameraBounds(size, position);
+            if (!carrying) RestoreCarryCameraUpdate();
+            return;
+        }
+        cameraSettleFromSize = originalCameraBounds.size;
+        cameraSettleFromPosition = frame.position;
+        cameraSettleToSize = size;
+        cameraSettleToPosition = position;
+        if (viewCamera == null) viewCamera = Camera.main;
+        if (viewCamera != null && viewCamera.orthographic)
+        {
+            // 이동 경로의 넓은 여백 대신 현재 화면과 목적지만 담은 범위에서 시작한다.
+            // 그래야 경계가 화면에 닿는 마지막 순간에만 카메라가 빠르게 밀리지 않는다.
+            var right = frame.InverseTransformVector(viewCamera.transform.right * viewCamera.orthographicSize * viewCamera.aspect);
+            var up = frame.InverseTransformVector(viewCamera.transform.up * viewCamera.orthographicSize);
+            var extent = new Vector2(Mathf.Abs(right.x) + Mathf.Abs(up.x), Mathf.Abs(right.y) + Mathf.Abs(up.y)) + Vector2.one * .05f;
+            Vector2 cameraPoint = frame.InverseTransformPoint(viewCamera.transform.position);
+            Vector2 targetCenter = (Vector2)frame.InverseTransformPoint(position) + originalCameraBounds.offset;
+            Vector2 min = Vector2.Min(targetCenter - nextHalf, cameraPoint - extent);
+            Vector2 max = Vector2.Max(targetCenter + nextHalf, cameraPoint + extent);
+            cameraSettleFromSize = max - min;
+            cameraSettleFromPosition = frame.TransformPoint((min + max) * .5f - originalCameraBounds.offset);
+            cameraSettleFromPosition.z = position.z;
+            WriteCameraBounds(cameraSettleFromSize, cameraSettleFromPosition);
+        }
+        if (cameraSettleFromSize == size && cameraSettleFromPosition == position)
+        {
+            IsCameraSettling = false;
+            WriteCameraBounds(size, position);
+            RestoreCarryCameraUpdate();
+            return;
+        }
+        cameraSettleTime = 0;
+        IsCameraSettling = true;
+    }
+    private void WriteCameraBounds(Vector2 size, Vector3 position)
+    {
+        bool resized = originalCameraBounds.size != size;
+        originalCameraBounds.size = size;
         originalCameraBounds.transform.position = position;
-        roomConfiner.InvalidateBoundingShapeCache();
+        // 위치 이동만으로는 형상 캐시를 다시 굽지 않는다. 크기가 바뀌는 짧은 정착 구간에서만 갱신한다.
+        if (resized) roomConfiner.InvalidateBoundingShapeCache();
+    }
+    private void UpdateCameraSettlement()
+    {
+        if (!IsCameraSettling) return;
+        cameraSettleTime += Time.deltaTime;
+        float t = Mathf.Clamp01(cameraSettleTime / CameraSettleDuration);
+        // 시작과 끝의 속도·가속도가 모두 0인 곡선으로 마지막 경계 Clamp도 서서히 멈춘다.
+        float eased = t * t * t * (t * (t * 6f - 15f) + 10f);
+        WriteCameraBounds(Vector2.Lerp(cameraSettleFromSize, cameraSettleToSize, eased),
+            Vector3.Lerp(cameraSettleFromPosition, cameraSettleToPosition, eased));
+        if (t < 1f) return;
+        IsCameraSettling = false;
+        RestoreCarryCameraUpdate();
+        RefreshRoomSpace();
+    }
+    private void CancelCameraSettlement(bool complete)
+    {
+        if (!IsCameraSettling) return;
+        IsCameraSettling = false;
+        if (complete && originalCameraBounds != null) WriteCameraBounds(cameraSettleToSize, cameraSettleToPosition);
     }
     // 초기맵 배열의 조회용 집합과 OneWay 줄의 확대 중심을 한 번만 만든다.
     private InitialCache InitialFor(WaveMapCell[] source)
@@ -1434,7 +1576,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     }
     public Bounds LocalBounds(Transform source)
     {
-        int group = Array.FindIndex(data.cellMap.groups, g => transform.Find(g.path) == source) + 1;
+        int group = GroupOf(source);
         var cells = active.Where(c => c.group == group).ToArray();
         if (cells.Length == 0) return new Bounds(Vector3.zero, Vector3.zero);
         Vector2 origin = group > 0 ? data.cellMap.groups[group - 1].origin : Vector2.zero;

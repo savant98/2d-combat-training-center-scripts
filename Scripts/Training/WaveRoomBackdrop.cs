@@ -6,6 +6,8 @@ using UnityEngine.Animations;
 // Comprehensive의 기능 모듈 전체를 복제해 Animator 경로·제작 흐름·케이블 참조를 함께 보존한다.
 // 한 번 만든 모듈은 없애지 않는다. 지금 공간에 필요 없으면 꺼 두었다가 다시 필요해지면 켠다(모듈 하나가 오브젝트 수백 개라 새로 만드는 비용이 크다).
 // TrainingRoom 입장 로딩(Prewarm)이 모든 Wave의 공간에 필요한 모듈을 미리 만들어 두므로, Wave 도중에는 켜고 끄기만 한다.
+// Brain(실행 순서 100)과 최종 경계·픽셀 보정이 끝난 같은 프레임의 카메라를 읽는다.
+[DefaultExecutionOrder(200)]
 public sealed class WaveRoomBackdrop : MonoBehaviour
 {
     private sealed class Module
@@ -73,8 +75,6 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         staging.SetActive(false);
         template = Instantiate(art, staging.transform, false);
         template.gameObject.SetActive(false);
-        var east = content.Find("TrainingBackdrop_East");
-        if (east != null) east.gameObject.SetActive(false);
         window = content.Find("Furniture/TrainingObservationWindow");
         if (window == null) return;
         foreach (var filter in window.GetComponentsInChildren<MeshFilter>(true))
@@ -144,12 +144,13 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
     // 이 공간에서 카메라가 양 끝에 갔을 때 화면에 걸리는 모듈 번호를 모은다.
     private void CollectWanted(Layer layer, Rect bounds, HashSet<Vector2Int> wanted)
     {
-        // 원본 시차만큼 카메라를 따라가므로 잔여 이동량과 화면 여유만 반복하면 된다.
-        float rest = 1 - layer.parallax;
-        int left = Mathf.Min(0, Mathf.FloorToInt(((bounds.xMin - origin.x) * rest - viewportExtent.x) / layer.repeat.x + .5f));
-        int right = Mathf.Max(0, Mathf.CeilToInt(((bounds.xMax - origin.x) * rest + viewportExtent.x) / layer.repeat.x - .5f));
-        int bottom = Mathf.Min(0, Mathf.FloorToInt(((bounds.yMin - origin.y) * rest - viewportExtent.y) / layer.repeat.y + .5f));
-        int top = Mathf.Max(0, Mathf.CeilToInt(((bounds.yMax - origin.y) * rest + viewportExtent.y) / layer.repeat.y - .5f));
+        // 화면에 남는 시차만큼만 반복한다. 맵 크기에 비례해 배경 복제 수를 늘리지 않는다.
+        Vector2 min = Residual(layer, bounds.min - (Vector2)origin, viewportExtent);
+        Vector2 max = Residual(layer, bounds.max - (Vector2)origin, viewportExtent);
+        int left = Mathf.Min(0, Mathf.FloorToInt((min.x - viewportExtent.x) / layer.repeat.x + .5f));
+        int right = Mathf.Max(0, Mathf.CeilToInt((max.x + viewportExtent.x) / layer.repeat.x - .5f));
+        int bottom = Mathf.Min(0, Mathf.FloorToInt((min.y - viewportExtent.y) / layer.repeat.y + .5f));
+        int top = Mathf.Max(0, Mathf.CeilToInt((max.y + viewportExtent.y) / layer.repeat.y - .5f));
         for (int x = left; x <= right; x++)
             for (int y = bottom; y <= top; y++)
             {
@@ -251,7 +252,7 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         foreach (var layer in layers)
         {
             if (layer.pending <= 0) continue;
-            Vector2 drift = (Vector2)delta * layer.parallax;
+            Vector2 drift = Follow(layer, delta);
             foreach (var cell in layer.wanted)
             {
                 layer.modules.TryGetValue(cell, out var module);
@@ -275,7 +276,7 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
                     module.shown = true;
                 }
                 module.root.localPosition = origin + new Vector3(cell.x * layer.repeat.x, cell.y * layer.repeat.y);
-                module.depth.localPosition = layer.home + delta * layer.parallax;
+                module.depth.localPosition = layer.home + (Vector3)Follow(layer, delta);
                 layer.pending--;
             }
         }
@@ -298,6 +299,19 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         if (art != null) art.gameObject.SetActive(visible);
         foreach (var layer in layers) layer.root.gameObject.SetActive(visible);
     }
+    // 작은 이동에서는 기존 레이어별 깊이감을 유지하되 큰 맵에서는 설비가 화면 밖으로 계속 밀려나지 않는다.
+    // 세로 여유는 더 작게 잡아 제작·회수 설비의 높이가 장거리 이동에도 유지되게 한다.
+    private Vector2 Residual(Layer layer, Vector2 delta) => Residual(layer, delta, MeasureViewport());
+    private static Vector2 Residual(Layer layer, Vector2 delta, Vector2 extent)
+    {
+        float rest = Mathf.Clamp01(1f - layer.parallax);
+        Vector2 limit = new Vector2(extent.x * (.1f + .5f * rest), extent.y * (.06f + .3f * rest));
+        return new Vector2(
+            limit.x * (float)System.Math.Tanh(delta.x * rest / limit.x),
+            limit.y * (float)System.Math.Tanh(delta.y * rest / limit.y));
+    }
+    private Vector2 Follow(Layer layer, Vector2 delta) => delta - Residual(layer, delta);
+
     private void LateUpdate()
     {
         // 배경을 숨긴 동안에도 모듈은 마저 켜 둔다(다시 보일 때 비어 있지 않게).
@@ -312,8 +326,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         delta.z = 0;
         foreach (var layer in layers)
         {
-            layer.original.localPosition = layer.home + delta * layer.parallax;
-            foreach (var module in layer.modules.Values) if (module.shown) module.depth.localPosition = layer.home + delta * layer.parallax;
+            layer.original.localPosition = layer.home + (Vector3)Follow(layer, delta);
+            foreach (var module in layer.modules.Values) if (module.shown) module.depth.localPosition = layer.home + (Vector3)Follow(layer, delta);
         }
     }
     private void OnDestroy() { foreach (var mesh in meshes) if (mesh != null) Destroy(mesh); }
