@@ -20,9 +20,22 @@ public sealed class GrabCinematicOrbitView
     private float OrbitSign => direction.x < 0 ? 1 : -1;
     private readonly LineRenderer[] streaks;
     private readonly float[] streakX, streakY, streakLength;
-    private readonly TrailRenderer trail;
-    private Vector3 trailOrigin;
-    private Vector3[] trailPositions = new Vector3[128];
+    // 회전 궤적: 지난 arcDuration초 동안 손끝이 지나간 호 전체를 Enemy/SwingArc 셰이더로 한 번에 그린다.
+    // 프레임마다 점을 찍지 않으므로 프레임률과 무관하게 같은 원호이고, 코어를 중심에 두어 상승·하강 중에도 코어 상대 원형을 유지한다.
+    private static readonly int ArcHeadId = Shader.PropertyToID("_Head"), ArcTailId = Shader.PropertyToID("_Tail"), ArcAlphaId = Shader.PropertyToID("_Alpha");
+    private static readonly int ArcQuadSizeId = Shader.PropertyToID("_QuadSize"), ArcOuterId = Shader.PropertyToID("_Outer");
+    private static readonly int ArcHeadWidthId = Shader.PropertyToID("_HeadWidth"), ArcGlowWidthId = Shader.PropertyToID("_GlowWidth"), ArcSymmetricId = Shader.PropertyToID("_Symmetric");
+    private static readonly int ArcGlowGainId = Shader.PropertyToID("_GlowGain"), ArcTipScaleId = Shader.PropertyToID("_TipScale"), ArcRimWidthId = Shader.PropertyToID("_RimWidth");
+    private readonly SpriteRenderer arc;
+    private readonly MaterialPropertyBlock arcProperties;
+    private readonly float arcDuration, arcOuterOffset, arcMargin, arcSymmetric, arcLineWidth;
+    private bool arcOutlineOnly;
+    // 흑백 임팩트 화면은 밝은 곳을 모두 검은 실루엣으로 바꾼다. 넓은 궤적이 Player 실루엣을 덮지 않게 그동안은 가는 선만 그린다.
+    public void SetArcOutlineOnly(bool value) => arcOutlineOnly = value;
+    private readonly float[] arcTimes = new float[256], arcAngles = new float[256];
+    private int arcFirst, arcCount;
+    private bool arcStarted, arcFrozen;
+    private Vector3 arcDirection = Vector3.right;
     private GrabCinematicThrusterView thrusters;
     private readonly Transform risePose;
     private readonly SpriteRenderer playerCircle;
@@ -76,8 +89,10 @@ public sealed class GrabCinematicOrbitView
     public Vector3 HandPosition => port != null ? port.position : core.position;
     public float MotionSpeed => motionSpeed;
     public float OrbitAngle => angle;
-    public bool TrailIsEmitting => trail != null && trail.emitting;
-    public int TrailPointCount => trail != null ? trail.positionCount : 0;
+    public bool ArcIsVisible => arc != null && arc.enabled;
+    public float ArcSweep { get; private set; }
+    public float ArcDuration => arcDuration;
+    public SpriteRenderer ArcRenderer => arc;
     public int ImpactEffectCount { get; private set; }
     public Vector3 ImpactPosition { get; private set; }
     public Vector3 ShakeOffset { get; private set; }
@@ -85,7 +100,7 @@ public sealed class GrabCinematicOrbitView
     public float GroundCenterY => PlatformY;
     public GrabCinematicOrbitView(Transform stage, Transform bossRig, Transform bossModel, Transform core,
         Transform playerRig, Transform playerModel, Vector3 direction, float radius, float aspect,
-        TrailRenderer trailPrefab, Material motionMaterial, AnimationClip recoilClip)
+        SpriteRenderer arcPrefab, float arcDuration, Material motionMaterial, AnimationClip recoilClip)
     {
         this.stage = stage; this.bossRig = bossRig; this.bossModel = bossModel; this.core = core;
         this.playerRig = playerRig; this.playerModel = playerModel; this.radius = radius; this.recoilClip = recoilClip;
@@ -95,11 +110,19 @@ public sealed class GrabCinematicOrbitView
         head = bossModel.Find("MineLauncher"); port = head != null ? head.Find("Port") : null; stem = bossModel.Find("MineLauncherStem");
         recoilRoot = new GameObject("GrabRecoilPose").transform; recoilRoot.SetParent(stage, false);
         recoilBoss = RecoilNode("Boss"); recoilArm = RecoilNode("Arm"); recoilPlayer = RecoilNode("Player");
-        if (trailPrefab != null)
+        this.arcDuration = Mathf.Max(.02f, arcDuration);
+        if (arcPrefab != null)
         {
-            trail = Object.Instantiate(trailPrefab, stage); trail.name = "GrabHandRedTrail";
-            SetLayer(trail.transform, LayerMask.NameToLayer("UI")); trail.emitting = false; trail.Clear();
-            trailOrigin = core.position;
+            arc = Object.Instantiate(arcPrefab, stage); arc.name = "GrabHandSwingArc";
+            SetLayer(arc.transform, LayerMask.NameToLayer("UI")); arc.enabled = false;
+            arcProperties = new MaterialPropertyBlock();
+            // 손끝이 띠의 가운데 선(대칭형) 또는 바깥 테두리를 지나도록 반지름을 정하고, 사각형은 머리 폭과 빛 번짐까지 덮는다.
+            var look = arc.sharedMaterial;
+            float headWidth = look != null ? look.GetFloat(ArcHeadWidthId) : 1;
+            arcSymmetric = look != null ? look.GetFloat(ArcSymmetricId) : 1;
+            arcOuterOffset = headWidth * .5f * arcSymmetric;
+            arcMargin = arcOuterOffset + (look != null ? look.GetFloat(ArcGlowWidthId) * 6 : 1) + .1f;
+            arcLineWidth = look != null ? look.GetFloat(ArcRimWidthId) * 1.5f : .2f;
         }
         streaks = new LineRenderer[28]; streakX = new float[28]; streakY = new float[28]; streakLength = new float[28];
         for (int i = 0; i < streaks.Length; i++)
@@ -122,7 +145,7 @@ public sealed class GrabCinematicOrbitView
         for (int i = 0; i < streakX.Length; i++) streakX[i] = Mathf.Lerp(-width, width, Mathf.Repeat(i * .618034f, 1));
     }
     public void SetVerticalMotion(float speed) => motionSpeed = speed;
-    public void SetAngle(float degrees) { angle = degrees; if (trail != null && impactAt < 0) trail.emitting = true; }
+    public void SetAngle(float degrees) { angle = degrees; arcStarted = true; }
     public float NextGroundContactAngle(float current)
     {
         return contactDegrees + 360 * Mathf.Ceil((current - contactDegrees + .001f) / 360);
@@ -165,7 +188,7 @@ public sealed class GrabCinematicOrbitView
         if(held.sqrMagnitude>.001f) playerRig.position+=core.position+held.normalized*radius-playerModel.position;
         PoseArm(playerModel.position);
         PlayerPosition = playerModel.position;
-        UpdateTrail();
+        UpdateArc();
         scroll += motionSpeed * deltaTime;
         float height = (radius + 5) * 2;
         for (int i = 0; i < streaks.Length; i++)
@@ -177,21 +200,64 @@ public sealed class GrabCinematicOrbitView
         float shake = Mathf.Clamp01(1 - (Time.unscaledTime - impactAt) / Mathf.Max(.001f, shakeDuration));
         ShakeOffset = new Vector3(Mathf.Sin(Time.unscaledTime * 113), Mathf.Cos(Time.unscaledTime * 137)) * (shakeStrength * shake);
     }
-    private void UpdateTrail()
+    private void UpdateArc()
     {
-        if (trail == null) return;
-        Vector3 delta = core.position - trailOrigin;
-        if (trail.positionCount > 0 && delta.sqrMagnitude > 0)
+        if (arc == null) return;
+        float now = Time.time, trailing = angle;
+        if (arcStarted) { RecordArcAngle(now, angle); trailing = SampleArcAngle(now - arcDuration); }
+        // 꼬리는 arcDuration초 전의 각도다. 회전이 멈추면(충돌·대기) 꼬리가 머리를 따라잡아 같은 시간 뒤에 사라진다.
+        ArcSweep = angle - trailing;
+        // 충돌 전에는 실제 손끝 방향을 따른다. 충돌 뒤 남은 잔상은 반동에 흔들리지 않게 충돌 순간의 방향에 두고 코어의 이동만 따라간다.
+        Vector3 hand = PlayerPosition - core.position; hand.z = 0;
+        if (!arcFrozen && hand.sqrMagnitude > .0001f) arcDirection = hand;
+        if (impactAt > 0) arcFrozen = true;
+        bool visible = arcStarted && Mathf.Abs(ArcSweep) >= .5f;
+        arc.enabled = visible;
+        if (!visible) return;
+        float size = (radius + arcMargin) * 2;
+        arc.transform.SetPositionAndRotation(core.position, Quaternion.Euler(0, 0, Mathf.Atan2(arcDirection.y, arcDirection.x) * Mathf.Rad2Deg - 90));
+        arc.transform.localScale = new Vector3(size, size, 1);
+        // 셰이더 각도는 사각형 기준이다(0 = 손끝). 화면에서 도는 방향(OrbitSign)의 반대쪽으로 꼬리를 둔다.
+        arcProperties.Clear();
+        arcProperties.SetFloat(ArcQuadSizeId, size); arcProperties.SetFloat(ArcOuterId, radius + arcOuterOffset);
+        arcProperties.SetFloat(ArcHeadId, 0); arcProperties.SetFloat(ArcTailId, -OrbitSign * ArcSweep); arcProperties.SetFloat(ArcAlphaId, 1);
+        // 충돌 뒤 남은 잔상에는 손끝 섬광을 그리지 않는다.
+        arcProperties.SetFloat(ArcTipScaleId, arcFrozen || arcOutlineOnly ? 0 : 1);
+        if (arcOutlineOnly)
         {
-            if (trailPositions.Length < trail.positionCount)
-                trailPositions = new Vector3[Mathf.NextPowerOfTwo(trail.positionCount)];
-            int count = trail.GetPositions(trailPositions);
-            // 코어의 이동만 과거 점에 더해 회전 궤적이 지역좌표의 원을 유지하게 한다.
-            for (int i = 0; i < count; i++) trailPositions[i] += delta;
-            trail.SetPositions(trailPositions);
+            arcProperties.SetFloat(ArcHeadWidthId, arcLineWidth); arcProperties.SetFloat(ArcGlowGainId, 0);
+            arcProperties.SetFloat(ArcOuterId, radius + arcLineWidth * .5f * arcSymmetric);
         }
-        trailOrigin = core.position;
-        trail.transform.position = PlayerPosition;
+        arc.SetPropertyBlock(arcProperties);
+    }
+    private void RecordArcAngle(float time, float degrees)
+    {
+        int length = arcTimes.Length;
+        if (arcCount > 0)
+        {
+            int last = (arcFirst + arcCount - 1) % length;
+            if (time <= arcTimes[last]) { arcAngles[last] = degrees; return; }   // 같은 프레임의 두 번째 갱신
+        }
+        // arcDuration보다 오래된 기록은 그 경계를 보간할 하나만 남긴다.
+        while (arcCount > 1 && arcTimes[(arcFirst + 1) % length] <= time - arcDuration) { arcFirst = (arcFirst + 1) % length; arcCount--; }
+        if (arcCount == length) { arcFirst = (arcFirst + 1) % length; arcCount--; }
+        int index = (arcFirst + arcCount) % length;
+        arcTimes[index] = time; arcAngles[index] = degrees; arcCount++;
+    }
+    private float SampleArcAngle(float time)
+    {
+        if (arcCount == 0) return angle;
+        int length = arcTimes.Length;
+        // 궤적을 켜기 전의 시각은 켠 순간의 각도로 본다(켠 뒤 지나간 호만 그린다).
+        if (time <= arcTimes[arcFirst]) return arcAngles[arcFirst];
+        for (int i = 1; i < arcCount; i++)
+        {
+            int next = (arcFirst + i) % length;
+            if (time > arcTimes[next]) continue;
+            int previous = (arcFirst + i - 1) % length;
+            return Mathf.Lerp(arcAngles[previous], arcAngles[next], Mathf.InverseLerp(arcTimes[previous], arcTimes[next], time));
+        }
+        return arcAngles[(arcFirst + arcCount - 1) % length];
     }
     private void PoseArm(Vector3 target)
     {
@@ -206,11 +272,11 @@ public sealed class GrabCinematicOrbitView
     }
     public void ShowImpact(FeedbackDataSO feedback)
     {
-        motionSpeed = 0; if (trail != null) trail.emitting = false;
+        motionSpeed = 0;
         ShowPlatform(true); impactAt = Time.unscaledTime; UpdatePose(0);
         contactShift=new Vector3(worldMix>.999f ? targetFootX-PlayerFootPosition.x : 0,PlatformY-PlayerFootPosition.y,0); bossRig.position+=contactShift; playerRig.position+=contactShift;
         PlayerPosition=playerModel.position; PoseArm(PlayerPosition); contactLocked=true;
-        UpdateTrail();
+        UpdateArc();
         ImpactPosition=PlayerFootPosition;
         shakeDuration = feedback != null ? feedback.shakeDuration : .28f; shakeStrength = feedback != null ? feedback.shakeIntensity * .16f : .2f;
         if (feedback == null || feedback.particlePrefabs == null) return;

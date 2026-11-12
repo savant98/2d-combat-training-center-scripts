@@ -84,7 +84,7 @@ public sealed class StomperWrestlingGrabAbility : AiAbility
         presentation = grab.Presentation;
         presentation.ConfigureCameraShots(Settings);
         presentation.BeginOrbitView(controller.model.transform, player.model.transform, visual.CoreTransform,
-            Settings.grabRadius, Settings.blackoutDuration, Settings.spinTrailPrefab, Settings.motionLineMaterial, Settings.recoilClip, Vector3.right * controller.Facing,
+            Settings.grabRadius, Settings.blackoutDuration, Settings.spinArcPrefab, Settings.spinArcDuration, Settings.motionLineMaterial, Settings.recoilClip, Vector3.right * controller.Facing,
             Settings.trainingBackdrop, Settings.travelBackdropMaterial, Settings.roomExtensionMaterial, Settings.rocketThrusterPrefab, Settings.riseClip,
             landing.ContactDegrees, Settings.flightMotionScale, Settings.cameraLeadDistance);
         float playerHeight=Mathf.Min(landing.RoomBounds.max.y-1,Mathf.Max(player.transform.position.y,landing.PlayerRoot.y+3));

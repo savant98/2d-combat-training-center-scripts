@@ -130,7 +130,7 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
         display.color = Color.white; SetTarget(1);
     }
     public void BeginOrbitView(Transform firstModel, Transform secondModel, Transform pivot, float radius,
-        float blackoutDuration, TrailRenderer trailPrefab, Material motionMaterial, AnimationClip recoilClip, Vector3 direction,
+        float blackoutDuration, SpriteRenderer arcPrefab, float arcDuration, Material motionMaterial, AnimationClip recoilClip, Vector3 direction,
         GameObject trainingBackdrop, Material travelMaterial, Material roomMaterial, GameObject thrusterPrefab, AnimationClip riseClip, float contactAngle, float motionScale, float cameraLead)
     {
         BeginActorView(firstModel, secondModel);
@@ -148,7 +148,7 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
         foreach(var renderer in firstCopy.model.GetComponentsInChildren<SpriteRenderer>(true))
             if(renderer.name=="ModelBorderMask") { descentBorder=renderer; break; }
         orbitView = new GrabCinematicOrbitView(stage.transform, firstCopy.rig, firstCopy.model, core,
-            secondCopy.rig, secondCopy.model, direction, radius, orbitAspect, trailPrefab, motionMaterial, recoilClip);
+            secondCopy.rig, secondCopy.model, direction, radius, orbitAspect, arcPrefab, arcDuration, motionMaterial, recoilClip);
         orbitView.ConfigureTravel(thrusterPrefab,riseClip,contactAngle); orbitView.SetFlightScale(motionScale);
         backdropView = new GrabCinematicBackdropView(display.transform.parent, display.transform.GetSiblingIndex(), trainingBackdrop, travelMaterial, source);
     }
@@ -209,6 +209,7 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
         }
         else if(!visible) RestoreImpactLayer();
         impactFrameActive=visible; impactFrameProgress=Mathf.Clamp01(progress);
+        orbitView?.SetArcOutlineOnly(visible);
         if(compositeInstance!=null)
         {
             compositeInstance.SetFloat("_ImpactFrame",visible ? 1 : 0);
@@ -256,7 +257,8 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
             if (material == null || material.shader == null) continue;
             string shader = material.shader.name;
             bool additive = shader.IndexOf("GlowAdd", System.StringComparison.OrdinalIgnoreCase) >= 0
-                || shader.IndexOf("GlowMultiply", System.StringComparison.OrdinalIgnoreCase) >= 0;
+                || shader.IndexOf("GlowMultiply", System.StringComparison.OrdinalIgnoreCase) >= 0
+                || shader.IndexOf("SwingArc", System.StringComparison.OrdinalIgnoreCase) >= 0;
             if (!additive) continue;
             coverageHidden[renderer] = renderer.forceRenderingOff; renderer.forceRenderingOff = true;
         }

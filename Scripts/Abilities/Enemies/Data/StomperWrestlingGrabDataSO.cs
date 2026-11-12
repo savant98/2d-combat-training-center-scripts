@@ -54,7 +54,9 @@ public sealed class StomperWrestlingGrabDataSO : EnemyAbilityDataSO
     public Material previewMaterial;
     public Sprite previewFill;
     public SoundOptions warningLoopSound;
-    public TrailRenderer spinTrailPrefab;
+    // 회전 궤적은 프레임마다 점을 찍는 TrailRenderer 대신, 지난 spinArcDuration초의 호 전체를 계산해 그리는 Enemy/SwingArc 표시를 쓴다.
+    public SpriteRenderer spinArcPrefab;
+    [Min(.02f)] public float spinArcDuration = .2f;
     public Material motionLineMaterial;
     public FeedbackDataSO gripFeedback;
     public FeedbackDataSO impactFeedback;
