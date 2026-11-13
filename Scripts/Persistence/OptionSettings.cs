@@ -9,6 +9,11 @@ public class OptionSettings
     public int width;
     public int height;
     public bool windowed;
+    public bool exclusiveFullscreen;
+    public int monitorIndex;
+    public string monitorName = "";
+    public uint refreshNumerator;
+    public uint refreshDenominator;
     public bool vSync;
     public int frameRate = 144;
     public float masterVolume = 1f;
@@ -24,6 +29,10 @@ public class OptionSettings
     public void Sanitize()
     {
         version = 1;
+        monitorIndex = Mathf.Max(0, monitorIndex);
+        monitorName ??= "";
+        if (refreshDenominator == 0 || refreshNumerator / (double)refreshDenominator > 1000)
+            refreshNumerator = refreshDenominator = 0;
         if (width < 640 || height < 360 || width > 16384 || height > 16384) width = height = 0;
         if (frameRate != -1 && frameRate != 60 && frameRate != 120 && frameRate != 144 && frameRate != 165 && frameRate != 240) frameRate = 144;
         masterVolume = Finite01(masterVolume, 1f);

@@ -108,6 +108,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private Color[] homeLaserColors;
     private readonly HashSet<string> homeKnownTrainingIds = new HashSet<string>(StringComparer.Ordinal);
     private readonly HashSet<string> homeClearedTrainingIds = new HashSet<string>(StringComparer.Ordinal);
+    private EventSystem inputEventSystem;
+    private bool previousNavigationEvents;
     private GameTimeController pauseOwner;
     private Vector2 terminalHome, wristHome, lastFitSize;
     private Quaternion terminalRotation, wristRotation;
@@ -117,6 +119,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private int selectedHomeIndex;
     private bool homeVisible, isHomeTransitioning;
     private bool listFocused, initialized, isTransitioning, isClosing, ownsPause;
+    [SerializeField] private bool equipmentUsesGeometry;
     private bool detailOpen, isPageTransitioning, isCategoryTransitioning, contentInteractable, contentRaycasts;
 
     private sealed class ButtonVisual
@@ -151,6 +154,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         && IsInLobby && !UIManager.Instance.IsUIInputBlocked && UIManager.Instance.IsCurrentInputTarget(this);
     private bool CanReceiveInput => IsTopInput && !IsTransitioning && !isClosing;
     private bool CanReceiveTabInput => IsTopInput && !isTransitioning && !isHomeTransitioning && !isClosing;
+    public bool CanControlTutorialVideo => CanReceiveInput && detailOpen && selectedTab == 2 && !NoticeVisible;
 
     protected override void Awake()
     {
@@ -250,6 +254,9 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             });
             BindPointerExit(button);
         }
+        foreach (var trigger in GetComponentsInChildren<EventTrigger>(true))
+            if (trigger.GetComponentInParent<UnityEngine.UI.ScrollRect>() != null && trigger.GetComponent<MenuScrollRelay>() == null)
+                trigger.gameObject.AddComponent<MenuScrollRelay>();
         inventoryAction = new InputAction("Inventory", InputActionType.Button, "<Keyboard>/i");
         inventoryAction.performed += HandleInventoryInput;
         noticeRoot.SetActive(false);
@@ -320,10 +327,14 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     {
         var labels = button.GetComponentsInChildren<TextMeshProUGUI>(true);
         var symbols = new List<UnityEngine.UI.Graphic>();
+        var equipmentEmblem = sections.Length > 2 && Array.IndexOf(sections[2].entryButtons, button) >= 0
+            ? button.transform.Find("Emblem") : null;
         foreach (var graphic in button.GetComponentsInChildren<UnityEngine.UI.Graphic>(true))
         {
             if (graphic is TextMeshProUGUI) continue;
+            if (equipmentEmblem != null && graphic.transform.IsChildOf(equipmentEmblem)) continue;
             var image = graphic as UnityEngine.UI.Image;
+            // 장비 기호와 사진 Sprite의 원래 색은 선택 상태와 관계없이 유지한다.
             if (image != null && image.sprite != null) continue;
             var parent = graphic.transform;
             bool glyph = parent.name.StartsWith("CloseStroke", StringComparison.Ordinal) || parent.name.StartsWith("ConfirmStroke", StringComparison.Ordinal);
@@ -452,6 +463,9 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             RefreshHomeStatistics();
             AnimateHomeSignals();
         }
+        // 영상 확인키는 공통 방향 입력 잠금 직후에도 소비한다. 같은 입력은 한 번만 처리된다.
+        if (CanReceiveInput && detailOpen && selectedTab == 2 && !NoticeVisible
+            && InputManager.MenuConfirmPressed()) OnConfirm();
         AnimateScreenMachinery();
         RefreshInteractable();
     }
@@ -554,6 +568,13 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         noticeRoot.SetActive(false);
         rootObject.SetActive(true);
         base.Open();
+        inputEventSystem = EventSystem.current;
+        if (inputEventSystem != null)
+        {
+            previousNavigationEvents = inputEventSystem.sendNavigationEvents;
+            inputEventSystem.sendNavigationEvents = false;
+            inputEventSystem.SetSelectedGameObject(null);
+        }
         // 단말기와 Pause 메뉴는 각각 자신이 올린 정지 횟수만 회수한다.
         pauseOwner = GameTimeController.Instance;
         pauseOwner.PushPause();
@@ -610,6 +631,12 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     }
     private void ReleasePause()
     {
+        if (inputEventSystem != null)
+        {
+            inputEventSystem.sendNavigationEvents = previousNavigationEvents;
+            inputEventSystem.SetSelectedGameObject(null);
+            inputEventSystem = null;
+        }
         if (!ownsPause) return;
         ownsPause = false;
         if (pauseOwner != null) pauseOwner.PopPause();
@@ -868,6 +895,11 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             RefreshSelection();
             return;
         }
+        if (detailOpen && selectedTab == 2 && CanReceiveInput)
+        {
+            var tutorial = sections[2].details[SelectedEntry].GetComponentInChildren<TerminalTutorialVideo>(true);
+            if (tutorial != null) { if (horizontal != 0) tutorial.SeekBySeconds(horizontal); return; }
+        }
         if (!listFocused)
         {
             int nextTab = (selectedTab + horizontal + sections.Length) % sections.Length;
@@ -883,6 +915,11 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             return;
         }
         var section = sections[selectedTab];
+        if (selectedTab == 2 && equipmentUsesGeometry)
+        {
+            MoveEquipment(direction, section);
+            return;
+        }
         int columns = Mathf.Max(1, section.columns);
         if (section.horizontalList)
         {
@@ -900,12 +937,38 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         if (vertical < 0 && SelectedEntry == FirstAvailableEntry(section)) { listFocused = false; RefreshSelection(); }
         else if (vertical != 0) SelectNextEntry(vertical);
     }
+    private void MoveEquipment(Vector2 direction, SectionBinding section)
+    {
+        bool vertical = Mathf.Abs(direction.y) > .5f;
+        var origin = section.entryButtons[SelectedEntry].transform as RectTransform;
+        var reference = section.entryScroll != null ? section.entryScroll.content : section.listRoot;
+        Vector2 center = reference.InverseTransformPoint(origin.TransformPoint(origin.rect.center));
+        int best = -1; float bestScore = float.PositiveInfinity;
+        for (int i = 0; i < section.entryButtons.Length; i++)
+        {
+            if (i == SelectedEntry || !EntryAvailable(section, i)) continue;
+            var candidate = (RectTransform)section.entryButtons[i].transform;
+            Vector2 delta = (Vector2)reference.InverseTransformPoint(candidate.TransformPoint(candidate.rect.center)) - center;
+            float along = vertical ? delta.y * Mathf.Sign(direction.y) : delta.x * Mathf.Sign(direction.x);
+            float across = vertical ? Mathf.Abs(delta.x) : Mathf.Abs(delta.y);
+            if (along < 1 || (!vertical && across > 2)) continue;
+            float score = vertical ? along * 10000 + across : along;
+            if (score < bestScore) { bestScore = score; best = i; }
+        }
+        if (best >= 0) SelectEntry(best);
+        else if (vertical && direction.y > 0) { listFocused = false; RefreshSelection(); }
+    }
     public override void OnConfirm()
     {
         if (!CanReceiveInput) return;
         hoveredButton = null;
         if (homeVisible) { OpenCategory(selectedHomeIndex); return; }
         if (NoticeVisible) { DismissNotice(); return; }
+        if (detailOpen && selectedTab == 2)
+        {
+            var tutorial = sections[2].details[SelectedEntry].GetComponentInChildren<TerminalTutorialVideo>(true);
+            if (tutorial != null) { tutorial.TogglePlayback(); return; }
+        }
         if (!listFocused) { PlayFeedback(confirmFeedback); listFocused = true; RefreshSelection(); return; }
         if (!detailOpen)
         {
@@ -970,17 +1033,19 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         {
             var button = pair.Key;
             var visual = pair.Value;
-            if (button == null) continue;
+            if (button == null || button.GetComponent<TerminalPlaybackButton>() != null) continue;
             bool selected = button.gameObject.activeInHierarchy && IsActive && !isClosing &&
                 (button == hoveredButton || IsSelectedButton(button));
+            if (button.TryGetComponent<TerminalButtonMotion>(out var motion)) motion.Select(selected);
+            // 주변의 어두운 면과 반대로 선택 면은 밝게, 그 안의 글자·기호는 어둡게 뒤집는다.
             if (visual.fill != null) visual.fill.color = new Color(1f, 1f, 1f, selected ? 1f : 0f);
-            else if (visual.face != null) visual.face.color = selected ? new Color(.28f, .62f, .86f, 1f) : visual.faceColor;
+            else if (visual.face != null) visual.face.color = selected ? new Color(.87f, .94f, 1f, 1f) : visual.faceColor;
             for (int index = 0; index < visual.labels.Length; index++)
                 if (visual.labels[index] != null)
-                    visual.labels[index].color = selected ? new Color(.025f, .045f, .065f, visual.labelColors[index].a) : visual.labelColors[index];
+                    visual.labels[index].color = selected ? new Color(0f, 0f, 0f, visual.labelColors[index].a) : visual.labelColors[index];
             for (int index = 0; index < visual.symbols.Length; index++)
                 if (visual.symbols[index] != null)
-                    visual.symbols[index].color = selected ? new Color(.035f, .055f, .075f, visual.symbolColors[index].a) : visual.symbolColors[index];
+                    visual.symbols[index].color = selected ? new Color(0f, 0f, 0f, visual.symbolColors[index].a) : visual.symbolColors[index];
         }
     }
 
@@ -1016,7 +1081,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             if (section.entryScroll != null) section.entryScroll.enabled = enabledInput && !homeVisible && !detailOpen;
             if (section.detailActions != null)
                 foreach (var button in section.detailActions)
-                    if (button != null) button.interactable = enabledInput && !homeVisible
+                    if (button != null && button.GetComponent<TerminalPlaybackButton>() == null) button.interactable = enabledInput && !homeVisible
                         && detailActionAvailability.TryGetValue(button, out bool actionAvailable) && actionAvailable;
             if (section.popupButtons != null)
                 foreach (var button in section.popupButtons)

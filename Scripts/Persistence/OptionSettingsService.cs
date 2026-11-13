@@ -7,6 +7,8 @@ public class OptionSettingsService : MonoBehaviour
 {
     public static OptionSettingsService Instance { get; private set; }
     public OptionSettings Current { get; private set; }
+    private OptionSettings pendingDisplay;
+    private Coroutine displayRoutine;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void Initialize()
@@ -57,12 +59,56 @@ public class OptionSettingsService : MonoBehaviour
     public static void ApplyDisplay(OptionSettings settings)
     {
         ApplyTiming(settings);
-        int width = settings.width > 0 ? settings.width : Screen.currentResolution.width;
-        int height = settings.height > 0 ? settings.height : Screen.currentResolution.height;
-        if (width <= 0 || height <= 0) { width = 1920; height = 1080; }
         // Editor GameView 크기와 사용자의 Editor 설정은 바꾸지 않는다.
-        if (!Application.isEditor)
-            Screen.SetResolution(width, height, settings.windowed ? FullScreenMode.Windowed : FullScreenMode.FullScreenWindow);
+        if (Application.isEditor || Instance == null) return;
+        Instance.pendingDisplay = settings.Copy();
+        DisplayOptions.NormalizeMonitor(Instance.pendingDisplay);
+        if (Instance.displayRoutine == null) Instance.displayRoutine = Instance.StartCoroutine(Instance.ApplyDisplayRoutine());
+    }
+
+    private IEnumerator ApplyDisplayRoutine()
+    {
+        // 이동 작업은 취소할 수 없으므로 직렬화한다. 확인 시간 초과 복구가 가장 마지막에 적용된다.
+        yield return null;
+        try
+        {
+            while (pendingDisplay != null)
+            {
+                var settings = pendingDisplay;
+                pendingDisplay = null;
+                var displays = DisplayOptions.Layout();
+                int index = DisplayOptions.Monitor(settings, displays);
+                if (index >= 0 && !Screen.mainWindowDisplayInfo.Equals(displays[index]))
+                {
+                    if (Screen.fullScreenMode == FullScreenMode.ExclusiveFullScreen)
+                    {
+                        Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
+                        yield return null;
+                    }
+                    var display = displays[index];
+                    var position = settings.windowed ? display.workArea.position + new Vector2Int(Mathf.Max(0, (display.workArea.width - DisplayOptions.Width(settings)) / 2), Mathf.Max(0, (display.workArea.height - DisplayOptions.Height(settings)) / 2)) : Vector2Int.zero;
+                    AsyncOperation move = null;
+                    try { move = Screen.MoveMainWindowTo(display, position); }
+                    catch (System.Exception error)
+                    {
+                        // 이동 중 연결이 끊겨도 복구 요청을 계속 처리할 수 있게 현재 화면을 유지한다.
+                        Debug.LogWarning("출력 모니터 이동 실패: " + error.Message);
+                    }
+                    if (move != null) yield return move;
+                    if (pendingDisplay != null) continue;
+                }
+                var mode = settings.windowed ? FullScreenMode.Windowed : settings.exclusiveFullscreen ?
+                    FullScreenMode.ExclusiveFullScreen : FullScreenMode.FullScreenWindow;
+                try
+                {
+                    Screen.SetResolution(DisplayOptions.Width(settings), DisplayOptions.Height(settings), mode,
+                        DisplayOptions.CanChangeRefresh(settings) ? DisplayOptions.Rate(settings) : DisplayOptions.AutoRate);
+                }
+                catch (System.Exception error) { Debug.LogWarning("화면 설정 적용 실패: " + error.Message); }
+                yield return null;
+            }
+        }
+        finally { displayRoutine = null; }
     }
 
     private void OnDestroy()

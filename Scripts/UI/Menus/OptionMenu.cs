@@ -33,6 +33,7 @@ public class OptionMenu : SelectableMenuUI
     [SerializeField] private TextMeshProUGUI acceptText;
     [SerializeField] private UnityEngine.UI.Image[] dialogFocus;
 
+    [SerializeField] private UnityEngine.UI.ScrollRect displayScroll;
     private OptionSettings saved, draft;
     private string originalBindings;
     private readonly List<Vector2Int> resolutions = new();
@@ -42,7 +43,7 @@ public class OptionMenu : SelectableMenuUI
     private NavigationStage navigationStage;
     private static readonly int[][] PageRows =
     {
-        new[] { 20, 0, 1, 2, 3, 4, 5 },
+        new[] { 20, 21, 0, 1, 22, 2, 3, 4, 5 },
         new[] { 6, 7, 8 },
         new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 }
     };
@@ -66,6 +67,9 @@ public class OptionMenu : SelectableMenuUI
     protected override void Awake()
     {
         inputLayer = UIInputLayer.Pause;
+        foreach (var trigger in GetComponentsInChildren<EventTrigger>(true))
+            if (trigger.GetComponent<MenuScrollRelay>() == null && trigger.GetComponentInParent<UnityEngine.UI.ScrollRect>() != null)
+                trigger.gameObject.AddComponent<MenuScrollRelay>();
         BuildMenuMapping();
         base.Awake();
         for (int i = 0; i < optionRows.Length; i++)
@@ -79,6 +83,8 @@ public class OptionMenu : SelectableMenuUI
                 if (Mouse.current != null && Mouse.current.delta.ReadValue().sqrMagnitude > .01f) SelectPointerRow(index);
             });
             trigger.triggers.Add(entry);
+            if (row.root.GetComponentInParent<UnityEngine.UI.ScrollRect>() != null && row.root.GetComponent<MenuScrollRelay>() == null)
+                row.root.gameObject.AddComponent<MenuScrollRelay>();
             if (row.slider != null) row.slider.onValueChanged.AddListener(value => ChangeSlider(index, value));
         }
         for (int i = 0; i < footerFocus.Length; i++)
@@ -96,6 +102,9 @@ public class OptionMenu : SelectableMenuUI
         }
         foreach (var button in rootObject.GetComponentsInChildren<UnityEngine.UI.Button>(true))
             button.onClick.AddListener(() => PlayFeedback(confirmFeedback));
+        foreach (var trigger in rootObject.GetComponentsInChildren<EventTrigger>(true))
+            if (trigger.GetComponentInParent<UnityEngine.UI.ScrollRect>() != null && trigger.GetComponent<MenuScrollRelay>() == null)
+                trigger.gameObject.AddComponent<MenuScrollRelay>();
         optionCanvas.ignoreParentGroups = true;
         rootObject.SetActive(false);
     }
@@ -134,6 +143,10 @@ public class OptionMenu : SelectableMenuUI
     {
         if (IsActive || closing) return;
         saved = DataManager.Instance.Options.Copy();
+        DisplayOptions.NormalizeMonitor(saved);
+        // 독점 화면을 바꾸기 전에 0(자동)을 구체적인 원본 크기로 고정해 취소 시 되돌린다.
+        int originalWidth = DisplayOptions.Width(saved), originalHeight = DisplayOptions.Height(saved);
+        saved.width = originalWidth; saved.height = originalHeight;
         draft = saved.Copy();
         originalBindings = InputManager.Instance != null ? InputManager.Instance.Actions.SaveBindingOverridesAsJson() : "";
         BuildResolutions();
@@ -189,7 +202,7 @@ public class OptionMenu : SelectableMenuUI
         if (canvas == null) return;
         var size = ((RectTransform)canvas.rootCanvas.transform).rect.size;
         ((RectTransform)rootObject.transform).sizeDelta = size;
-        frame.localScale = Vector3.one * Mathf.Min(1f, (size.x - 40f) / 1520f, (size.y - 40f) / 900f);
+        frame.localScale = Vector3.one * Mathf.Min(size.x * .95f / frame.rect.width, size.y * .95f / frame.rect.height);
     }
 
     private void Update()
@@ -320,6 +333,13 @@ public class OptionMenu : SelectableMenuUI
 
     private void MoveFromItem(Vector2 direction)
     {
+        if (page == 0 && displayScroll != null && Mathf.Abs(direction.y) > .5f)
+        {
+            int nextRow = selection + (direction.y > 0 ? -1 : 1);
+            if (nextRow >= 0 && nextRow < RowCount) { selection = nextRow; RefreshFocus(); return; }
+            if (direction.y < 0) { navigationStage = NavigationStage.Footer; selection = 1; RefreshFocus(); }
+            return;
+        }
         var candidates = ItemRects();
         if (Mathf.Abs(direction.y) > .5f) candidates.AddRange(FooterRects());
         int next = FindDirectionalIndex(optionRows[SelectedRow].root, direction, candidates);
@@ -381,6 +401,11 @@ public class OptionMenu : SelectableMenuUI
 
     private void BeginEditing()
     {
+        if (SelectedRow == 22 && !DisplayOptions.CanChangeRefresh(draft))
+        {
+            statusText.text = "주사율 변경은 독점 전체 화면에서 적용됩니다. 창·테두리 없는 모드는 OS 주사율을 사용합니다.";
+            return;
+        }
         if (SelectedRow == 3 && draft.vSync)
         {
             statusText.text = "프레임 제한을 바꾸려면 수직 동기화를 먼저 꺼 주세요.";
@@ -399,6 +424,7 @@ public class OptionMenu : SelectableMenuUI
         if (revert && editSnapshot != null)
         {
             draft = editSnapshot;
+            BuildResolutions();
             dirty = dirtyBeforeEdit;
             OptionSettingsService.Instance.ApplyPreview(draft);
         }
@@ -447,11 +473,28 @@ public class OptionMenu : SelectableMenuUI
         switch (index)
         {
             case 20: draft.language = draft.language == "en" ? "ko" : "en"; break;
-            case 0: draft.windowed = !draft.windowed; break;
+            case 0:
+                int mode = draft.windowed ? 0 : draft.exclusiveFullscreen ? 2 : 1;
+                mode = (mode + direction + 3) % 3;
+                draft.windowed = mode == 0; draft.exclusiveFullscreen = mode == 2; break;
+            case 21:
+                var displays = DisplayOptions.Layout();
+                if (displays.Count < 2) return;
+                int monitor = (DisplayOptions.Monitor(draft, displays) + direction + displays.Count) % displays.Count;
+                draft.monitorIndex = monitor; draft.monitorName = displays[monitor].name;
+                draft.width = draft.height = 0;
+                draft.refreshNumerator = draft.refreshDenominator = 0;
+                BuildResolutions(); break;
+            case 22:
+                if (!DisplayOptions.CanChangeRefresh(draft)) return;
+                var rates = DisplayOptions.Rates(draft);
+                int rateIndex = rates.FindIndex(r => r.numerator == draft.refreshNumerator && r.denominator == draft.refreshDenominator);
+                var rate = rates[(Mathf.Max(0, rateIndex) + direction + rates.Count) % rates.Count];
+                draft.refreshNumerator = rate.numerator; draft.refreshDenominator = rate.denominator; break;
             case 1:
                 int resolutionIndex = resolutions.FindIndex(r => r.x == EffectiveWidth(draft) && r.y == EffectiveHeight(draft));
                 var res = resolutions[(resolutionIndex + direction + resolutions.Count) % resolutions.Count];
-                draft.width = res.x; draft.height = res.y; break;
+                draft.width = res.x; draft.height = res.y; draft.refreshNumerator = draft.refreshDenominator = 0; break;
             case 2: draft.vSync = !draft.vSync; break;
             case 3:
                 if (draft.vSync) return;
@@ -473,13 +516,22 @@ public class OptionMenu : SelectableMenuUI
     private void Changed()
     {
         dirty = true;
+        BuildResolutions();
         OptionSettingsService.Instance.ApplyPreview(draft);
         Refresh();
     }
 
     private void Refresh()
     {
-        optionRows[0].value.text = draft.windowed ? "창 모드" : "테두리 없는 전체 화면";
+        optionRows[0].value.text = draft.windowed ? "창 모드" : draft.exclusiveFullscreen ? "독점 전체 화면" : "테두리 없는 전체 화면";
+        var displayLayout = DisplayOptions.Layout();
+        int monitor = DisplayOptions.Monitor(draft, displayLayout);
+        optionRows[21].value.text = monitor >= 0 ? $"{monitor + 1}. {displayLayout[monitor].name}" : "기본 모니터";
+        optionRows[21].value.enableAutoSizing = true;
+        optionRows[21].value.fontSizeMin = 14;
+        var rate = DisplayOptions.Rate(draft);
+        optionRows[22].value.text = !DisplayOptions.CanChangeRefresh(draft) ? "OS 설정 사용" : rate.numerator == 0 ? "자동 (지원 최고)" : $"{rate.value:0.##} Hz";
+        optionRows[22].value.color = DisplayOptions.CanChangeRefresh(draft) ? Color.white : new Color(.5f, .6f, .65f);
         optionRows[1].value.text = $"{EffectiveWidth(draft)} × {EffectiveHeight(draft)}";
         optionRows[2].value.text = draft.vSync ? "켜짐" : "꺼짐";
         optionRows[3].value.text = draft.vSync ? "VSync에 맞춤" : draft.frameRate == -1 ? "제한 없음" : draft.frameRate + " FPS";
@@ -503,16 +555,19 @@ public class OptionMenu : SelectableMenuUI
 
     private void RefreshFocus()
     {
-        int target = dialog.activeSelf ? 27 + dialogIndex : navigationStage switch
+        if (page == 0 && displayScroll != null && !dialog.activeSelf &&
+            (navigationStage == NavigationStage.Items || navigationStage == NavigationStage.Editing))
+            KeepDisplayRowVisible();
+        int target = dialog.activeSelf ? 3 + optionRows.Length + footerFocus.Length + dialogIndex : navigationStage switch
         {
             NavigationStage.Categories => page,
             NavigationStage.Items => 3 + SelectedRow,
             NavigationStage.Editing => 3 + SelectedRow,
-            _ => 24 + selection
+            _ => 3 + optionRows.Length + selection
         };
         for (int i = 0; i < images.Length; i++)
             if (images[i] is TrainingHologramGraphic graphic)
-                graphic.Configure(i >= 3 && i < 24 ? TrainingHologramGraphic.Shape.FocusFrame : TrainingHologramGraphic.Shape.Frame,
+                graphic.Configure(i >= 3 && i < 3 + optionRows.Length ? TrainingHologramGraphic.Shape.FocusFrame : TrainingHologramGraphic.Shape.Frame,
                     navigationStage == NavigationStage.Editing && i == target ? TrainingBoardStyle.Gold : TrainingBoardStyle.Line,
                     2f, 9f, .16f);
         if (suppressMoveFeedback)
@@ -542,22 +597,34 @@ public class OptionMenu : SelectableMenuUI
             _ => "← → 버튼 선택   ↑ 가까운 항목으로   Z 실행   X 분류로"
         };
     }
+    private void KeepDisplayRowVisible()
+    {
+        Canvas.ForceUpdateCanvases();
+        var row = optionRows[SelectedRow].root;
+        var corners = new Vector3[4]; row.GetWorldCorners(corners);
+        float bottom = displayScroll.viewport.InverseTransformPoint(corners[0]).y;
+        float top = displayScroll.viewport.InverseTransformPoint(corners[1]).y;
+        Rect area = displayScroll.viewport.rect;
+        float shift = top > area.yMax ? area.yMax - top : bottom < area.yMin ? area.yMin - bottom : 0;
+        if (Mathf.Abs(shift) > .1f) { displayScroll.StopMovement(); displayScroll.content.anchoredPosition += Vector2.up * shift; }
+    }
     [SerializeField] private UnityEngine.UI.Image[] footerFocus;
 
-    private static int EffectiveWidth(OptionSettings s) => s.width > 0 ? s.width : Screen.currentResolution.width > 0 ? Screen.currentResolution.width : 1920;
-    private static int EffectiveHeight(OptionSettings s) => s.height > 0 ? s.height : Screen.currentResolution.height > 0 ? Screen.currentResolution.height : 1080;
+    private static int EffectiveWidth(OptionSettings s) => DisplayOptions.Width(s);
+    private static int EffectiveHeight(OptionSettings s) => DisplayOptions.Height(s);
     private void BuildResolutions()
     {
         resolutions.Clear();
-        foreach (var r in Screen.resolutions)
+        foreach (var r in DisplayOptions.Modes(draft))
         {
             var size = new Vector2Int(r.width, r.height);
             if (r.width >= 960 && r.height >= 540 && !resolutions.Contains(size)) resolutions.Add(size);
         }
-        foreach (var size in new[] { new Vector2Int(1280, 720), new Vector2Int(1600, 900), new Vector2Int(1920, 1080), new Vector2Int(EffectiveWidth(saved), EffectiveHeight(saved)) })
-            if (!resolutions.Contains(size) && (size.x <= Screen.currentResolution.width || resolutions.Count == 0)) resolutions.Add(size);
-        var current = new Vector2Int(EffectiveWidth(saved), EffectiveHeight(saved));
+        var current = new Vector2Int(EffectiveWidth(draft), EffectiveHeight(draft));
         if (!resolutions.Contains(current)) resolutions.Add(current);
+        if (draft.windowed)
+            foreach (var size in new[] { new Vector2Int(1280, 720), new Vector2Int(1600, 900) })
+                if (!resolutions.Contains(size) && size.x <= current.x && size.y <= current.y) resolutions.Add(size);
         resolutions.Sort((a, b) => a.x == b.x ? a.y.CompareTo(b.y) : a.x.CompareTo(b.x));
     }
 
@@ -644,7 +711,7 @@ public class OptionMenu : SelectableMenuUI
         if (!CanUsePointer()) return;
         FinishEditing(false);
         draft.bindingOverrides = InputManager.Instance != null ? InputManager.Instance.Actions.SaveBindingOverridesAsJson() : saved.bindingOverrides;
-        if (draft.width != saved.width || draft.height != saved.height || draft.windowed != saved.windowed)
+        if (DisplayOptions.Changed(draft, saved))
         {
             OptionSettingsService.ApplyDisplay(draft);
             waitingDisplay = true;
@@ -675,7 +742,8 @@ public class OptionMenu : SelectableMenuUI
     private void RevertDisplay()
     {
         waitingDisplay = false;
-        draft.width = saved.width; draft.height = saved.height; draft.windowed = saved.windowed;
+        DisplayOptions.Restore(draft, saved);
+        BuildResolutions();
         OptionSettingsService.ApplyDisplay(saved);
         Refresh();
         statusText.text = "이전 화면 설정으로 돌아왔습니다. 나머지 변경은 미저장 상태입니다.";
