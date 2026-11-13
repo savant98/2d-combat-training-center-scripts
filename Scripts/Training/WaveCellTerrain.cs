@@ -45,9 +45,21 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private int maxStyle;
     private readonly HashSet<WaveMapCell> persistent = new();
     private readonly List<WaveCellBatch> temporary = new();
+    // 지금 Wave의 지형 추가 이벤트가 놓은 칸. 시간 생성 발판(temporary)과 함께 추격 분쇄기가 갈 수 있다.
+    private readonly List<WaveMapCell[]> eventAdded = new();
     private readonly Dictionary<WaveMapCell, int> generations = new();
     private readonly Dictionary<WaveMapCell, (float time, int token)> expiry = new();
     private readonly Dictionary<WaveMapCell, int> removing = new();
+    // 추격 분쇄기(ChasingGrinder)가 삼킨 생성 발판. 충돌과 덩어리 외곽선에서는 빠졌고, 값이 true면 그림이 아직 켜져 있다(분쇄 날 사이로 보이는 동안).
+    private readonly Dictionary<WaveMapCell, bool> ground = new();
+    // 갈리거나 되살아나 충돌 형상을 다시 만들어야 하는 채널과, 덩어리 외곽선에서 빠져 한 칸 테두리를 켜야 하는 칸. 그 프레임의 LateUpdate가 한 번에 처리한다.
+    private readonly HashSet<Channel> groundChannels = new();
+    private readonly List<WaveMapCell> groundOutlines = new();
+    // 갈린 칸이 원래 사라질 시각(수명이 있던 칸만). 되살릴 때 다시 건다.
+    private readonly Dictionary<WaveMapCell, float> groundExpiry = new();
+    // 분쇄 날에 닿아 그림만 흔들고 있는 켜진 칸과, 그 그림의 원래 위치.
+    private readonly Dictionary<WaveMapCell, Vector3> grindingImages = new();
+    private bool groundDirty;
     private Tile oneWayTile;
     // 구형 Template의 이동 기능 없이 좌표 보존용으로 복원한 그룹은 같은 고정 지형이다.
     private readonly HashSet<int> fixedOutlineGroups = new();
@@ -427,6 +439,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         UpdateCameraSettlement();
         UpdatePanels();
         TrackGroupMotion();
+        if (groundDirty) RebuildGround();
         foreach (var item in visualAnimations)
         {
             var cell = item.Key; var motion = item.Value;
@@ -825,7 +838,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         CancelCameraSettlement(true);
         roomSpaceReset = true;
-        StopAllCoroutines(); ClearPanels(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
+        StopAllCoroutines(); ClearPanels(); ClearGround(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); eventAdded.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
         ApplyBackground();
         roomSolids = null;
         ConnectedBounds = null;
@@ -1326,6 +1339,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
             if (add) removing.Remove(cell); else removing[cell] = token;
             if (!add && cell.kind == WaveCellKind.Platform && Style(cell).generated) Collision(cell,false);
             if (add && keep) persistent.Add(cell); else persistent.Remove(cell);
+            if (add) ForgetGround(cell);
             if (add && expiresAt > 0) expiry[cell] = (expiresAt, token);
             if (add)
             {
@@ -1420,7 +1434,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
 
     private void BeginEvents(Wave wave)
     {
-        temporary.Clear();
+        temporary.Clear(); eventAdded.Clear();
         foreach (var batch in wave.cellBatches) StartCoroutine(Batch(batch));
         foreach (var entry in wave.terrainEvents ?? Array.Empty<WaveTerrainEvent>()) StartCoroutine(Event(entry));
     }
@@ -1448,6 +1462,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
             ? active.Where(c => positions.Contains(Vector2Int.FloorToInt((Vector2)transform.InverseTransformPoint(owners[c].parent.TransformPoint(CellCenter(c)))))).ToArray()
             : entry.cells.Select(p => new WaveMapCell { position = p, kind = entry.cellKind, style = entry.cellStyle }).ToArray();
         if (entry.operation == WaveTerrainOperation.Remove) persistent.ExceptWith(cells);
+        else eventAdded.Add(cells.Where(c => !initial.Contains(c)).ToArray());
         yield return Animate(cells, entry.operation == WaveTerrainOperation.Add, entry.duration, entry.operation == WaveTerrainOperation.Add && entry.lifetime > 0 ? Time.time + entry.lifetime : 0, entry.operation == WaveTerrainOperation.Add && entry.keepAfterWave);
     }
     private void ClearCustom()
@@ -1457,7 +1472,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     }
     private void EndEvents()
     {
-        StopAllCoroutines(); ClearPanels(); ClearCustom();
+        StopAllCoroutines(); ClearPanels(); ClearCustom(); ClearGround();
         foreach (var row in removing.ToArray())
             if (generations.TryGetValue(row.Key, out var token) && token == row.Value)
             { active.Remove(row.Key); pool[row.Key].gameObject.SetActive(false); Collision(row.Key, false); solidsDirty = true; }
@@ -1564,6 +1579,144 @@ public sealed class WaveCellTerrain : MonoBehaviour
                 yield return new WaitForSeconds(interval);
             }
         yield return new WaitForSeconds(.55f); temporary.Clear();
+    }
+    // ───────────── 추격 분쇄기가 삼키는 생성 발판 ─────────────
+    // 분쇄기(ChasingGrinder)는 지금 Wave가 시간에 따라 만든 발판(cellBatches)과 지형 추가 이벤트가 놓은 칸만 간다.
+    // Wave의 처음 지형(초기 칸)과 방의 기본 지형(바닥·벽)은 건드리지 않는다.
+    // 갈린 칸은 켜진 칸 목록에서 빠지므로 Wave가 끝날 때의 소멸 연출·다음 Wave 준비에서는 이미 없는 칸으로 다뤄진다.
+
+    /// <summary>지금 Wave가 시간에 따라 만든 발판 칸 가운데 켜져 있는 것을 모은다(분쇄기가 갈 수 있는 칸).</summary>
+    public void CollectGrindable(List<WaveMapCell> cells)
+    {
+        cells.Clear();
+        foreach (var batch in temporary)
+            foreach (var cell in batch.cells)
+                if (active.Contains(cell) && !removing.ContainsKey(cell)) cells.Add(cell);
+        // 지형 추가 이벤트의 칸. 같은 칸을 시간 생성 발판이 다시 놓았을 수 있으므로 겹치면 한 번만 넣는다.
+        int batched = cells.Count;
+        foreach (var added in eventAdded)
+            foreach (var cell in added)
+                if (active.Contains(cell) && !removing.ContainsKey(cell) && (batched == 0 || cells.IndexOf(cell, 0, batched) < 0)) cells.Add(cell);
+    }
+    /// <summary>칸 중심의 월드 좌표. 이 지형이 미리 만들어 둔 칸에만 쓴다.</summary>
+    public Vector2 CellWorldCenter(WaveMapCell cell) => owners[cell].parent.TransformPoint(CellCenter(cell));
+    /// <summary>
+    /// 분쇄기에 닿았거나 갈리는 칸의 그림만 흔들고 어둡게 한다(offset: 칸 크기 기준 위치 어긋남, brightness: 1이 제 밝기).
+    /// 충돌과 덩어리 외곽선은 그대로다. 켜져 있는 칸은 칸(덩어리 외곽선을 빌려 준 칸일 수 있다)을 제자리에 두고 그림만 흔들고,
+    /// 갈려 나온 조각은 자기 테두리와 함께 흔든다. 패널로 움직이거나 사라지는 중인 칸은 그 연출이 그림을 다루므로 건드리지 않는다.
+    /// </summary>
+    public void PoseGrinding(WaveMapCell cell, Vector2 offset, float brightness)
+    {
+        if (!pool.TryGetValue(cell, out var view) || panels.ContainsKey(cell) || removing.ContainsKey(cell)) return;
+        if (!active.Contains(cell))
+        {
+            if (ground.TryGetValue(cell, out bool shown) && shown) view.SetPanelPose((Vector3)(CellCenter(cell) + offset), 0f, 1f, brightness);
+            return;
+        }
+        view.SetPanelPose((Vector3)CellCenter(cell), 0f, 1f, brightness);
+        if (view.image == null) return;
+        if (!grindingImages.TryGetValue(cell, out var rest)) grindingImages[cell] = rest = view.image.transform.localPosition;
+        view.image.transform.localPosition = rest + (Vector3)offset;
+    }
+    /// <summary>PoseGrinding으로 흔든 칸의 그림을 제자리·제 밝기로 되돌린다(분쇄기가 닿았다가 물러난 칸).</summary>
+    public void SettleGrinding(WaveMapCell cell)
+    {
+        if (!pool.TryGetValue(cell, out var view)) return;
+        SettleImage(cell, view);
+        if (!active.Contains(cell) || panels.ContainsKey(cell)) return;
+        view.SetAmount(1); view.transform.localPosition = CellCenter(cell);
+    }
+    // 켜진 칸을 흔들 때 옮긴 그림을 원래 자리로 돌린다.
+    private void SettleImage(WaveMapCell cell, WaveTerrainCellView view)
+    {
+        if (!grindingImages.TryGetValue(cell, out var rest)) return;
+        grindingImages.Remove(cell);
+        if (view != null && view.image != null) view.image.transform.localPosition = rest;
+    }
+    /// <summary>
+    /// 분쇄기가 삼킨 생성 칸을 지형에서 뺀다. 충돌과 덩어리 외곽선에서 빠지고, 그림은 HideGround를 부를 때까지 한 칸 조각으로 남는다(분쇄 날 사이로 보인다).
+    /// 이미 갈렸거나, 켜져 있지 않거나, 사라지는 중인 칸이면 false다. 외곽선과 충돌 형상은 이 프레임의 LateUpdate가 한 번에 다시 만든다.
+    /// </summary>
+    public bool Grind(WaveMapCell cell)
+    {
+        if (ground.ContainsKey(cell) || !active.Contains(cell) || removing.ContainsKey(cell) || !pool.TryGetValue(cell, out var view)) return false;
+        // 이 칸의 등장 연출과 수명이 남아 있으면 여기서 끊는다(순번을 올리면 진행 중인 연출이 이 칸을 건너뛴다).
+        // 수명은 기억해 두었다가 되살릴 때 다시 건다.
+        if (panels.ContainsKey(cell)) SettlePanel(cell);
+        SettleImage(cell, view);
+        generations[cell] = generations.TryGetValue(cell, out int token) ? token + 1 : 1;
+        if (expiry.TryGetValue(cell, out var expires)) groundExpiry[cell] = expires.time;
+        visualAnimations.Remove(cell); expiry.Remove(cell); unsettled.Remove(cell);
+        active.Remove(cell);
+        view.SetAmount(1); view.transform.localPosition = CellCenter(cell);
+        Collision(cell, false);
+        ground[cell] = true; groundChannels.Add(owners[cell]); groundOutlines.Add(cell); groundDirty = true;
+        return true;
+    }
+    /// <summary>갈린 칸의 그림을 끈다(분쇄기 몸체 뒤로 완전히 들어갔을 때).</summary>
+    public void HideGround(WaveMapCell cell)
+    {
+        if (!ground.TryGetValue(cell, out bool shown) || !shown) return;
+        ground[cell] = false;
+        if (!pool.TryGetValue(cell, out var view)) return;
+        view.HidePanelOutline(); view.SetAmount(1); view.transform.localPosition = CellCenter(cell); view.gameObject.SetActive(false);
+    }
+    /// <summary>
+    /// 분쇄기가 간 칸을 모두 되살린다(플레이어가 분쇄기에 닿아 구간을 처음부터 다시 시작할 때). 되살린 칸 수를 돌려준다.
+    /// 수명이 있던 칸은 원래 사라질 시각을 다시 건다(이미 지났으면 곧바로 사라지기 시작한다).
+    /// </summary>
+    public int RestoreGround()
+    {
+        int count = 0;
+        foreach (var cell in ground.Keys)
+        {
+            if (!pool.TryGetValue(cell, out var view)) continue;
+            view.HidePanelOutline(); view.gameObject.SetActive(true); view.SetAmount(1); view.transform.localPosition = CellCenter(cell);
+            active.Add(cell); Collision(cell, true); groundChannels.Add(owners[cell]);
+            if (groundExpiry.TryGetValue(cell, out float expiresAt)) expiry[cell] = (expiresAt, generations.TryGetValue(cell, out int token) ? token : 0);
+            count++;
+        }
+        ground.Clear(); groundOutlines.Clear(); groundExpiry.Clear();
+        if (count > 0) groundDirty = true;
+        return count;
+    }
+    public int GroundCount => ground.Count;
+    // 갈린 칸이 같은 Wave에서 다시 놓이면(같은 칸을 다시 만드는 묶음·지형 추가) 갈린 기록을 버리고 일반 칸으로 돌아가게 한다.
+    private void ForgetGround(WaveMapCell cell)
+    {
+        if (!ground.Remove(cell)) return;
+        groundOutlines.Remove(cell); groundExpiry.Remove(cell);
+        if (pool.TryGetValue(cell, out var view)) view.HidePanelOutline();
+    }
+    // Wave가 끝나거나 처음부터 다시 시작하면 갈린 칸 기록을 버린다. 조각으로 남아 있던 그림은 끄고, 흔들던 그림은 제자리로 돌린다.
+    private void ClearGround()
+    {
+        foreach (var row in ground)
+            if (row.Value && pool.TryGetValue(row.Key, out var view)) { view.HidePanelOutline(); view.SetAmount(1); view.transform.localPosition = CellCenter(row.Key); view.gameObject.SetActive(false); }
+        foreach (var row in grindingImages)
+            if (pool.TryGetValue(row.Key, out var view) && view.image != null) view.image.transform.localPosition = row.Value;
+        ground.Clear(); groundChannels.Clear(); groundOutlines.Clear(); groundExpiry.Clear(); grindingImages.Clear(); groundDirty = false;
+    }
+    // 갈리거나 되살아난 칸의 덩어리 외곽선과 충돌 형상을 다시 만든다. 충돌은 그 칸이 속한 채널만 다시 만든다(수천 칸짜리 기본 지형은 건드리지 않는다).
+    // 발판이 사라져도 방의 연결 공간(카메라·배경 범위)은 그대로이므로 다시 구하지 않는다.
+    private void RebuildGround()
+    {
+        groundDirty = false;
+        RefreshOutlines();
+        // 덩어리 외곽선에서 빠진 조각은 자기 테두리를 그린다(덩어리 외곽선을 다시 만든 뒤에 켜야 빌려 쓰던 선이 꺼지지 않는다).
+        foreach (var cell in groundOutlines)
+            if (ground.TryGetValue(cell, out bool shown) && shown && pool.TryGetValue(cell, out var view))
+            {
+                view.ShowPanelOutline(null, 0f, view.outlineWidth, Style(cell).sortingOrder);
+                view.SetPanelOutline(1f);
+            }
+        groundOutlines.Clear();
+        foreach (var channel in groundChannels)
+        {
+            if (channel.collider != null && channel.collider.isActiveAndEnabled) channel.collider.ProcessTilemapChanges();
+            if (channel.composite != null && channel.composite.gameObject.activeInHierarchy && channel.composite.generationType == CompositeCollider2D.GenerationType.Manual) channel.composite.GenerateGeometry();
+        }
+        groundChannels.Clear();
     }
     public Bounds LocalBounds(Transform source)
     {

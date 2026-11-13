@@ -17,6 +17,8 @@ public static class WavePrefabVisuals
     public static bool IsPaletteItem(GameObject prefab) => prefab != null && (prefab.GetComponent<EnemyController>() != null || prefab.GetComponent<WaveTerrainCellView>() != null || IsEnvironmentTool(prefab));
     // 한 칸보다 큰 환경 도구는 표식 배경과 선택 영역을 놓인 칸 하나로 줄여 아래 지형을 가리지 않는다.
     public static bool UsesCompactMarker(GameObject prefab) => prefab != null && prefab.TryGetComponent<WaveEnvironmentTool>(out var tool) && tool.CompactMarker;
+    // 같은 칸 중복 금지에 드는 환경 장치. 칸을 차지하지 않는 표시 장치(길 안내 화살표)는 다른 장치와 같은 칸에 놓을 수 있다.
+    public static bool OccupiesCells(GameObject prefab) => prefab != null && prefab.TryGetComponent<WaveEnvironmentTool>(out var tool) && tool.OccupiesCells;
     // 환경 장치가 차지하는 칸 수(회전 반영). Enemy와 지형은 한 칸이다.
     public static Vector2Int Footprint(GameObject prefab, int rotationSteps = 0)
     {

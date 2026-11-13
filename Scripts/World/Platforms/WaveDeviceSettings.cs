@@ -24,12 +24,31 @@ public readonly struct WaveDeviceParameter
     public readonly float Min, Max, Step, Default;
     /// <summary>값에 따라 장치의 모양이 바뀌면 true다. 편집기 그림 캐시는 이 항목만 열쇠로 쓴다.</summary>
     public readonly bool ChangesShape;
+    /// <summary>값 대신 고르는 선택지(값은 0부터의 순번). null이면 수치 항목이다.</summary>
+    public readonly string[] Options;
 
     public WaveDeviceParameter(string key, string label, string tooltip, string unit, float min, float max, float step, float defaultValue, bool changesShape = false)
     {
         Key = key; Label = label; Tooltip = tooltip; Unit = unit;
         Min = min; Max = max; Step = step; Default = defaultValue;
         ChangesShape = changesShape;
+        Options = null;
+    }
+
+    /// <summary>선택지 중 하나를 고르는 항목. 값은 선택지의 순번(0부터)으로 저장한다.</summary>
+    public WaveDeviceParameter(string key, string label, string tooltip, string[] options, float defaultValue, bool changesShape = false)
+    {
+        Key = key; Label = label; Tooltip = tooltip; Unit = string.Empty;
+        Min = 0f; Max = Mathf.Max(0, (options?.Length ?? 1) - 1); Step = 1f; Default = defaultValue;
+        ChangesShape = changesShape;
+        Options = options;
+    }
+
+    /// <summary>값을 사람이 읽는 글로 바꾼다(선택지면 그 이름, 수치면 단위를 붙인 값).</summary>
+    public string Format(float value)
+    {
+        if (Options != null && Options.Length > 0) return Options[Mathf.Clamp(Mathf.RoundToInt(value), 0, Options.Length - 1)];
+        return value.ToString("0.##") + Unit;
     }
 
     /// <summary>범위 안으로 자르고 눈금(Step)에 맞춘다.</summary>
