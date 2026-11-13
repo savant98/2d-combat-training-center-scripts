@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class LaserSpawner : ObjectSpawner
+public class LaserSpawner : ObjectSpawner, IWaveDeviceSettings
 {
     [Header("Laser Settings")]
     [SerializeField] private WeaponBaseSO.DamageInfo laserDamageInfo;
@@ -17,12 +17,20 @@ public class LaserSpawner : ObjectSpawner
     [SerializeField] private LayerMask laserBlockMask;
     [SerializeField] private LayerMask laserDamageMask;
 
+    private readonly WaveTrapDamage trapSettings = new WaveTrapDamage();
+    public WaveDeviceParameter[] Parameters => new[] { WaveTrapDamage.DamageParameter(laserDamageInfo.damage), WaveTrapDamage.ReturnParameter };
+    public bool SettingsChangeShape => false;
+    public void ApplySettings(WaveDeviceSetting[] overrides) => trapSettings.ApplySettings(overrides, laserDamageInfo.damage);
+    public bool TryGetRange(WaveDeviceSetting[] overrides, out WaveDeviceRange range) { range = default; return false; }
+
+    public uint SpawnVersion { get; private set; }
     private LaserBeam laserPrefab;
     private WaveEnvironmentLifecycle lifecycle;
     private readonly List<(LaserBeam beam, uint version)> spawnedBeams = new();
     protected override void Awake()
     {
         base.Awake();
+        ApplySettings(WaveDeviceSettings.None);
         lifecycle = GetComponent<WaveEnvironmentLifecycle>();
         laserPrefab = entityBase.GetComponent<LaserBeam>();
         if (laserPrefab == null)
@@ -30,6 +38,9 @@ public class LaserSpawner : ObjectSpawner
     }
     public override void OnSpawnedFromPool()
     {
+        SpawnVersion++;
+        trapSettings.Cancel();
+        ApplySettings(WaveDeviceSettings.None);
         if (lifecycle == null) { base.OnSpawnedFromPool(); return; }
         isReturning = false;
         StopAllCoroutines();
@@ -61,8 +72,10 @@ public class LaserSpawner : ObjectSpawner
         }
 
         Vector2 fireDirection = useLocalDirection ? (Vector2)transform.TransformDirection(direction) : direction;
+        var hitInfo = laserDamageInfo;
+        hitInfo.damage = trapSettings.Damage;
         laser.Fire(
-            laserDamageInfo,
+            hitInfo,
             spawnTr.position,
             fireDirection.normalized,
             laserLength,
@@ -70,10 +83,13 @@ public class LaserSpawner : ObjectSpawner
             laserBlockMask,
             laserDamageMask,
             laserWidth);
+        // 기존 튜토리얼 발사기는 원래의 회복·복귀 정책을 유지한다.
+        if (GetComponent<WaveEnvironmentTool>() != null) laser.ConfigureWaveTrap(trapSettings, this);
     }
     public override void ForceReturnToPool()
     {
         if (isReturning) return;
+        trapSettings.Cancel();
         CleanupSpawnedBeams();
         if (lifecycle != null) lifecycle.BeginDespawn(ReturnAfterDespawn);
         else base.ForceReturnToPool();
@@ -81,7 +97,11 @@ public class LaserSpawner : ObjectSpawner
 
     private void ReturnAfterDespawn() => base.ForceReturnToPool();
 
-    private void OnDisable() => CleanupSpawnedBeams();
+    private void OnDisable()
+    {
+        trapSettings.Cancel();
+        CleanupSpawnedBeams();
+    }
 
     private void CleanupSpawnedBeams()
     {

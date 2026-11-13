@@ -686,7 +686,7 @@ public sealed class ChasingGrinder : WorldEntityBase, IWaveDeviceSettings
     // 이 피격으로 패배가 확정됐으면(훈련 성적 미흡) 처음으로 돌아가지 않는다(위치 초기화도 같은 경우에 되돌리지 않는다).
     private void HandlePlayerDamaged(WeaponBaseSO.DamageInfo _)
     {
-        if (CurrentPhase == Phase.Halted || !IsGrinderHit) return;
+        if (CurrentPhase == Phase.Halted || !(IsGrinderHit || WaveTrapDamage.IsRestartHit)) return;
         if (subscribedHealth != null && (subscribedHealth.IsDead || subscribedHealth.IsDeathPending)) return;
         holdRequested = true;
         // 위치 초기화 장치가 없는 Wave면 닿은 분쇄기가 직접 이 Wave의 시작 좌표로 돌려보낸다.

@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>모든 Enemy 프리팹의 실제 설정 SO와 실행 중 패턴 상태를 한곳에서 확인한다.</summary>
-public sealed class EnemyBalanceWindow : EditorWindow
+public sealed partial class EnemyBalanceWindow : EditorWindow
 {
     private sealed class EnemyEntry
     {
@@ -180,9 +180,9 @@ public sealed class EnemyBalanceWindow : EditorWindow
             search = GUILayout.TextField(search, EditorStyles.toolbarSearchField, GUILayout.MinWidth(120));
             if (GUILayout.Button("목록 갱신", EditorStyles.toolbarButton, GUILayout.Width(80))) Refresh();
             using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
-                if (GUILayout.Button("SO 저장", EditorStyles.toolbarButton, GUILayout.Width(70))) SaveEditedAssets();
+                if (GUILayout.Button("설정 저장", EditorStyles.toolbarButton, GUILayout.Width(70))) SaveEditedAssets();
         }
-        EditorGUILayout.HelpBox("패턴 아이콘을 선택해 공통 AI 수치를 조절하세요. 패턴 고유 설정은 연결된 SO의 Inspector에서 편집합니다.", MessageType.Info);
+        EditorGUILayout.HelpBox("몸통 접촉 피해와 패턴별 AI·공격·총알 피해를 조절하세요. 변경 후 설정 저장을 누릅니다.", MessageType.Info);
         using (new EditorGUILayout.HorizontalScope())
         {
             DrawList();
@@ -199,6 +199,7 @@ public sealed class EnemyBalanceWindow : EditorWindow
 
     private void SaveEditedAssets()
     {
+        SaveContactPrefabs();
         foreach (var asset in editedAssets)
             if (asset != null && EditorUtility.IsDirty(asset)) AssetDatabase.SaveAssetIfDirty(asset);
     }
@@ -293,6 +294,7 @@ public sealed class EnemyBalanceWindow : EditorWindow
         {
             showVitals = EditorGUILayout.Foldout(showVitals, "체력 · 쉴드 설정", true);
             if (showVitals) DrawVitals(entry);
+            DrawContactDamage(entry);
         }
         EditorGUILayout.Space(10);
         EditorGUILayout.LabelField("패턴 선택", EditorStyles.boldLabel);
@@ -643,6 +645,7 @@ public sealed class EnemyBalanceWindow : EditorWindow
             if (data == null) return;
             DrawReference(data, "고유 설정 SO");
             DrawSharedWarning(data);
+            DrawPatternDamage(data);
             EditorGUILayout.LabelField("페이즈를 나눈 Enemy는 위 페이즈 수치로 선택합니다. SO의 공통 수치는 페이즈에 등록하지 않은 패턴에만 쓰입니다. 고유 설정은 SO의 선택 버튼으로 Inspector에서 편집합니다.",
                 EditorStyles.wordWrappedMiniLabel);
         }
@@ -745,7 +748,8 @@ public sealed class EnemyBalanceWindow : EditorWindow
             foreach (string field in CommonPatternFields)
                 EditorGUILayout.PropertyField(settings.FindProperty(field), new GUIContent(Label(field)));
             if (settings.ApplyModifiedProperties() && !editedAssets.Contains(data)) editedAssets.Add(data);
-            EditorGUILayout.LabelField("고유 설정은 위 SO의 선택 버튼으로 Inspector에서 편집합니다.", EditorStyles.wordWrappedMiniLabel);
+            DrawPatternDamage(data);
+            EditorGUILayout.LabelField("그 밖의 고유 설정은 위 SO의 선택 버튼으로 Inspector에서 편집합니다.", EditorStyles.wordWrappedMiniLabel);
         }
     }
 

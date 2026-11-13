@@ -16,6 +16,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
     [SerializeField] private Transform[] blades = Array.Empty<Transform>();
     [SerializeField, Min(.01f)] private float bladeRadius = .42f;
     [SerializeField, Min(0f)] private float damage = 10f;
+    private readonly WaveTrapDamage trapDamage = new WaveTrapDamage();
     [SerializeField] private LayerMask targetMask;
 
     [Header("팔 길이 (등장·퇴장 Clip이 다루지 않는 시각 부품)")]
@@ -64,11 +65,12 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
         "가운데 축에서 톱날 중심까지의 칸 수입니다. 톱날 중심이 지나가는 빠르기는 길이와 관계없이 같습니다.", "칸", minArmLength, 6f, .5f, armLength, true);
     private WaveDeviceParameter SpinParameter => new WaveDeviceParameter("spin", "회전 속도",
         "1이면 기본입니다. 2면 팔이 두 배 빠르게 돕니다. 길이와 관계없이 톱날 중심이 지나가는 빠르기에 곱합니다.", "배", .2f, 3f, .1f, rotationSpeed);
-    public override WaveDeviceParameter[] Parameters => new[] { LengthParameter, SpinParameter };
+    public override WaveDeviceParameter[] Parameters => new[] { LengthParameter, SpinParameter, WaveTrapDamage.DamageParameter(damage), WaveTrapDamage.ReturnParameter };
     public override bool SettingsChangeShape => true;
 
     public override void ApplySettings(WaveDeviceSetting[] overrides)
     {
+        trapDamage.ApplySettings(overrides, damage);
         currentLength = WaveDeviceSettings.Value(overrides, LengthParameter);
         currentSpin = Mathf.Max(.1f, WaveDeviceSettings.Value(overrides, SpinParameter));
         ApplyShape();
@@ -132,6 +134,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
     protected override void Awake()
     {
         base.Awake();
+        ApplySettings(WaveDeviceSettings.None);
         if (targetMask.value == 0) targetMask = LayerMask.GetMask("Player");
         filter = new ContactFilter2D();
         filter.SetLayerMask(targetMask);
@@ -155,6 +158,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
 
     protected override void OnDeviceLeaving()
     {
+        trapDamage.Cancel();
         // 접히는 동안에는 소리 목록에 남아 회전음이 뚝 끊기지 않고 잦아든다.
         spinning = false;
         StopSparks();
@@ -167,6 +171,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
 
     protected override void OnDisable()
     {
+        trapDamage.Cancel();
         base.OnDisable();
         active.Remove(this);
         if (active.Count == 0) StopLoop();
@@ -180,7 +185,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
 
     private void FixedUpdate()
     {
-        if (!IsOperating || damage <= 0f) return;
+        if (!IsOperating || (trapDamage.Damage <= 0f && !trapDamage.ReturnToStart)) return;
         damagedPlayers.Clear();
         float radius = bladeRadius * Mathf.Abs(transform.lossyScale.x);
         var info = new WeaponBaseSO.DamageInfo { damage = damage, damageType = DamageType.Normal };
@@ -197,7 +202,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
                 if (player == null || !damagedPlayers.Add(player)) continue;
                 Vector2 point = hits[i].ClosestPoint(center);
                 // 반격·무적으로 막힌 접촉에는 갈리는 효과를 내지 않는다.
-                if (TryDamage(player, info, point))
+                if (trapDamage.TryDamage(this, player, info, point))
                     PlayFeedback(hitFeedback, point, Quaternion.FromToRotation(Vector3.up, (Vector3)(point - center)));
             }
         }

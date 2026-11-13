@@ -71,6 +71,18 @@ public class LaserBeam : WorldEntityBase
     private LayerMask damageMask;
 
     private bool activeBeam;
+    private WaveTrapDamage trapDamage;
+    private LaserSpawner trapSource;
+    private uint trapSourceVersion;
+    private bool trapReturnsToStart;
+
+    public void ConfigureWaveTrap(WaveTrapDamage settings, LaserSpawner source)
+    {
+        trapDamage = settings;
+        trapSource = source;
+        trapSourceVersion = source.SpawnVersion;
+        trapReturnsToStart = settings.ReturnToStart;
+    }
 
     private SoundHandle loopSoundHandle;
     private float loopSoundBaseVolume;
@@ -103,6 +115,8 @@ public class LaserBeam : WorldEntityBase
     }
     private void OnDisable()
     {
+        trapDamage = null;
+        trapSource = null;
         StopLoopSound();
         StopEndpointSparks();
     }
@@ -298,7 +312,9 @@ public class LaserBeam : WorldEntityBase
 
             if (ownerFaction == Faction.Enemy && health is PlayerHealth player)
             {
-                player.TakeDamage(damageInfo, hitPoint);
+                if (trapDamage != null && trapSource != null && trapSource.isActiveAndEnabled && trapSource.SpawnVersion == trapSourceVersion)
+                    trapDamage.TryDamage(trapSource, player, damageInfo, hitPoint, damageInfo.damage, trapReturnsToStart);
+                else player.TakeDamage(damageInfo, hitPoint);
                 PlayHitFeedback(hitPoint);
             }
         }
@@ -385,6 +401,8 @@ public class LaserBeam : WorldEntityBase
 
     private void ResetBeamState()
     {
+        trapDamage = null;
+        trapSource = null;
         StopLoopSound();
         StopEndpointSparks();
         nextLoopSoundRetryTime = 0f;

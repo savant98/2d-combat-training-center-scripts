@@ -110,11 +110,21 @@ public class EnemyController : CharacterController2D
         if (!canTouchDamage)
             return;
 
+        dmg = ResolveContactDamage(dmg);
+        if (dmg <= 0f) return;
         damageInfo.damageType = DamageType.Normal;
         damageInfo.damage = dmg;
 
         player.TakeDamage(damageInfo, GameManager.Instance.Player.transform.position);
     }
+    /// <summary>실행 중 패턴의 접촉 피해 설정을 적용한다. 비활성 설정은 기존 부위별 피해를 유지한다.</summary>
+    public float ResolveContactDamage(float defaultDamage)
+    {
+        var pattern = brain != null ? brain.current : null;
+        var data = pattern != null && pattern.IsRunning ? pattern.Data : null;
+        return data != null && data.overrideContactDamage ? Mathf.Max(0f, data.contactDamage) : defaultDamage;
+    }
+
     public void FacingUpdate(int value)
     {
         Facing = value;

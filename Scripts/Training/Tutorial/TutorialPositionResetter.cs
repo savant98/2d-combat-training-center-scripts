@@ -49,6 +49,8 @@ public class TutorialPositionResetter : WorldEntityBase
 
     private void HandleTutorialFail(WeaponBaseSO.DamageInfo damageInfo)
     {
+        // 배치 함정은 지정 피해를 유지하고 자체 복귀 경로를 사용한다.
+        if (WaveTrapDamage.IsApplying) return;
         // 코스 분쇄기만 되돌리는 경우, 다른 피해(코스 적)는 회복하지 않고 그 자리에서 이어 간다.
         if (courseGrinderOnly && !ChasingGrinder.IsGrinderHit) return;
         // 이 피격으로 패배가 확정됐으면(훈련 성적 미흡 자동 사망) 회복·되돌림을 하지 않는다. 사망 연출과 겹치지 않게 한다.

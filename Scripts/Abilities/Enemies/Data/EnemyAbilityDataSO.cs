@@ -16,6 +16,11 @@ public abstract class EnemyAbilityDataSO : ScriptableObject
     [Tooltip("실행하지 않는 동안 초당 회복하는 점수입니다. 0이면 종료 시 증감만 사용합니다.")]
     [Min(0f)] public float weightRecoveryPerSecond = 0f;
 
+    [Header("패턴 접촉 피해")]
+    [Tooltip("이 패턴이 실행 중일 때 몸통·검·돌진의 접촉 피해를 아래 값으로 덮어씁니다. 끄면 Prefab 기본값을 사용합니다.")]
+    public bool overrideContactDamage;
+    [Min(0f)] public float contactDamage = 20f;
+
     [Header("Times")]
     [Tooltip("Recover까지 종료하거나 중단한 시점부터 재사용까지의 대기 시간입니다.")]
     public float cooldown = 1f;

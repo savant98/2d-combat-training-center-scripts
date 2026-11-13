@@ -98,7 +98,7 @@ public sealed class CourseEnemySpawner : WorldEntityBase
     // 이 피격으로 패배가 확정됐으면(훈련 성적 미흡) 다시 꺼내지 않고 그대로 둔다(분쇄기·위치 초기화도 같은 경우 처음으로 돌아가지 않는다).
     private void HandlePlayerDamaged(WeaponBaseSO.DamageInfo _)
     {
-        if (IsHalted || !ChasingGrinder.IsGrinderHit)
+        if (IsHalted || !(ChasingGrinder.IsGrinderHit || WaveTrapDamage.IsRestartHit))
             return;
         if (subscribedHealth != null && (subscribedHealth.IsDead || subscribedHealth.IsDeathPending))
             return;

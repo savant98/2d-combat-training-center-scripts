@@ -45,6 +45,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
 
     [Header("피해")]
     [SerializeField, Min(0f)] private float damage = 10f;
+    private readonly WaveTrapDamage trapDamage = new WaveTrapDamage();
     [Tooltip("큐브 중심 기준의 피해 영역.")]
     [SerializeField] private Vector2 damageOffset;
     [SerializeField] private Vector2 damageSize = new Vector2(.84f, .84f);
@@ -81,7 +82,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         "1이면 기본입니다. 2면 예비 동작·타격·복귀가 두 배 빨라집니다. 타격 사이 공격 대기는 그대로입니다.", "배", .5f, 3f, .1f, speed);
     private WaveDeviceParameter RestParameter => new WaveDeviceParameter("rest", "공격 대기",
         "타격하고 큐브를 다시 넣은 뒤 다음 타격 준비까지 쉬는 시간입니다. 짧을수록 자주 칩니다. 피스톤 속도와 관계없이 이 시간만큼 쉽니다.", "초", 0f, 8f, .1f, restTime);
-    public override WaveDeviceParameter[] Parameters => new[] { StrokeParameter, SpeedParameter, RestParameter };
+    public override WaveDeviceParameter[] Parameters => new[] { StrokeParameter, SpeedParameter, RestParameter, WaveTrapDamage.DamageParameter(damage), WaveTrapDamage.ReturnParameter };
     /// <summary>이 개체에 적용된 뻗는 거리(칸).</summary>
     public float Stroke => currentStroke;
     /// <summary>이 개체에 적용된 속도 배율.</summary>
@@ -91,6 +92,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
 
     public override void ApplySettings(WaveDeviceSetting[] overrides)
     {
+        trapDamage.ApplySettings(overrides, damage);
         currentStroke = WaveDeviceSettings.Value(overrides, StrokeParameter);
         currentSpeed = Mathf.Max(.1f, WaveDeviceSettings.Value(overrides, SpeedParameter));
         currentRest = Mathf.Max(0f, WaveDeviceSettings.Value(overrides, RestParameter));
@@ -111,6 +113,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
     protected override void Awake()
     {
         base.Awake();
+        ApplySettings(WaveDeviceSettings.None);
         if (targetMask.value == 0) targetMask = LayerMask.GetMask("Player");
         // Prefab에 저장된 수납 자세를 기준으로 삼는다.
         if (head != null) headRest = head.localPosition;
@@ -125,6 +128,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
 
     protected override void ResetDevice()
     {
+        trapDamage.Cancel();
         CurrentPhase = Phase.Rest;
         phaseTime = 0f;
         Extension = 0f;
@@ -140,6 +144,8 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         phaseTime = 0f;
         firstRest = true;
     }
+
+    protected override void OnDeviceLeaving() => trapDamage.Cancel();
 
     protected override bool HoldDespawn()
     {
@@ -270,7 +276,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
 
     private void DamageSwept(float previous, float current)
     {
-        if (damage <= 0f) return;
+        if ((trapDamage.Damage <= 0f && !trapDamage.ReturnToStart)) return;
         var frame = head.parent != null ? head.parent : transform;
         var scale = frame.lossyScale;
         // 한 틱 동안 큐브가 지나간 구간 전체를 한 상자로 덮어, 빠른 타격이 대상을 건너뛰지 않게 한다.
@@ -295,7 +301,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
             var player = hits[i].GetComponentInParent<PlayerHealth>();
             if (player == null || !damagedPlayers.Add(player)) continue;
             // 반격·무적으로 막힌 타격은 밀어내지 않는다.
-            if (TryDamage(player, info, hits[i].ClosestPoint(center)) && travel > 0f && !player.IsDead) Push(player, frame.up);
+            if (trapDamage.TryDamage(this, player, info, hits[i].ClosestPoint(center)) && !trapDamage.IsReturning && travel > 0f && !player.IsDead) Push(player, frame.up);
         }
     }
 
