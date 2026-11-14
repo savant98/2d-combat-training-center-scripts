@@ -9,6 +9,8 @@ public sealed class TrainingRecordView : MonoBehaviour
     [SerializeField] private TrainingDefinitionSO training;
     [SerializeField] private TextMeshProUGUI gradeText, hitCountText, timeText, conditionsText;
 
+    [SerializeField] private TrainingGradeConditionsView conditionsView;
+
     private void OnEnable()
     {
         if (Application.isPlaying) Refresh();
@@ -24,7 +26,8 @@ public sealed class TrainingRecordView : MonoBehaviour
         hitCountText.text = hasRecord ? best.bestHitCount.ToString() : "-";
         timeText.text = hasRecord ? TrainingScoreFormatHelper.FormatTime(best.bestTimeSeconds) : "-";
         if (hasRecord) TrainingScoreFormatHelper.GradeToText(best.bestGrade, gradeText);
-        conditionsText.text = FormatConditions(training);
+        if (conditionsView != null) conditionsView.SetTraining(training);
+        else if (conditionsText != null) conditionsText.text = FormatConditions(training);
     }
 
     public static string FormatConditions(TrainingDefinitionSO definition)

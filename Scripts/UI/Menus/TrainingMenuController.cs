@@ -19,6 +19,8 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField] private TextMeshProUGUI gradeText;
     [SerializeField, Tooltip("현재 훈련의 성적 조건입니다. 미흡을 제외하고 훈련 데이터에서 읽습니다.")] private TextMeshProUGUI gradeConditionsText;
 
+    [SerializeField] private TrainingGradeConditionsView gradeConditionsView;
+
     [Header("Training List (Optional)")]
     [SerializeField] private TrainingMenu listMenu;
     [SerializeField] private GameObject listPanel;
@@ -168,7 +170,8 @@ public class TrainingMenuController : MonoBehaviour
     private void RefreshUI()
     {
         if (currentTraining == null) return;
-        if (gradeConditionsText != null) gradeConditionsText.text = TrainingRecordView.FormatConditions(currentTraining);
+        if (gradeConditionsView != null) gradeConditionsView.SetTraining(currentTraining);
+        else if (gradeConditionsText != null) gradeConditionsText.text = TrainingRecordView.FormatConditions(currentTraining);
         TrainingRoomSaveData best = DataManager.Instance.GetTrainingRoomRecord(currentTraining.trainingId);
         if (DataManager.IsCleared(best))
         {

@@ -8,7 +8,7 @@ using UnityEngine;
 ///   공회전(기어·전원선·표시등)은 Animator의 다른 층에서 계속 돈다.
 /// - 전원: 꺼져 있으면(방전) 공회전이 멈추고 기능부의 빛과 표시선이 꺼지며, 접근 불가 푯말이 서고 입구가 잠긴다(LobbyInteractionLock).
 ///   나중에 컷씬으로 해금할 때는 SetPowered(true)만 부르면 된다. 사용자 요청: "접근 불가가 풀렸을 때의 디자인을 기준으로 방전된 상태를 보여 주도록".
-/// - 잠긴 입구에서 상호작용하려 하면 푯말만 흔들린다(소리는 내지 않는다).
+/// - 잠긴 입구의 실제 상호작용은 푯말 흔들림·시설 안내 팝업·기존 실패 Feedback으로 알린다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class LobbyStation : MonoBehaviour
@@ -32,6 +32,13 @@ public sealed class LobbyStation : MonoBehaviour
     [SerializeField, Tooltip("방전 중에만 세우는 푯말")] private GameObject barrier;
     [SerializeField, Min(0f), Tooltip("막힌 시도가 있을 때 푯말이 흔들리는 각도(도)와 시간(초)")] private float shakeAngle = 6f;
     [SerializeField, Min(.05f)] private float shakeTime = .55f;
+
+    [Header("접근 불가 안내")]
+    [SerializeField] private GameObject unavailablePopupPrefab;
+    [SerializeField] private FeedbackDataSO unavailableFeedback;
+    [SerializeField, TextArea] private string unavailableMessage = "현재 이 시설은 이용할 수 없습니다.\n시설이 활성화된 뒤 다시 방문하십시오.";
+    private GameObject unavailablePopupInstance;
+    private UpgradePurchaseDialog unavailableDialog;
 
     private static readonly int OpenId = Animator.StringToHash("Open");
     private bool registered, menuOpen, applied, appliedPowered;
@@ -66,6 +73,9 @@ public sealed class LobbyStation : MonoBehaviour
     private void OnDisable()
     {
         Unregister();
+        if (unavailableDialog != null) unavailableDialog.Close();
+        if (unavailablePopupInstance != null) Destroy(unavailablePopupInstance);
+        unavailablePopupInstance = null; unavailableDialog = null;
         shake = 0f;
         menuOpen = false;
         if (barrier != null && barrierCached) barrier.transform.localRotation = barrierRotation;
@@ -75,6 +85,7 @@ public sealed class LobbyStation : MonoBehaviour
     {
         applied = true;
         appliedPowered = powered;
+        if (powered && unavailableDialog != null && unavailableDialog.IsActive) unavailableDialog.Close();
         if (animator != null)
         {
             // 방전되면 접힌 자세에서 멈춘다(공회전도 멈춘다). 돌던 중에 꺼진 경우에만 자세를 되돌리면 된다(저장된 자세가 접힌 자세다).
@@ -127,7 +138,18 @@ public sealed class LobbyStation : MonoBehaviour
 
     private void HandleRejected(Component target)
     {
-        if (IsLocked(target)) shake = 1f;
+        if (!IsLocked(target)) return;
+        shake = 1f;
+        if (unavailablePopupPrefab == null || UIManager.Instance == null || UIManager.Instance.BlocksGameplayInput
+            || UIManager.Instance.IsUIInputBlocked || (unavailableDialog != null && unavailableDialog.IsActive)) return;
+        if (unavailableDialog == null)
+        {
+            unavailablePopupInstance = Instantiate(unavailablePopupPrefab);
+            unavailableDialog = unavailablePopupInstance.GetComponentInChildren<UpgradePurchaseDialog>(true);
+        }
+        if (unavailableDialog != null && unavailableDialog.ShowWarning(unavailableMessage, null, "시설 이용 안내")
+            && unavailableFeedback != null && FeedbackPlayer.Instance != null)
+            FeedbackPlayer.Instance.Play(unavailableFeedback, transform);
     }
 
     private void Update()

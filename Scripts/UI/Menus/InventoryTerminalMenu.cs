@@ -24,6 +24,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         public bool inlineInformation;
         public GameObject[] inlineDetails;
         public UnityEngine.UI.ScrollRect entryScroll;
+        [Min(0f), Tooltip("첫 행을 자동으로 보일 때 함께 드러낼 목록 위 제목 영역의 높이입니다.")]
+        public float firstRowTopInset;
         public int columns = 1;
         public bool horizontalList;
         public bool[] entryAvailable;
@@ -286,7 +288,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             BindPointerExit(button);
         }
         foreach (var trigger in GetComponentsInChildren<EventTrigger>(true))
-            if (trigger.GetComponentInParent<UnityEngine.UI.ScrollRect>() != null && trigger.GetComponent<MenuScrollRelay>() == null)
+            if (trigger.GetComponentInParent<UnityEngine.UI.ScrollRect>(true) != null && trigger.GetComponent<MenuScrollRelay>() == null)
                 trigger.gameObject.AddComponent<MenuScrollRelay>();
         inventoryAction = new InputAction("Inventory", InputActionType.Button, "<Keyboard>/tab");
         inventoryAction.performed += HandleInventoryInput;
@@ -882,6 +884,12 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             Vector2 point = scroll.viewport.InverseTransformPoint(corner);
             min = Vector2.Min(min, point); max = Vector2.Max(max, point);
         }
+        if (scroll.vertical && section.firstRowTopInset > 0f)
+        {
+            float contentTop = scroll.viewport.InverseTransformPoint(scroll.content.TransformPoint(new Vector3(0f, scroll.content.rect.yMax))).y;
+            // 첫 행으로 복귀하거나 목록을 다시 열면 버튼 위의 구획 제목도 함께 드러낸다.
+            if (contentTop - max.y <= section.firstRowTopInset + .1f) max.y = contentTop;
+        }
         Rect viewport = scroll.viewport.rect;
         Vector2 shift = Vector2.zero;
         if (scroll.horizontal)
@@ -962,6 +970,11 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             RefreshSelection();
             return;
         }
+        if (detailOpen && selectedTab == 3 && CanReceiveInput)
+        {
+            sections[3].details[SelectedEntry].GetComponent<TerminalMailDocumentView>()?.ScrollBy(direction.y);
+            return;
+        }
         if (detailOpen && selectedTab == 2 && CanReceiveInput)
         {
             var tutorial = sections[2].details[SelectedEntry].GetComponentInChildren<TerminalTutorialVideo>(true);
@@ -1016,6 +1029,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             if (i == SelectedEntry || !EntryAvailable(section, i)) continue;
             var candidate = (RectTransform)section.entryButtons[i].transform;
             Vector2 delta = (Vector2)reference.InverseTransformPoint(candidate.TransformPoint(candidate.rect.center)) - center;
+            // 세로 이동은 같은 장비 구획에 머물고 좌우 입력으로 구획을 오간다.
+            if (vertical && center.x * (center.x + delta.x) < 0) continue;
             float along = vertical ? delta.y * Mathf.Sign(direction.y) : delta.x * Mathf.Sign(direction.x);
             float across = vertical ? Mathf.Abs(delta.x) : Mathf.Abs(delta.y);
             if (along < 1 || (!vertical && across > 2)) continue;

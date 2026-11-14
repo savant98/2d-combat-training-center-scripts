@@ -70,14 +70,14 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
         return true;
     }
 
-    public bool ShowWarning(string message, Action onClosed = null)
+    public bool ShowWarning(string message, Action onClosed = null, string title = "업그레이드 안내")
     {
         if (!CanShow()) return false;
         accepted = null;
         canceled = onClosed;
         warningOnly = true;
         ConfigureChoices(true);
-        titleText.text = "업그레이드 안내";
+        titleText.text = title;
         messageText.text = message;
         messageText.color = warningTint;
         priceText.gameObject.SetActive(false);
