@@ -37,6 +37,13 @@ public class ChargeAndFireAbility : AiAbility
 
     private LaserBeam activeLaser;
     private LaserPreviewLine activePreview;
+    // 코어. 유도탄·레이저를 쏘는 순간 쏘는 방향을 알려 반동·섬광을 보여 준다(표시 전용, 없으면 건너뛴다).
+    private NightmareCore nightmareCore;
+    private readonly System.Collections.Generic.List<ConstructorHomingMissile> firedMissiles = new System.Collections.Generic.List<ConstructorHomingMissile>();
+
+    /// <summary>가장 최근 베기에서 쏜 유도탄(발사 순서)과 그 출발점. 검증용.</summary>
+    public System.Collections.Generic.IReadOnlyList<ConstructorHomingMissile> FiredMissiles => firedMissiles;
+    public Vector2 MissileOrigin { get; private set; }
 
     private ChargeAndFireDataSO ChargeData => (ChargeAndFireDataSO)data;
 
@@ -44,6 +51,7 @@ public class ChargeAndFireAbility : AiAbility
     {
         teleporter = GetComponent<EnemyTeleporter>();
         playerTr = GameManager.Instance.Player.transform;
+        if (nightmareCore == null) nightmareCore = GetComponentInChildren<NightmareCore>(true);
 
         facingLocked = false;
         lockedFacing = controller.Facing;
@@ -236,7 +244,7 @@ public class ChargeAndFireAbility : AiAbility
                 controller.Velocity = Vector2.zero;
 
                 SpawnSlashHitbox();
-                SpawnSlashLandMines();
+                FireSlashMissiles();
                 ReturnPreview();
 
                 EnterExecutePhase(ExecutePhase.SlashPause);
@@ -251,7 +259,7 @@ public class ChargeAndFireAbility : AiAbility
             controller.Velocity = Vector2.zero;
 
             SpawnSlashHitbox();
-            SpawnSlashLandMines();
+            FireSlashMissiles();
             ReturnPreview();
 
             EnterExecutePhase(ExecutePhase.SlashPause);
@@ -403,6 +411,7 @@ public class ChargeAndFireAbility : AiAbility
         ReturnLaser();
 
         Vector2 fireDirection = GetLaserDirection();
+        if (nightmareCore != null) nightmareCore.Fire(fireDirection);
 
         activeLaser = WorldEntityPool.Instance.Spawn(
             ChargeData.laserPrefab,
@@ -526,47 +535,107 @@ public class ChargeAndFireAbility : AiAbility
         RaycastHit2D hit = Physics2D.Linecast(from, to, ChargeData.teleportBlockMask);
         return hit.collider != null;
     }
-    private void SpawnSlashLandMines()
+    // 베기가 끝나는 순간 코어 중심에서 유도탄을 좌우로 벌려 쏜다(예전에는 여기서 지뢰를 뿌렸다).
+    // 이동·벽 충돌·피격·폭발 판정은 유도탄(ConstructorHomingMissile)이 기존 모터 경로로 처리한다.
+    private void FireSlashMissiles()
     {
-        if (ChargeData.minePrefab == null)
+        firedMissiles.Clear();
+
+        if (ChargeData.missilePrefab == null || WorldEntityPool.Instance == null)
             return;
 
-        int spawnCount = Mathf.Max(1, ChargeData.mineCount);
+        int count = Mathf.Max(1, ChargeData.missileCount);
 
-        Vector2 basePos = sparkPoint != null
-            ? (Vector2)sparkPoint.position
-            : (Vector2)transform.position;
+        // 코어 중심에서 나온다(코어가 없는 적은 준비 지점).
+        Vector2 origin = nightmareCore != null
+            ? nightmareCore.Center
+            : (Vector2)(windupPoint != null ? windupPoint.position : transform.position);
 
-        Quaternion spawnRotation = controller.transform.rotation;
+        MissileOrigin = origin;
 
-        // 좌우로 퍼지는 시작 위치 간격
-        float horizontalSpacing = 0.35f;
+        Vector2 totalDirection = Vector2.zero;
 
-        // count가 홀수면 중앙 포함, 짝수면 중앙 기준 양옆 대칭
-        float centerOffset = (spawnCount - 1) * 0.5f;
-
-        for (int i = 0; i < spawnCount; i++)
+        for (int i = 0; i < count; i++)
         {
-            float offsetIndex = i - centerOffset;
+            // 위쪽을 기준으로 좌우로 고르게 벌린다. 2발이면 왼쪽·오른쪽으로 벌림 각도만큼 기울인다.
+            float side = count == 1 ? 0f : i / (float)(count - 1) * 2f - 1f;
+            float radians = (90f - GetMissileLaunchAngle(origin, side)) * Mathf.Deg2Rad;
+            Vector2 direction = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians));
+            totalDirection += direction;
 
-            // 시작 위치를 좌우로 조금씩 벌림
-            Vector2 spawnPos = basePos + new Vector2(offsetIndex * horizontalSpacing, 0f);
+            ConstructorHomingMissile missile = WorldEntityPool.Instance.Spawn(
+                ChargeData.missilePrefab,
+                origin,
+                Quaternion.identity);
 
-            ProjectileBase mine = WorldEntityPool.Instance.Spawn(
-                ChargeData.minePrefab,
-                spawnPos,
-                spawnRotation
-            );
+            missile.ConfigureGuidance(
+                playerTr,
+                direction,
+                ChargeData.missileLaunchDuration,
+                ChargeData.missileLaunchTurnRateDegrees,
+                ChargeData.missileTrackingDuration,
+                ChargeData.missileTurnRateDegrees,
+                ChargeData.missileAccelerationDuration,
+                ChargeData.missileInitialSpeedRatio,
+                ChargeData.missileLifeTime,
+                ChargeData.missileSlowDuration,
+                ChargeData.missileSlowSpeedRatio,
+                ChargeData.missileSlowTurnRateDegrees);
 
-            // LandMine은 angleStep * count 를 쓰니까
-            // count 값을 0,1,2... 대신 "중앙 기준 대칭 순번"처럼 맞춰주기 위해 1부터 순차 전달
-            mine.Initialize(
+            missile.ConfigureExplosion(
+                ChargeData.missileExplosionRadius,
+                ChargeData.missileExplosionDamageInfo);
+
+            missile.Initialize(
                 controller,
-                ChargeData.mineDamageInfo,
-                ChargeData.mineLaunchSpeed,
-                i,
-                ChargeData.minePlatformLayer
-            );
+                ChargeData.missileDamageInfo,
+                ChargeData.missileSpeed,
+                i + 1,
+                ChargeData.missileCollideLayer);
+
+            firedMissiles.Add(missile);
         }
+
+        if (ChargeData.missileLaunchFeedback != null)
+            feedbackPlayer.PlayExact(ChargeData.missileLaunchFeedback, origin, Quaternion.identity);
+
+        // 코어의 반동: 쏜 방향을 모두 더한 쪽(좌우 대칭이면 위쪽)을 향해 번쩍이고 반대쪽으로 밀린다.
+        if (nightmareCore != null)
+            nightmareCore.Fire(totalDirection, ChargeData.missileRecoil);
+    }
+
+    // 유도탄 한 발이 나가는 각도(위쪽에서 기운 정도, 도. 오른쪽이 +).
+    // 퍼져 나갈 길에 벽이 가까우면 위쪽으로 세워 쏜다(나오자마자 벽에 부딪혀 터지지 않게). 세워도 막혀 있으면 원래 각도로 쏜다.
+    // 지형은 투사체가 쓰는 기존 모터의 질의로 확인한다(탄의 크기만큼 두께를 준다).
+    private float GetMissileLaunchAngle(Vector2 origin, float side)
+    {
+        float spread = side * ChargeData.missileSpreadAngle;
+
+        if (ChargeData.missileClearance <= 0f || Mathf.Approximately(spread, 0f))
+            return spread;
+
+        CircleCollider2D missileCollider = ChargeData.missilePrefab.GetComponent<CircleCollider2D>();
+        float radius = missileCollider != null ? missileCollider.radius : 0.25f;
+
+        const int steps = 4;
+
+        for (int i = 0; i < steps; i++)
+        {
+            float angle = Mathf.Lerp(spread, 0f, i / (float)steps);
+            float radians = (90f - angle) * Mathf.Deg2Rad;
+            Vector2 direction = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians));
+
+            RaycastHit2D hit = RaycastMotor2D.CircleCastEnvironment(
+                origin,
+                radius,
+                direction,
+                ChargeData.missileClearance,
+                ChargeData.missileCollideLayer);
+
+            if (hit.collider == null)
+                return angle;
+        }
+
+        return spread;
     }
 }

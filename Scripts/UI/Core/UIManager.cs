@@ -33,6 +33,8 @@ public class UIManager : MonoBehaviour
     [SerializeField] private float moveRepeatStartDelay = 0.35f;
     [SerializeField] private float moveRepeatInterval = 0.12f;
     public bool IsUIInputBlocked { get; set; }
+    // Lobby 안내가 단말기 여는 키만 남기고 입력을 막아 둔 동안에는 일시정지 메뉴도 열지 않는다.
+    public bool PauseInputBlocked { get; set; }
     public bool IsCompleteBoardOpen => completeScoreBoardUI != null && completeScoreBoardUI.IsOpen;
     public bool IsDeathUIOpen => completeScoreBoardUI != null && completeScoreBoardUI.IsDefeatOpen;
 
@@ -90,6 +92,10 @@ public class UIManager : MonoBehaviour
     private void HandlePauseInput()
     {
         if (!InputManager.Pressed(Button.Escape))
+            return;
+
+        // 이미 열려 있는 일시정지 메뉴를 닫는 것은 막지 않는다.
+        if (PauseInputBlocked && !HasPauseLayer())
             return;
 
         if (IsInputLocked())

@@ -11,12 +11,15 @@ public class RadialAngleShotAbility : AiAbility
 
     private int firedCount;
     private float shotTimer;
+    // 탄을 쏘는 코어. 쏠 때마다 쏘는 방향을 알려 반동·섬광을 보여 준다(표시 전용, 없으면 건너뛴다).
+    private NightmareCore nightmareCore;
 
     private RadialAngleShotDataSO ShotData => (RadialAngleShotDataSO)data;
     protected override void OnWindupStart()
     {
         teleporter = GetComponent<EnemyTeleporter>();
         playerTr = GameManager.Instance.Player.transform;
+        if (nightmareCore == null) nightmareCore = GetComponentInChildren<NightmareCore>(true);
 
         teleportTriggered = false;
         teleportFinished = false;
@@ -132,6 +135,8 @@ public class RadialAngleShotAbility : AiAbility
             ShotData.totalShotCount,
             ShotData.startAngleDeg,
             ShotData.clockwise);
+
+        if (nightmareCore != null) nightmareCore.Fire(direction, 0.75f);
 
         ProjectileBase projectile = WorldEntityPool.Instance.Spawn(
             ShotData.projectilePrefab,

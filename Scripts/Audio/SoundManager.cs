@@ -163,7 +163,8 @@ public class SoundManager : MonoBehaviour
         return source;
     }
 
-    public void PlayBGM(AudioClip clip, float volume = 1f, bool loop = true)
+    // startSeconds를 주면 곡의 그 위치부터 재생한다(전주의 뒷부분만 쓸 때).
+    public void PlayBGM(AudioClip clip, float volume = 1f, bool loop = true, float startSeconds = 0f)
     {
         if (clip == null) return;
         StopBGM();
@@ -171,6 +172,7 @@ public class SoundManager : MonoBehaviour
         bgmSource.volume = volume;
         bgmSource.loop = loop;
         bgmSource.Play();
+        if (startSeconds > 0f) bgmSource.time = Mathf.Min(startSeconds, Mathf.Max(0f, clip.length - .05f));
     }
 
     // 전주와 메인을 오디오 시계에 함께 예약한다. 반환 번호로 해당 재생만 정리한다.

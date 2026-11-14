@@ -18,6 +18,8 @@ public class TeleportRetreatLaserAbility : AiAbility
     // laser
     private LaserPreviewLine activePreview;
     private LaserBeam activeLaser;
+    // 코어. 레이저를 쏘는 순간 쏘는 방향을 알려 반동·섬광을 보여 준다(표시 전용, 없으면 건너뛴다).
+    private NightmareCore nightmareCore;
 
     private TeleportRetreatLaserDataSO LaserData => (TeleportRetreatLaserDataSO)data;
 
@@ -25,6 +27,7 @@ public class TeleportRetreatLaserAbility : AiAbility
     {
         teleporter = GetComponent<EnemyTeleporter>();
         playerTr = GameManager.Instance.Player.transform;
+        if (nightmareCore == null) nightmareCore = GetComponentInChildren<NightmareCore>(true);
 
         teleportTriggered = false;
         teleportFinished = false;
@@ -284,6 +287,7 @@ public class TeleportRetreatLaserAbility : AiAbility
             return;
 
         Vector2 direction = GetLaserDirection();
+        if (nightmareCore != null) nightmareCore.Fire(direction);
 
         activeLaser = WorldEntityPool.Instance.Spawn(
             LaserData.laserPrefab,

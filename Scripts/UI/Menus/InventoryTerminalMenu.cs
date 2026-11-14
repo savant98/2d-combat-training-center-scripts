@@ -57,6 +57,18 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     [SerializeField] private TrainingDefinitionSO[] homeTrainingDefinitions;
     [SerializeField] private UnityEngine.UI.Graphic[] homeLaserSignals;
 
+    [Header("Training Goals")]
+    [Tooltip("훈련 목표 분류의 항목 순서와 같은 훈련입니다. 세이브의 기록으로 수료 여부를 항목에 보여 줍니다.")]
+    [SerializeField] private TrainingDefinitionSO[] goalTrainings;
+    [SerializeField] private TextMeshProUGUI[] goalStateLabels;
+    [Tooltip("수료한 항목에만 켜는 표시와 수료 전의 항목에만 켜는 표시(항목 순서)")]
+    [SerializeField] private GameObject[] goalClearedMarks;
+    [SerializeField] private GameObject[] goalPendingMarks;
+    [SerializeField] private string goalClearedText = "수료";
+    [SerializeField] private string goalPendingText = "미수료";
+    [Tooltip("수료한 항목의 상태 글자색입니다. 수료 전에는 Prefab에 저장된 글자색 그대로 둡니다.")]
+    [SerializeField] private Color goalClearedColor = new Color(.396f, .839f, .627f, 1f);
+
     [Header("Screen Machinery")]
     [SerializeField] private RectTransform[] rotatingGears;
     [SerializeField] private UnityEngine.UI.RawImage[] flowingCables;
@@ -127,12 +139,21 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         public UnityEngine.UI.Graphic fill;
         public UnityEngine.UI.Graphic face;
         public Color faceColor;
-        public TextMeshProUGUI[] labels;
-        public Color[] labelColors;
-        public UnityEngine.UI.Graphic[] symbols;
-        public Color[] symbolColors;
     }
 
+    /// <summary>단말기에서 하는 조작. 안내가 받을 조작을 가릴 때 쓴다(ActionGuard).</summary>
+    public enum GuardedAction { Open, Move, OpenCategory, SelectTab, ReturnHome, SelectEntry, ShowDetails, Back, Close }
+    /// <summary>조작을 받을지 묻는다(false를 돌려주면 그 조작을 받지 않는다. 소리도 내지 않는다). 두 번째 값은 대상의 순서(분류·항목)이고 없으면 -1이다.
+    /// Lobby 안내가 메일을 확인할 때까지 정해진 조작만 받게 할 때 쓴다. 방 이동·사망 때의 강제 닫기는 막지 않는다.</summary>
+    public Func<GuardedAction, int, bool> ActionGuard;
+    /// <summary>분류를 열었을 때 바로 골라 둘 항목(분류 → 항목, 없으면 -1). 안내가 환영 메일을 가리킬 때 쓴다.</summary>
+    public Func<int, int> GuidedEntry;
+    /// <summary>게임 입력이 막혀 있어도 단말기를 열 수 있는가(안내가 단말기 여는 키만 남기고 입력을 막아 둔 동안).</summary>
+    public Func<bool> OpenWhileGameplayBlocked;
+    /// <summary>항목의 상세를 열었다(탭, 항목).</summary>
+    public event Action<int, int> EntryDetailsShown;
+    /// <summary>열었을 때 첫 화면에서 먼저 고를 항목(비우면 0번). Lobby 안내가 메시지 수신함을 가리킬 때 쓴다.</summary>
+    public Func<int> OpeningHomeIndex;
     public bool IsTransitioning => isTransitioning || isPageTransitioning || isHomeTransitioning;
     public bool IsHomeVisible => IsActive && homeVisible;
     public bool IsHomeTransitioning => isHomeTransitioning;
@@ -155,6 +176,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private bool CanReceiveInput => IsTopInput && !IsTransitioning && !isClosing;
     private bool CanReceiveTabInput => IsTopInput && !isTransitioning && !isHomeTransitioning && !isClosing;
     public bool CanControlTutorialVideo => CanReceiveInput && detailOpen && selectedTab == 2 && !NoticeVisible;
+    private bool Allowed(GuardedAction action, int index = -1) => ActionGuard == null || ActionGuard(action, index);
 
     protected override void Awake()
     {
@@ -235,7 +257,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             BindClick(homeButtons[index], () => OpenCategory(category));
             BindHover(homeButtons[index], () =>
             {
-                if (!CanReceiveInput || !homeVisible) return;
+                if (!CanReceiveInput || !homeVisible || !Allowed(GuardedAction.Move)) return;
                 if (selectedHomeIndex != category) PlayFeedback(moveFeedback);
                 selectedHomeIndex = category;
                 RefreshSelection();
@@ -257,7 +279,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         foreach (var trigger in GetComponentsInChildren<EventTrigger>(true))
             if (trigger.GetComponentInParent<UnityEngine.UI.ScrollRect>() != null && trigger.GetComponent<MenuScrollRelay>() == null)
                 trigger.gameObject.AddComponent<MenuScrollRelay>();
-        inventoryAction = new InputAction("Inventory", InputActionType.Button, "<Keyboard>/i");
+        inventoryAction = new InputAction("Inventory", InputActionType.Button, "<Keyboard>/tab");
         inventoryAction.performed += HandleInventoryInput;
         noticeRoot.SetActive(false);
         homeVisible = true;
@@ -325,32 +347,10 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
 
     private void CacheButtonVisual(UnityEngine.UI.Button button)
     {
-        var labels = button.GetComponentsInChildren<TextMeshProUGUI>(true);
-        var symbols = new List<UnityEngine.UI.Graphic>();
-        var equipmentEmblem = sections.Length > 2 && Array.IndexOf(sections[2].entryButtons, button) >= 0
-            ? button.transform.Find("Emblem") : null;
-        foreach (var graphic in button.GetComponentsInChildren<UnityEngine.UI.Graphic>(true))
-        {
-            if (graphic is TextMeshProUGUI) continue;
-            if (equipmentEmblem != null && graphic.transform.IsChildOf(equipmentEmblem)) continue;
-            var image = graphic as UnityEngine.UI.Image;
-            // 장비 기호와 사진 Sprite의 원래 색은 선택 상태와 관계없이 유지한다.
-            if (image != null && image.sprite != null) continue;
-            var parent = graphic.transform;
-            bool glyph = parent.name.StartsWith("CloseStroke", StringComparison.Ordinal) || parent.name.StartsWith("ConfirmStroke", StringComparison.Ordinal);
-            while (parent != null && parent != button.transform)
-            {
-                glyph |= parent.name == "Emblem" || parent.name == "CategoryGlyph" || parent.name == "ActionIcon";
-                parent = parent.parent;
-            }
-            if (glyph) symbols.Add(graphic);
-        }
         buttonVisuals[button] = new ButtonVisual
         {
             fill = button.transform.Find("SelectionFill")?.GetComponent<UnityEngine.UI.Graphic>(),
-            face = button.targetGraphic, faceColor = button.targetGraphic != null ? button.targetGraphic.color : Color.white,
-            labels = labels, labelColors = Array.ConvertAll(labels, label => label.color),
-            symbols = symbols.ToArray(), symbolColors = symbols.ConvertAll(symbol => symbol.color).ToArray()
+            face = button.targetGraphic, faceColor = button.targetGraphic != null ? button.targetGraphic.color : Color.white
         };
     }
 
@@ -496,7 +496,28 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         SetHomeText(homeTrainingText, HomeTrainingCleared.ToString(CultureInfo.InvariantCulture) + " / " + HomeTrainingTotal.ToString(CultureInfo.InvariantCulture));
         int gold = homeDataManager != null ? homeDataManager.CurrentGold : 0;
         SetHomeText(homeGoldText, gold.ToString("N0", CultureInfo.InvariantCulture));
+        // 훈련 목표의 항목마다 실제 수료 여부를 보여 준다(위에서 모은 수료 기록 그대로).
+        if (goalTrainings == null) return;
+        for (int index = 0; index < goalTrainings.Length; index++)
+        {
+            bool cleared = goalTrainings[index] != null && homeClearedTrainingIds.Contains(goalTrainings[index].trainingId);
+            if (goalStateLabels != null && index < goalStateLabels.Length && goalStateLabels[index] != null)
+            {
+                var label = goalStateLabels[index];
+                // 수료 전의 글자색은 처음 본 색(Prefab 값)을 기억해 두고 쓴다.
+                if (goalPendingColors == null || goalPendingColors.Length != goalStateLabels.Length)
+                    goalPendingColors = Array.ConvertAll(goalStateLabels, source => source != null ? source.color : Color.white);
+                SetHomeText(label, cleared ? goalClearedText : goalPendingText);
+                Color wanted = cleared ? goalClearedColor : goalPendingColors[index];
+                if (label.color != wanted) label.color = wanted;
+            }
+            if (goalClearedMarks != null && index < goalClearedMarks.Length && goalClearedMarks[index] != null && goalClearedMarks[index].activeSelf != cleared)
+                goalClearedMarks[index].SetActive(cleared);
+            if (goalPendingMarks != null && index < goalPendingMarks.Length && goalPendingMarks[index] != null && goalPendingMarks[index].activeSelf == cleared)
+                goalPendingMarks[index].SetActive(!cleared);
+        }
     }
+    private Color[] goalPendingColors;
     private static void SetHomeText(TextMeshProUGUI label, string value)
     {
         if (label != null && label.text != value) label.text = value;
@@ -541,6 +562,9 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
 
     private void HandleInventoryInput(InputAction.CallbackContext context)
     {
+        // Alt+Tab(창 전환)의 Tab은 단말기 키로 치지 않는다.
+        var keyboard = Keyboard.current;
+        if (keyboard != null && (keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed)) return;
         if (IsActive)
         {
             if (IsTopInput) Close();
@@ -551,13 +575,16 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     {
         var ui = UIManager.Instance;
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+        // 게임 입력이 막힌 동안에는 열지 않는다. 다만 안내가 단말기 여는 키만 남기고 입력을 막아 둔 동안에는 연다.
+        bool gameplayBlocked = ui != null && ui.BlocksGameplayInput && !(OpenWhileGameplayBlocked != null && OpenWhileGameplayBlocked());
         if (!initialized || !isActiveAndEnabled || IsActive || IsTransitioning || !IsInLobby || ui == null
-            || ui.HasActiveInputUI || ui.IsUIInputBlocked || ui.BlocksGameplayInput
+            || ui.HasActiveInputUI || ui.IsUIInputBlocked || gameplayBlocked
             || GameTimeController.Instance == null || GameTimeController.Instance.IsPaused
             || player == null || !player.gameObject.activeInHierarchy || player.Health.currentHP <= 0f)
             return;
+        if (!Allowed(GuardedAction.Open)) return;
         selectedTab = 0;
-        selectedHomeIndex = 0;
+        selectedHomeIndex = OpeningHomeIndex != null ? Mathf.Clamp(OpeningHomeIndex(), 0, sections.Length - 1) : 0;
         homeVisible = true;
         nextTabInputAt = float.NegativeInfinity;
         for (int tab = 0; tab < sections.Length; tab++) selectedEntries[tab] = FirstAvailableEntry(sections[tab]);
@@ -597,6 +624,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             return;
         }
         if (isClosing) return;
+        if (!Allowed(GuardedAction.Close)) return;
         isClosing = true;
         hoveredButton = null;
         CancelHomeTransition();
@@ -647,11 +675,15 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     {
         if (!CanReceiveInput || NoticeVisible || index < 0 || index >= sections.Length) return;
         if (!homeVisible) { SelectTab(index); return; }
+        if (!Allowed(GuardedAction.OpenCategory, index)) return;
         selectedHomeIndex = index;
         selectedTab = index;
         homeVisible = false;
         detailOpen = false;
         listFocused = false;
+        // 안내가 가리키는 항목이 있으면 바로 골라 둔다(확인 한 번에 열린다).
+        int guided = GuidedEntry != null ? GuidedEntry(index) : -1;
+        if (guided >= 0 && EntryAvailable(sections[index], guided)) { selectedEntries[index] = guided; listFocused = true; }
         hoveredButton = null;
         PlayFeedback(confirmFeedback);
         BeginHomeNavigation(false);
@@ -661,6 +693,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private void ReturnHome(bool feedback)
     {
         if (!CanReceiveTabInput || NoticeVisible || homeVisible) return;
+        if (!Allowed(GuardedAction.ReturnHome)) return;
         CancelSlide();
         detailOpen = false;
         listFocused = false;
@@ -731,6 +764,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     {
         if (!CanReceiveTabInput || homeVisible || NoticeVisible || index < 0 || index >= sections.Length
             || Time.unscaledTime < nextTabInputAt) return;
+        if (!Allowed(GuardedAction.SelectTab, index)) return;
         hoveredButton = null;
         if (selectedTab == index && !detailOpen)
         {
@@ -765,6 +799,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private void SelectEntry(int index, bool ensureVisible)
     {
         if (!CanReceiveInput || homeVisible || NoticeVisible || detailOpen || !EntryAvailable(sections[selectedTab], index)) return;
+        if (!Allowed(GuardedAction.SelectEntry, index)) return;
         hoveredButton = null;
         if (selectedEntries[selectedTab] != index) PlayFeedback(moveFeedback);
         selectedEntries[selectedTab] = index;
@@ -836,6 +871,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     public void ShowEntryDetails(int index)
     {
         if (!CanReceiveInput || homeVisible || NoticeVisible || detailOpen || !EntryAvailable(sections[selectedTab], index)) return;
+        if (!Allowed(GuardedAction.ShowDetails, index)) return;
         var section = sections[selectedTab];
         SelectEntry(index);
         if (section.inlineInformation && !PopupAvailable(section, index)) return;
@@ -847,6 +883,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         listFocused = true;
         hoveredButton = null;
         BeginPopup(section.details[index].GetComponent<RectTransform>());
+        EntryDetailsShown?.Invoke(selectedTab, index);
     }
     private void SelectEntryFromPointer(int tab, int index, bool openDetails)
     {
@@ -881,6 +918,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     protected override void ProcessMove(Vector2 direction)
     {
         if (!CanReceiveTabInput || NoticeVisible) return;
+        if (!Allowed(GuardedAction.Move)) return;
         hoveredButton = null;
         int horizontal = direction.x > .5f ? 1 : direction.x < -.5f ? -1 : 0;
         int vertical = direction.y > .5f ? -1 : direction.y < -.5f ? 1 : 0;
@@ -991,6 +1029,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     public override void OnCancel()
     {
         if (!CanReceiveInput) return;
+        if (!Allowed(GuardedAction.Back)) return;
         hoveredButton = null;
         PlayFeedback(cancelFeedback);
         if (homeVisible) Close();
@@ -1037,15 +1076,14 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             bool selected = button.gameObject.activeInHierarchy && IsActive && !isClosing &&
                 (button == hoveredButton || IsSelectedButton(button));
             if (button.TryGetComponent<TerminalButtonMotion>(out var motion)) motion.Select(selected);
-            // 주변의 어두운 면과 반대로 선택 면은 밝게, 그 안의 글자·기호는 어둡게 뒤집는다.
-            if (visual.fill != null) visual.fill.color = new Color(1f, 1f, 1f, selected ? 1f : 0f);
-            else if (visual.face != null) visual.face.color = selected ? new Color(.87f, .94f, 1f, 1f) : visual.faceColor;
-            for (int index = 0; index < visual.labels.Length; index++)
-                if (visual.labels[index] != null)
-                    visual.labels[index].color = selected ? new Color(0f, 0f, 0f, visual.labelColors[index].a) : visual.labelColors[index];
-            for (int index = 0; index < visual.symbols.Length; index++)
-                if (visual.symbols[index] != null)
-                    visual.symbols[index].color = selected ? new Color(0f, 0f, 0f, visual.symbolColors[index].a) : visual.symbolColors[index];
+            // 선택된 버튼은 테두리만 밝힌다(분류의 테마색은 테두리에만 쓴다). 면을 테마색으로 채우지 않고, 글자·기호의 색도 바꾸지 않는다.
+            if (visual.fill != null)
+            {
+                // 선택 표시가 테두리(TrainingHologramGraphic)면 그 테두리를 켜고, 면(Image)이면 옅게만 밝힌다.
+                float lit = visual.fill is TrainingHologramGraphic ? 1f : .14f;
+                visual.fill.color = new Color(1f, 1f, 1f, selected ? lit : 0f);
+            }
+            else if (visual.face != null) visual.face.color = selected ? Color.Lerp(visual.faceColor, Color.white, .2f) : visual.faceColor;
         }
     }
 

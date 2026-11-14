@@ -20,6 +20,8 @@ public class SlashAndChargeAbility : AiAbility
     private Vector2 chargeStartPos;
     private float traveled;
     private int chargeDirection;
+    // 코어. 가시 탄을 불러내는 순간 번쩍인다(표시 전용, 없으면 건너뛴다).
+    private NightmareCore nightmareCore;
 
     private void Awake()
     {
@@ -31,6 +33,7 @@ public class SlashAndChargeAbility : AiAbility
         teleporter = GetComponent<EnemyTeleporter>();
         playerController = GameManager.Instance.Player;
         playerTr = playerController != null ? playerController.transform : null;
+        if (nightmareCore == null) nightmareCore = GetComponentInChildren<NightmareCore>(true);
 
         teleportTriggered = false;
         teleportFinished = false;
@@ -169,6 +172,7 @@ public class SlashAndChargeAbility : AiAbility
         if (!shotsFired)
         {
             FireAngleShots();
+            if (nightmareCore != null) nightmareCore.Fire(Vector2.zero, 0.7f);
             shotsFired = true;
         }
     }

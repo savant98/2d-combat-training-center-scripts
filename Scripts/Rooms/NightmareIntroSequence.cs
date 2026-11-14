@@ -2,15 +2,15 @@ using System.Collections;
 using UnityEngine;
 
 // 고지서 Intro 직후의 일회성 연출 전투만 담당한다. 일반 Nightmare·훈련 재도전과 분리한다.
+// 패배한 뒤에는 Lobby로 보낸다(2026-11-14: 옛 Tutorial 방은 쓰지 않는다). 그때 세이브의 최초 시작 표시를 지우고,
+// 그다음 안내(단말기 메일 → 훈련 메뉴)는 Lobby 쪽 안내가 세이브의 진행 단계를 보고 이어받는다.
 [DisallowMultipleComponent]
 public sealed class NightmareIntroSequence : MonoBehaviour
 {
-    public enum SequenceStage { Dormant, Entering, Exploring, Shattering, BossEntry, Fighting, Defeat, Guidance, MovingToTutorial, Completed }
+    public enum SequenceStage { Dormant, Entering, Exploring, Shattering, BossEntry, Fighting, Defeat, Guidance, MovingToLobby, Completed }
 
     [SerializeField] private Room finalRoom;
     [SerializeField] private Transform finalSpawnPoint;
-    [SerializeField] private Room tutorialRoom;
-    [SerializeField] private Transform tutorialSpawnPoint;
     [SerializeField] private EnemyController nightmarePrefab;
     [SerializeField] private NightmareDefeatTerminal terminal;
     [SerializeField] private NightmareBackdrop backdrop;
@@ -30,7 +30,6 @@ public sealed class NightmareIntroSequence : MonoBehaviour
     public SequenceStage CurrentStage { get; private set; }
     public EnemyController Nightmare => nightmare;
     public Room FinalRoom => finalRoom;
-    public Room TutorialRoom => tutorialRoom;
     public NightmareDefeatTerminal Terminal => terminal;
     public NightmareScreenEffects ScreenEffects => screenEffects;
     public NightmareBackdrop Backdrop => backdrop;
@@ -51,8 +50,9 @@ public sealed class NightmareIntroSequence : MonoBehaviour
         startRequested = false;
         if (!requested) return false;
         if (!isActiveAndEnabled) { FadeOutCarriedTitleMusic(.5f); return false; }
+        var game = GameManager.Instance;
         if (finalRoom == null || finalRoom.WaveManager == null || finalSpawnPoint == null
-            || tutorialRoom == null || tutorialSpawnPoint == null || nightmarePrefab == null || terminal == null
+            || game == null || game.LobbyRoom == null || game.LobbySpawnPoint == null || nightmarePrefab == null || terminal == null
             || backdrop == null || screenEffects == null || arrivalTransition == null)
         {
             Debug.LogError("Nightmare Intro의 방·등장 위치·단말기 참조가 누락되었습니다.", this);
@@ -69,7 +69,7 @@ public sealed class NightmareIntroSequence : MonoBehaviour
         backdrop.PrepareForIntro(GameManager.Instance.Player.transform);
         finalRoom.WaveManager.EnemySpawned += HandleEnemySpawned;
         RoomManager.Instance.OnRoomChanged += HandleRoomChanged;
-        terminal.ContinueRequested += ContinueToTutorial;
+        terminal.ContinueRequested += ContinueToLobby;
         subscribed = true;
         CurrentStage = SequenceStage.Entering;
         RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest {
@@ -125,7 +125,7 @@ public sealed class NightmareIntroSequence : MonoBehaviour
     {
         if (!isActiveAndEnabled) return false;
         if (CurrentStage == SequenceStage.Defeat || CurrentStage == SequenceStage.Guidance
-            || CurrentStage == SequenceStage.MovingToTutorial) return true;
+            || CurrentStage == SequenceStage.MovingToLobby) return true;
         if (!IsEncounterActive || RoomManager.Instance.CurrentRoom != finalRoom) return false;
         CurrentStage = SequenceStage.Defeat;
         if (nightmare != null && nightmare.TryGetComponent<EnemySpawnController>(out var musicOwner))
@@ -165,14 +165,14 @@ public sealed class NightmareIntroSequence : MonoBehaviour
         CurrentStage = SequenceStage.Guidance;
     }
 
-    private void ContinueToTutorial()
+    private void ContinueToLobby()
     {
         if (CurrentStage != SequenceStage.Guidance && CurrentStage != SequenceStage.Defeat) return;
-        CurrentStage = SequenceStage.MovingToTutorial;
-        StartCoroutine(MoveToTutorialRoutine());
+        CurrentStage = SequenceStage.MovingToLobby;
+        StartCoroutine(MoveToLobbyRoutine());
     }
 
-    private IEnumerator MoveToTutorialRoutine()
+    private IEnumerator MoveToLobbyRoutine()
     {
         EnemyPool.Instance.DespawnAll();
         ReleasePause();
@@ -186,16 +186,19 @@ public sealed class NightmareIntroSequence : MonoBehaviour
         // 이전 방 전환이 끝나기 전에 요청을 보내어 무시되는 경우를 방지한다.
         while (RoomTransitionManager.Instance.IsTransitioning) yield return null;
         ReleaseGameplayBlock();
+        Room lobby = GameManager.Instance.LobbyRoom;
         RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest {
-            targetRoom = tutorialRoom, teleportPoint = tutorialSpawnPoint, transitionEffect = spawnTransition
+            targetRoom = lobby, teleportPoint = GameManager.Instance.LobbySpawnPoint, transitionEffect = spawnTransition
         });
-        while (RoomManager.Instance.CurrentRoom != tutorialRoom) yield return null;
+        while (RoomManager.Instance.CurrentRoom != lobby) yield return null;
 
         // 새 방의 기존 암전이 걷히기 시작할 때 단말기와 전용 검은 배경을 함께 닫는다.
         terminal.Dismiss();
         while (RoomTransitionManager.Instance.IsTransitioning) yield return null;
         ReleaseEncounter();
         CurrentStage = SequenceStage.Completed;
+        // 도입부를 마쳤다. 다음 접속부터는 Lobby에서 시작한다(Lobby 안내의 진행 단계는 따로 남는다).
+        if (DataManager.Instance != null) DataManager.Instance.CompleteFirstStart();
     }
 
     private void ReleasePause()
@@ -231,7 +234,7 @@ public sealed class NightmareIntroSequence : MonoBehaviour
                 finalRoom.WaveManager.EnemySpawned -= HandleEnemySpawned;
             }
             if (RoomManager.Instance != null) RoomManager.Instance.OnRoomChanged -= HandleRoomChanged;
-            if (terminal != null) terminal.ContinueRequested -= ContinueToTutorial;
+            if (terminal != null) terminal.ContinueRequested -= ContinueToLobby;
         }
         subscribed = false;
         ReleasePause();

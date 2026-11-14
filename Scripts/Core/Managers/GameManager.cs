@@ -16,6 +16,9 @@ public class GameManager : MonoBehaviour
 
     [HideInInspector] public PlayerController Player;
     public static GameManager Instance { get; private set; }
+    // Lobby(시작 방)와 그 등장 위치. Nightmare 도입부가 끝난 뒤 돌아올 곳과 Lobby 안내가 쓴다.
+    public Room LobbyRoom => StartRoom;
+    public Transform LobbySpawnPoint => spawnPoint != null ? spawnPoint.transform : null;
     private void OnDrawGizmos()
     {
         if (spawnPoint == null)

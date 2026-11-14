@@ -18,6 +18,11 @@ public class TitleMenu : SelectableMenuUI
     [SerializeField] private FeedbackDataSO startFeedback;
     [SerializeField] private FeedbackDataSO warpFeedback;
 
+    [Header("Save Select")]
+    [SerializeField] private TitleSaveSelectUI saveSelect;
+    [SerializeField] private TitlePanelMotion panelMotion;
+    [SerializeField] private TitleSaveStatusView saveStatus;
+
     protected override void ProcessMove(Vector2 direction)
     {
         int previous = currentIndex;
@@ -52,16 +57,18 @@ public class TitleMenu : SelectableMenuUI
     }
 
     private bool isTransitioning;
-    private bool introPlayed;
     private UIManager exitInputOwner;
     public float PlayerDisappearTime => 1.0833334f;
-
-    public void MarkIntroPlayed() => introPlayed = true;
 
     private void Start()
     {
         OnSelected += HandleSelected;
         OnCanceled += HandleCanceled;
+        if (saveSelect != null)
+        {
+            saveSelect.SlotChosen += HandleSlotChosen;
+            saveSelect.Canceled += HandleSaveSelectCanceled;
+        }
 
         UIManager.Instance.StartScreenFade(0f, 1f);
     }
@@ -72,11 +79,31 @@ public class TitleMenu : SelectableMenuUI
 
         Open();
     }
+
+    // 메뉴 판은 열릴 때 펼쳐지고 닫힐 때 접힌다. 위쪽의 세이브 현황은 열 때마다 파일을 다시 읽는다.
+    public override void Open()
+    {
+        base.Open();
+        if (saveStatus != null) saveStatus.Refresh();
+        if (panelMotion != null) panelMotion.Open();
+    }
+
+    public override void Close()
+    {
+        base.Close();
+        if (panelMotion != null) panelMotion.Close();
+    }
+
     private void OnDestroy()
     {
         if (exitInputOwner != null) exitInputOwner.SetUIInputBlock(false);
         OnSelected -= HandleSelected;
         OnCanceled -= HandleCanceled;
+        if (saveSelect != null)
+        {
+            saveSelect.SlotChosen -= HandleSlotChosen;
+            saveSelect.Canceled -= HandleSaveSelectCanceled;
+        }
     }
 
     private void HandleSelected(int index)
@@ -87,7 +114,7 @@ public class TitleMenu : SelectableMenuUI
         switch (index)
         {
             case 0:
-                StartGame();
+                OpenSaveSelect();
                 break;
 
             case 1:
@@ -106,11 +133,49 @@ public class TitleMenu : SelectableMenuUI
         // 나중에 QuitConfirmPopup을 열도록 확장 가능.
     }
 
-    private void StartGame()
+    // 게임 시작은 세이브 파일을 고른 뒤에 한다. 메뉴 판을 접고 세이브 선택 화면을 펼친다.
+    private void OpenSaveSelect()
+    {
+        if (saveSelect == null)
+        {
+            // 세이브 선택 화면이 연결되지 않은 구성에서는 1번 슬롯으로 바로 시작한다.
+            HandleSlotChosen(0);
+            return;
+        }
+
+        Close();
+        saveSelect.Open();
+    }
+
+    private void HandleSlotChosen(int slot)
+    {
+        if (isTransitioning)
+            return;
+
+        // 고른 칸의 파일을 읽거나 새로 만들지 못하면 메뉴로 돌아온다.
+        if (!DataManager.Instance.SelectSlot(slot))
+        {
+            if (!IsActive) Open();
+            return;
+        }
+
+        StartGame(DataManager.Instance.CurrentSaveData.isFirstStart);
+    }
+
+    private void HandleSaveSelectCanceled()
+    {
+        if (isTransitioning || IsActive)
+            return;
+
+        Open();
+    }
+
+    private void StartGame(bool firstStart)
     {
         isTransitioning = true;
-        NightmareIntroSequence.QueueNextStart(introPlayed);
-        Close();
+        // 처음 만든 세이브(게임 최초 시작)는 Nightmare 도입부로, 그 밖에는 Lobby로 들어간다.
+        NightmareIntroSequence.QueueNextStart(firstStart);
+        if (IsActive) Close();
 
         exitInputOwner = UIManager.Instance;
         if (exitInputOwner != null) exitInputOwner.SetUIInputBlock(true);

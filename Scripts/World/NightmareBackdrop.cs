@@ -16,6 +16,7 @@ public sealed class NightmareBackdrop : MonoBehaviour
     [SerializeField] private Renderer[] warningSignals;
     [SerializeField] private NightmareStreetLights streetLights;
     [SerializeField] private GameObject entranceBarrier;
+    [SerializeField, Tooltip("시작 지점 벽면의 좌·우 이동 안내. 도입부에서만 켠다")] private NightmareMoveHint moveHint;
     private Vector3[] positions,scales;
     private Quaternion[] rotations;
     private MaterialPropertyBlock properties;
@@ -44,6 +45,7 @@ public sealed class NightmareBackdrop : MonoBehaviour
         if(entranceBarrier!=null)entranceBarrier.SetActive(false);
         RestoreShards();mirrorRoot.gameObject.SetActive(true);revealedBackdrop.SetActive(false);
         if(streetLights!=null)streetLights.Restore();
+        if(moveHint!=null)moveHint.Show();
         entryCamera.Follow=player;entryCamera.Priority=30;entryCamera.enabled=true;
     }
 
@@ -53,6 +55,7 @@ public sealed class NightmareBackdrop : MonoBehaviour
         if(entranceBarrier!=null)entranceBarrier.SetActive(true);
         revealedBackdrop.SetActive(true);
         if(streetLights!=null)streetLights.BeginDestruction();
+        if(moveHint!=null)moveHint.Hide();
         entryCamera.Priority=1;entryCamera.enabled=false;
         double started=Time.unscaledTimeAsDouble;
         while(current==version&&isActiveAndEnabled&&Time.unscaledTimeAsDouble-started<duration)
@@ -107,6 +110,7 @@ public sealed class NightmareBackdrop : MonoBehaviour
         if(!Application.isPlaying||prepared)return;
         revealedBackdrop.SetActive(true);mirrorRoot.gameObject.SetActive(false);IsRevealed=true;
         if(streetLights!=null)streetLights.HideDestroyed();
+        if(moveHint!=null)moveHint.HideImmediately();
         if(GameManager.Instance!=null&&GameManager.Instance.Player!=null)entryCamera.Follow=GameManager.Instance.Player.transform;
         entryCamera.enabled=false;
     }
@@ -119,6 +123,7 @@ public sealed class NightmareBackdrop : MonoBehaviour
         if(mirrorRoot!=null)mirrorRoot.gameObject.SetActive(false);
         if(revealedBackdrop!=null)revealedBackdrop.SetActive(true);
         if(streetLights!=null)streetLights.HideDestroyed();
+        if(moveHint!=null)moveHint.HideImmediately();
         IsRevealed=true;
     }
     public void CancelShatter()=>++version;

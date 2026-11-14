@@ -25,6 +25,9 @@ public class OptionSettingsService : MonoBehaviour
         Current = DataManager.Instance.Options.Copy();
         SceneManager.sceneLoaded += OnSceneLoaded;
         ApplyDisplay(Current);
+        // 첫 Scene에는 sceneLoaded가 오지 않을 수 있다(편집기에서 Scene 다시 읽기를 끈 Play). 처음 한 번은 직접 적용한다.
+        // 그러지 않으면 타이틀에서는 믹서의 기본값으로 들리다가 다음 Scene에 들어가는 순간 음량이 바뀐다.
+        StartCoroutine(ApplyAfterStart());
     }
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode) => StartCoroutine(ApplyAfterStart());
@@ -33,6 +36,9 @@ public class OptionSettingsService : MonoBehaviour
     {
         // AudioMixer는 Start 이후 값을 설정해야 초기화 값으로 덮이지 않는다.
         yield return null;
+        // 이 서비스는 Scene보다 먼저 만들어진다. 그때 Scene에 놓인 DataManager는 아직 설정 파일을 읽기 전이라 기본값을 돌려줄 수 있다.
+        // 적용할 때 저장된 설정을 다시 읽는다(저장하지 않은 옵션 창의 미리보기는 Scene을 넘어가지 않는다).
+        Current = DataManager.Instance.Options.Copy();
         ApplyPreview(Current);
         ApplyTiming(Current);
     }

@@ -72,7 +72,8 @@ public sealed partial class EnemyBalanceWindow
             case "field.damageInfo.damage": return "장판 피해";
             case "cubeDamageInfo.damage": return "낙하 큐브 피해";
             case "slashDamageInfo.damage": return "참격 피해";
-            case "mineDamageInfo.damage": return "지뢰 피해";
+            case "missileDamageInfo.damage": return "유도탄 직격 피해";
+            case "missileExplosionDamageInfo.damage": return "유도탄 폭발 피해";
             case "explosionDamageInfo.damage": case "explosionDamage": return "폭발 피해";
             case "damage.damage": case "damageInfo.damage": return "공격 · 투사체 피해";
             default: return ObjectNames.NicifyVariableName(path.Replace(".damage", "")) + " 피해";

@@ -4,9 +4,14 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
-using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering;
 
-/// <summary>최초 실행의 모니터·휴대폰 고지서 연출과 서명 입력을 기존 타이틀 앞에 연결한다.</summary>
+/// <summary>
+/// 타이틀의 시작 연출.
+/// 세이브가 하나도 없으면 어두운 방(TitleRoomStage)에서 모니터·휴대폰 고지서 연출과 서명 입력을 거친 뒤 타이틀로 들어가고,
+/// 세이브가 있으면 방을 건너뛰고 등이 차례로 켜지는 연출부터 시작한다(아무 키로 건너뛸 수 있다).
+/// 방의 자세·빛은 TitleRoomStage가, 흐름과 휴대폰 화면의 내용은 이 컴포넌트가 맡는다.
+/// </summary>
 [DefaultExecutionOrder(100)]
 [DisallowMultipleComponent]
 public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
@@ -19,10 +24,13 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         MissedCallOnDesk, DeliveringMail, MissedCallReadDelay, ScreenTransition
     }
 
+    /// <summary>이번 실행에서 재생하는 연출.</summary>
+    public enum IntroMode { None, Room, LightsOnly }
+
     [Header("실행 조건")]
     [SerializeField] private bool enableFirstLaunchIntro = true;
-    [SerializeField, Tooltip("켜면 서명 기록과 관계없이 재생하며 저장 데이터는 변경하지 않습니다.")]
-    private bool playIntroForTesting = true;
+    [SerializeField, Tooltip("켜면 세이브가 있어도 방 연출을 재생합니다(확인용). 저장 데이터는 변경하지 않습니다.")]
+    private bool playIntroForTesting;
     [Header("기존 타이틀")]
     [SerializeField] private TitleIntroController titleIntro;
     [SerializeField] private TitleMenu titleMenu;
@@ -32,14 +40,15 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     [SerializeField] private GameObject[] backgroundRecoveryOrder = Array.Empty<GameObject>();
     [Header("방과 휴대폰")]
     [SerializeField] private CanvasGroup introGroup;
-    [SerializeField] private RectTransform roomRoot;
-    [SerializeField] private UnityEngine.UI.RawImage monitorScreen;
-    [SerializeField] private RectTransform phoneRig;
+    [SerializeField, Tooltip("화면 전체를 덮어 뒤의 UI가 눌리지 않게 하는 면")] private UnityEngine.UI.Graphic inputBlocker;
+    [SerializeField] private TitleRoomStage stage;
+    [SerializeField, Tooltip("휴대폰 화면의 내용(World Space Canvas). 방 연출이 시작될 때 3D 휴대폰의 화면에 붙는다")] private Canvas phoneCanvas;
+    [SerializeField] private CanvasGroup phoneScreenGroup;
+    [SerializeField, Tooltip("세이브가 있을 때, 등이 켜지기 전의 흑백·어두운 화면을 만드는 후처리")] private Volume monochromeVolume;
     [SerializeField] private CanvasGroup notificationGroup, noticeGroup, refusalGroup, signatureGroup;
     [SerializeField] private CanvasGroup missedCallGroup, mailReceiveGroup;
-    [SerializeField] private CanvasGroup incomingCallGroup, mailDeliveryGroup, phoneScreenGlow, missedCallContinueHint;
-    [SerializeField] private RectTransform incomingCallIcon, mailDeliveryIcon, notificationMailIcon, receiveMailIcon;
-    [SerializeField] private Material monitorIntroMaterial;
+    [SerializeField] private CanvasGroup incomingCallGroup, missedCallContinueHint;
+    [SerializeField] private RectTransform incomingCallIcon, notificationMailIcon, receiveMailIcon;
     [SerializeField] private TextMeshProUGUI anyKeyPrompt, statusLabel;
     [Header("고지서")]
     [SerializeField] private UnityEngine.UI.ScrollRect noticeScroll;
@@ -48,19 +57,19 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     [SerializeField] private UnityEngine.UI.Button openPhoneButton, closeMissedCallButton, receiveMailButton;
     [Header("연출 시간")]
     [SerializeField, Min(.05f)] private float ringtoneDuration = 6f;
-    [SerializeField, Min(0f)] private float ringLeadInDuration = 3f;
-    [SerializeField, Min(.05f)] private float revealDuration = 3f;
+    [SerializeField, Min(0f), Tooltip("벨이 울리기 시작한 뒤 시선이 휴대폰 쪽으로 가기 전까지의 시간")] private float ringLeadInDuration = 3f;
+    [SerializeField, Min(.05f), Tooltip("시선이 휴대폰 쪽으로 옮겨 가는 시간")] private float revealDuration = 3f;
     [SerializeField, Min(.05f)] private float phoneZoomDuration = 1.25f;
     [SerializeField, Min(.05f)] private float signatureDuration = 1.25f;
     [SerializeField, Min(0f)] private float signatureHold = .65f;
     [SerializeField, Min(.05f)] private float phoneLowerDuration = 1.1f;
-    [SerializeField, Min(.05f)] private float returnDuration = 3f;
+    [SerializeField, Min(.05f), Tooltip("모니터가 시야를 채울 때까지 다가가는 시간")] private float returnDuration = 3f;
     [SerializeField, Min(.05f)] private float recoveryStepDuration = .65f;
     [SerializeField, Min(0f)] private float missedCallReadDuration = 2f;
     [SerializeField, Min(0f)] private float missedCallDeskDuration = 1.6f;
     [SerializeField, Min(.05f)] private float mailDeliveryDuration = .8f;
     [SerializeField, Min(.05f)] private float screenTransitionDuration = .32f;
-    [SerializeField, Min(.1f)] private float phoneFocusScale = .95f;
+    [SerializeField, Min(0f), Tooltip("세이브가 있을 때, 등이 켜지기 전에 어두운 화면을 보여 주는 시간")] private float lightsOnLeadIn = .5f;
     [SerializeField, Min(20f)] private float keyboardScrollStep = 150f;
     [SerializeField] private AnimationCurve transitionEase = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
     [Header("Feedback")]
@@ -74,36 +83,30 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     [SerializeField, Range(0f, 1f)] private float titleBgmVolume = .38f;
     [SerializeField] private AudioClip titleBgmPreludeClip;
     [SerializeField, Range(0f, 1f)] private float titleBgmPreludeVolumeRatio = .35f;
-    [SerializeField, Range(0f, 1f), Tooltip("고지서 Intro 뒤 FinalRoom으로 이어질 때 Title BGM을 남길 음량 배율입니다.")]
+    [SerializeField, Range(0f, 1f), Tooltip("최초 시작 세이브로 FinalRoom에 이어질 때 Title BGM을 남길 음량 배율입니다.")]
     private float distantTitleBgmVolumeRatio = .4f;
     [SerializeField, Range(200f, 22000f), Tooltip("FinalRoom에서 멀리서 들리게 남길 고음 상한(Hz)입니다. 낮을수록 먹먹하게 들립니다.")]
     private float distantTitleBgmCutoff = 1400f;
 
-    private bool running, initialized, legacyRestored, completed, inputRegistered;
+    private const string SkipHint = "아무 키나 누르면 건너뜁니다";
+    // 등이 켜지기 전의 어두운 화면에서 한 프레임에 흐른 것으로 치는 최대 시간(긴 프레임 하나가 이 구간을 삼키지 않게 한다)
+    private const float MaxLeadInStep = 1f / 30f;
+
+    private bool running, initialized, legacyRestored, completed, inputRegistered, skippable;
     private bool[] legacyActive;
     private bool[] legacyRevealed, scrollWasEnabled;
     private TitleWorldInfiniteScrollLayer[] frozenScrollLayers;
     private Transform[] scrollingTargets;
     private Vector3[] scrollingRestPositions;
-    private Vector3 roomRestScale, phoneRestScale;
-    private Vector2 roomRestPosition, phoneRestPosition;
-    private Quaternion phoneRestRotation;
-    private float signatureWidth, inputGuardUntil;
+    private float signatureWidth, inputGuardUntil, phonePowerTarget;
     private int selectedSignatureIndex;
-    private RenderTexture liveScreen, originalCameraTarget;
-    private Texture originalScreenTexture;
-    private Material originalScreenMaterial, liveScreenMaterial;
-    private Camera displayBackingCamera;
     private SoundHandle ringtoneHandle, vibrationHandle, signatureHandle;
     private bool ringtonePaused, vibrationPaused, signaturePaused, titleMusicStarted, missedCallReady;
     private bool preludeStarted, preludePaused;
-    private bool closeButtonWasActive;
+    private bool closeButtonWasActive, blockerWasRaycastTarget;
     private float visualTime;
     private UiRectState[] ownedRectStates;
     private UiGroupState[] ownedGroupStates;
-    private float ringStartedAt = -1f, roomRevealStartedAt = -1f, ringStoppedAt = -1f;
-    private Vector3 screenZoomScale;
-    private Vector2 screenZoomPosition;
 
     private struct UiRectState
     {
@@ -120,20 +123,24 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     }
 
     public IntroStage CurrentStage { get; private set; } = IntroStage.Disabled;
+    public IntroMode Mode { get; private set; } = IntroMode.None;
     public bool IsActive => running && isActiveAndEnabled;
     public bool IsSigned { get; private set; }
     public int SelectedSignatureIndex => selectedSignatureIndex;
     public bool IsPlatformRestored { get; private set; }
     public int RecoveredBackgroundCount { get; private set; }
     public bool HasTitlePresentationStarted { get; private set; }
+    /// <summary>아무 키로 건너뛸 수 있는 구간인가(세이브가 있을 때의 등 켜지는 연출).</summary>
+    public bool CanSkip => running && skippable;
     public bool IsDocumentAtEnd => noticeScroll != null && noticeScroll.content != null && noticeScroll.viewport != null
         && (noticeScroll.content.rect.height <= noticeScroll.viewport.rect.height + 1f || noticeScroll.verticalNormalizedPosition <= .015f);
     private bool HasInputFocus => IsActive && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked
         && UIManager.Instance.IsCurrentInputTarget(this);
     private bool CanAct => HasInputFocus && Time.unscaledTime >= inputGuardUntil;
 
-    public static bool ShouldRunIntro(bool enabled, bool forceForTesting, bool noticeSigned)
-        => enabled && (forceForTesting || !noticeSigned);
+    /// <summary>방 연출(최초 실행)을 재생하는 조건: 켜져 있고, 세이브가 하나도 없거나 확인용 강제 재생일 때.</summary>
+    public static bool ShouldRunIntro(bool enabled, bool forceForTesting, bool hasSave)
+        => enabled && (forceForTesting || !hasSave);
 
     private void Awake()
     {
@@ -152,38 +159,52 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     private void Start()
     {
         initialized = true;
-        completed = legacyRestored = false;
+        completed = legacyRestored = skippable = false;
         IsSigned = IsPlatformRestored = HasTitlePresentationStarted = false;
         RecoveredBackgroundCount = 0;
         titleMusicStarted = false;
         preludeStarted = preludePaused = false;
         missedCallReady = false;
         visualTime = 0f;
+        phonePowerTarget = 0f;
         ownedRectStates = null;
         ownedGroupStates = null;
-        ringStartedAt = roomRevealStartedAt = ringStoppedAt = -1f;
         legacyActive = legacyRevealed = null;
         frozenScrollLayers = null;
         scrollWasEnabled = null;
         scrollingTargets = null;
         CurrentStage = IntroStage.Disabled;
-        bool signed = enableFirstLaunchIntro && DataManager.Instance.CurrentSaveData.trainingNoticeSigned;
-        if (!ShouldRunIntro(enableFirstLaunchIntro, playIntroForTesting, signed))
+        SetMonochrome(false);
+
+        // 세이브가 하나라도 있으면 방 연출을 이미 본 것으로 본다(서명 여부를 따로 저장하지 않는다).
+        bool hasSave = DataManager.Instance.HasAnySave;
+        Mode = !enableFirstLaunchIntro ? IntroMode.None
+            : ShouldRunIntro(enableFirstLaunchIntro, playIntroForTesting, hasSave) ? IntroMode.Room : IntroMode.LightsOnly;
+        if (Mode == IntroMode.None)
         {
+            if (phoneCanvas != null) phoneCanvas.gameObject.SetActive(false);
             SetGroup(introGroup, false);
             if (titleIntro != null) titleIntro.SetExternalIntroActive(false);
             return;
         }
         if (!HasRequiredReferences())
         {
-            Debug.LogError("훈련 고지서 Intro의 필수 타이틀·화면·고지서 참조가 누락되었습니다.", this);
+            Debug.LogError("타이틀 시작 연출의 필수 타이틀·방·고지서 참조가 누락되었습니다.", this);
+            Mode = IntroMode.None;
             SetGroup(introGroup, false);
             if (titleIntro != null) titleIntro.SetExternalIntroActive(false);
             return;
         }
+        if (Mode == IntroMode.Room)
+        {
+            // 휴대폰 화면은 방 안의 Canvas에 있다. 방을 켜고 배치를 한 번 계산한 뒤에 크기를 읽는다.
+            stage.Begin(titleCamera);
+            stage.AttachPhoneCanvas(phoneCanvas, phoneScreenGroup);
+            Canvas.ForceUpdateCanvases();
+        }
+        else if (phoneCanvas != null) phoneCanvas.gameObject.SetActive(false);
         CachePresentation();
         running = true;
-        titleMenu.MarkIntroPlayed();
         if (SoundManager.Instance != null)
         {
             SoundManager.Instance.StopBGM(titleBgmClip);
@@ -193,14 +214,6 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         UIManager.Instance.PushInputTarget(this, UIInputLayer.System);
         inputRegistered = true;
         HideLegacyObjects();
-        CreateLiveScreen();
-        Canvas.ForceUpdateCanvases();
-        CalculateScreenZoom();
-        roomRoot.localScale = screenZoomScale;
-        roomRoot.anchoredPosition = screenZoomPosition;
-        phoneRig.localScale = phoneRestScale;
-        phoneRig.anchoredPosition = phoneRestPosition;
-        phoneRig.localRotation = phoneRestRotation;
         noticeScroll.StopMovement();
         noticeScroll.verticalNormalizedPosition = 1f;
         SetGroup(introGroup, true);
@@ -211,34 +224,40 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         SetGroup(missedCallGroup, false);
         SetGroup(mailReceiveGroup, false);
         SetGroup(incomingCallGroup, false);
-        SetGroup(mailDeliveryGroup, false);
-        SetGroup(phoneScreenGlow, false);
         SetGroup(missedCallContinueHint, false);
         if (closeMissedCallButton != null) closeMissedCallButton.gameObject.SetActive(false);
         SetSignatureFraction(0f);
-        if (anyKeyPrompt != null) anyKeyPrompt.gameObject.SetActive(true);
-        CurrentStage = IntroStage.WaitingForInput;
+        SetStatus("");
         inputGuardUntil = Time.unscaledTime + .2f;
-        RefreshControls();
+
+        if (Mode == IntroMode.Room)
+        {
+            // 휴대폰 화면(방 안의 World Space Canvas)을 마우스로 누를 수 있도록 화면을 덮는 면의 입력을 푼다.
+            if (inputBlocker != null) inputBlocker.raycastTarget = false;
+            if (anyKeyPrompt != null) anyKeyPrompt.gameObject.SetActive(true);
+            CurrentStage = IntroStage.WaitingForInput;
+            RefreshControls();
+        }
+        else
+        {
+            if (anyKeyPrompt != null) anyKeyPrompt.gameObject.SetActive(false);
+            StartCoroutine(LightsOnRoutine());
+        }
     }
 
     private bool HasRequiredReferences() => titleIntro != null && titleMenu != null && titleCamera != null
-        && UIManager.Instance != null && introGroup != null && roomRoot != null && monitorScreen != null && phoneRig != null
+        && UIManager.Instance != null && introGroup != null && stage != null
         && noticeGroup != null && refusalGroup != null && signatureGroup != null && noticeScroll != null && noticeScroll.content != null && noticeScroll.viewport != null
         && signButton != null && refuseButton != null && missedCallGroup != null && mailReceiveGroup != null
         && closeMissedCallButton != null && receiveMailButton != null && incomingCallGroup != null
-        && mailDeliveryGroup != null && phoneScreenGlow != null && missedCallContinueHint != null
-        && incomingCallIcon != null && mailDeliveryIcon != null && notificationMailIcon != null && receiveMailIcon != null;
+        && missedCallContinueHint != null
+        && incomingCallIcon != null && notificationMailIcon != null && receiveMailIcon != null;
 
     private void CachePresentation()
     {
-        roomRestScale = roomRoot.localScale;
-        roomRestPosition = roomRoot.anchoredPosition;
-        phoneRestScale = phoneRig.localScale;
-        phoneRestPosition = phoneRig.anchoredPosition;
-        phoneRestRotation = phoneRig.localRotation;
         signatureWidth = signatureReveal != null ? signatureReveal.rect.width : 0f;
         closeButtonWasActive = closeMissedCallButton != null && closeMissedCallButton.gameObject.activeSelf;
+        blockerWasRaycastTarget = inputBlocker != null && inputBlocker.raycastTarget;
         CacheOwnedUiPresentation();
         legacyActive = new bool[hiddenUntilIntroComplete.Length];
         legacyRevealed = new bool[hiddenUntilIntroComplete.Length];
@@ -267,13 +286,13 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         var rects = new System.Collections.Generic.HashSet<RectTransform>();
         var groups = new System.Collections.Generic.HashSet<CanvasGroup>();
         foreach (var group in new[] { introGroup, notificationGroup, noticeGroup, refusalGroup, signatureGroup,
-            missedCallGroup, mailReceiveGroup, incomingCallGroup, mailDeliveryGroup, phoneScreenGlow, missedCallContinueHint })
+            missedCallGroup, mailReceiveGroup, incomingCallGroup, missedCallContinueHint })
         {
             if (group == null) continue;
             groups.Add(group);
             if (group.transform is RectTransform rect) rects.Add(rect);
         }
-        foreach (var icon in new[] { incomingCallIcon, mailDeliveryIcon, notificationMailIcon, receiveMailIcon })
+        foreach (var icon in new[] { incomingCallIcon, notificationMailIcon, receiveMailIcon })
         {
             if (icon == null) continue;
             rects.Add(icon);
@@ -317,15 +336,15 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
                     pose.Rect.localScale = pose.Scale;
                     pose.Rect.localRotation = pose.Rotation;
                 }
-        if (ownedGroupStates != null)
-            foreach (var state in ownedGroupStates)
-                if (state.Group != null)
-                {
-                    state.Group.alpha = state.Alpha;
-                    state.Group.interactable = state.Interactable;
-                    state.Group.blocksRaycasts = state.BlocksRaycasts;
-                }
+        foreach (var state in ownedGroupStates)
+            if (state.Group != null)
+            {
+                state.Group.alpha = state.Alpha;
+                state.Group.interactable = state.Interactable;
+                state.Group.blocksRaycasts = state.BlocksRaycasts;
+            }
         if (closeMissedCallButton != null) closeMissedCallButton.gameObject.SetActive(closeButtonWasActive);
+        if (inputBlocker != null) inputBlocker.raycastTarget = blockerWasRaycastTarget;
     }
 
     private void UpdatePhonePresentation()
@@ -335,15 +354,13 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         ResetPulse(notificationMailIcon);
         ResetPulse(receiveMailIcon);
         bool ringing = CurrentStage == IntroStage.RingingHold || CurrentStage == IntroStage.RevealingRoom;
-        if (ringing)
+        if (stage != null && stage.IsRunning)
         {
-            float vibration = Mathf.Sin(visualTime * 43f);
-            phoneRig.anchoredPosition = phoneRestPosition + new Vector2(vibration * 5f, Mathf.Sin(visualTime * 57f) * 2f);
-            phoneRig.localRotation = phoneRestRotation * Quaternion.Euler(0f, 0f, vibration * 1.4f);
-            Pulse(incomingCallIcon, visualTime * 7f);
-            if (phoneScreenGlow != null) phoneScreenGlow.alpha = .25f + .6f * (.5f + .5f * Mathf.Sin(visualTime * 12f));
+            // 벨이 울리는 동안의 진동과 휴대폰 화면의 켜짐은 방(3D 휴대폰)이 표현한다.
+            stage.Ringing = ringing && HasInputFocus;
+            stage.PhonePower = Mathf.MoveTowards(stage.PhonePower, phonePowerTarget, Time.unscaledDeltaTime * 5f);
         }
-        else if (CurrentStage != IntroStage.DeliveringMail && phoneScreenGlow != null) phoneScreenGlow.alpha = 0f;
+        if (ringing) Pulse(incomingCallIcon, visualTime * 7f);
         if (CurrentStage == IntroStage.WaitingForPhone) Pulse(notificationMailIcon, visualTime * 5f);
         if (CurrentStage == IntroStage.ReceiveMailPrompt) Pulse(receiveMailIcon, visualTime * 5f);
     }
@@ -374,6 +391,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         SyncPreludePause();
         UpdatePhonePresentation();
         if (CurrentStage == IntroStage.WaitingForInput && CanAct && AnyKeyPressed()) BeginFromAnyKey();
+        else if (skippable && CanAct && AnyKeyPressed()) SkipToTitle();
     }
 
     private void LateUpdate()
@@ -401,6 +419,48 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         return InputManager.PressedAnyButton();
     }
 
+    #region 세이브가 있을 때: 등 켜지는 연출부터
+
+    private IEnumerator LightsOnRoutine()
+    {
+        skippable = true;
+        SetMonochrome(true);
+        SetStatus(SkipHint);
+        CurrentStage = IntroStage.ReturningToTitle;
+        // Scene을 읽은 직후의 프레임은 길다. 그 시간이 연출 시간으로 흘러가 어두운 화면을 건너뛰지 않게, 화면이 그려지기 시작한 뒤부터 센다.
+        yield return null;
+        yield return null;
+        // 전주는 방 연출의 길이(다가가는 시간 + 점등)에 맞춰 만든 곡이다. 그 끝이 타이틀 음악의 시작과 맞도록 뒷부분만 쓴다.
+        float fullLength = returnDuration + RecoveryLength();
+        StartPrelude(Mathf.Max(0f, fullLength - (lightsOnLeadIn + RecoveryLength())));
+        float waited = 0f;
+        while (waited < lightsOnLeadIn)
+        {
+            yield return null;
+            if (HasInputFocus) waited += Mathf.Min(Time.unscaledDeltaTime, MaxLeadInStep);
+        }
+        yield return RecoverRoutine();
+    }
+
+    private float RecoveryLength() => recoveryStepDuration * (1 + (backgroundRecoveryOrder != null ? backgroundRecoveryOrder.Length : 0));
+
+    /// <summary>등 켜지는 연출을 건너뛰고 타이틀을 바로 연다(세이브가 있을 때만).</summary>
+    public void SkipToTitle()
+    {
+        if (!running || !skippable) return;
+        StopAllCoroutines();
+        SetMonochrome(false);
+        IsPlatformRestored = true;
+        RecoveredBackgroundCount = backgroundRecoveryOrder.Length;
+        // 건너뛰는 데 쓴 키가 이어서 열리는 타이틀 메뉴까지 누르지 않게, 이번 프레임에 눌린 것으로 남아 있는 버튼을 지운다.
+        if (InputManager.Instance != null) InputManager.Instance.ClearButtonStates();
+        FinishToTitle();
+    }
+
+    #endregion
+
+    #region 세이브가 없을 때: 방 → 전화 → 메일 → 서명
+
     public void BeginFromAnyKey()
     {
         if (!CanAct || CurrentStage != IntroStage.WaitingForInput) return;
@@ -411,8 +471,9 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
 
     private IEnumerator OpenNoticeRoutine()
     {
-        ringStartedAt = Time.unscaledTime;
+        // 책상 위의 휴대폰이 켜지며 벨이 울리고, 잠시 뒤 시선이 휴대폰 쪽으로 간다.
         SetGroup(incomingCallGroup, true);
+        phonePowerTarget = 1f;
         if (ringtoneFeedback != null && SoundManager.Instance != null)
             ringtoneHandle = SoundManager.Instance.PlayLoop(ringtoneFeedback.sound, Vector3.zero);
         if (vibrationFeedback != null && SoundManager.Instance != null)
@@ -424,49 +485,26 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
             if (!HasInputFocus) continue;
             elapsed += Time.unscaledDeltaTime;
             if (elapsed < ringLeadInDuration) continue;
-            if (CurrentStage != IntroStage.RevealingRoom)
-            {
-                CurrentStage = IntroStage.RevealingRoom;
-                roomRevealStartedAt = Time.unscaledTime;
-            }
-            float p = Ease(Mathf.Clamp01((elapsed - ringLeadInDuration) / Mathf.Max(.01f, revealDuration)));
-            roomRoot.localScale = Vector3.LerpUnclamped(screenZoomScale, roomRestScale, p);
-            roomRoot.anchoredPosition = Vector2.LerpUnclamped(screenZoomPosition, roomRestPosition, p);
+            CurrentStage = IntroStage.RevealingRoom;
+            stage.Glance = Ease(Mathf.Clamp01((elapsed - ringLeadInDuration) / Mathf.Max(.01f, revealDuration)));
         }
-        roomRoot.localScale = roomRestScale;
-        roomRoot.anchoredPosition = roomRestPosition;
+        stage.Glance = 1f;
         StopRingtone();
         SetGroup(incomingCallGroup, false);
-        SetGroup(phoneScreenGlow, false);
-        phoneRig.anchoredPosition = phoneRestPosition;
-        phoneRig.localRotation = phoneRestRotation;
         ResetPulse(incomingCallIcon);
         CurrentStage = IntroStage.MissedCallOnDesk;
         SetGroup(missedCallGroup, true);
         yield return Hold(missedCallDeskDuration);
+
+        // 메일 알림이 도착하면 화면이 알림으로 바뀐다.
         CurrentStage = IntroStage.DeliveringMail;
-        SetGroup(mailDeliveryGroup, true);
         PrepareScreenBlend(missedCallGroup, notificationGroup);
-        var canvas = (RectTransform)introGroup.GetComponentInParent<Canvas>().transform;
-        Vector3 destination = canvas.InverseTransformPoint(phoneRig.TransformPoint(phoneRig.rect.center));
-        Vector3 origin = new Vector3(canvas.rect.xMax + mailDeliveryIcon.rect.width * 1.3f, destination.y + canvas.rect.height * .25f, destination.z);
-        Vector3 envelopeScale = RestScale(mailDeliveryIcon);
         yield return Animate(mailDeliveryDuration, t => {
-            float p = Ease(t);
-            if (mailDeliveryIcon != null)
-            {
-                mailDeliveryIcon.position = canvas.TransformPoint(Vector3.LerpUnclamped(origin, destination, p));
-                mailDeliveryIcon.localScale = envelopeScale * Mathf.Lerp(2.4f, .55f, p);
-            }
-            if (mailDeliveryGroup != null) mailDeliveryGroup.alpha = 1f - Mathf.Clamp01((t - .86f) / .14f);
-            if (phoneScreenGlow != null) phoneScreenGlow.alpha = t > .7f ? Mathf.Sin(Mathf.Clamp01((t - .7f) / .3f) * Mathf.PI) : 0f;
             float blend = Mathf.Clamp01((t * mailDeliveryDuration - Mathf.Max(0f, mailDeliveryDuration - screenTransitionDuration))
                 / Mathf.Max(.01f, screenTransitionDuration));
             BlendScreens(missedCallGroup, notificationGroup, Ease(blend));
         });
         FinishScreenBlend(missedCallGroup, notificationGroup);
-        SetGroup(mailDeliveryGroup, false);
-        SetGroup(phoneScreenGlow, false);
         CurrentStage = IntroStage.WaitingForPhone;
         Play(mailArrivalFeedback != null ? mailArrivalFeedback : notificationFeedback);
         SetStatus("Z키를 눌러 휴대폰을 확인하세요");
@@ -485,14 +523,13 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
 
     private IEnumerator OpenPhoneRoutine()
     {
+        // 휴대폰을 눈앞으로 들어 올린다.
         PrepareScreenBlend(notificationGroup, missedCallGroup);
         yield return Animate(phoneZoomDuration, t => {
-            float p = Ease(t);
-            phoneRig.anchoredPosition = Vector2.LerpUnclamped(phoneRestPosition, Vector2.zero, p);
-            phoneRig.localScale = Vector3.LerpUnclamped(phoneRestScale, Vector3.one * phoneFocusScale, p);
-            phoneRig.localRotation = Quaternion.SlerpUnclamped(phoneRestRotation, Quaternion.identity, p);
+            stage.PhoneLift = Ease(t);
             BlendScreens(notificationGroup, missedCallGroup, Ease(Mathf.Clamp01(t * phoneZoomDuration / Mathf.Max(.01f, screenTransitionDuration))));
         });
+        stage.PhoneLift = 1f;
         FinishScreenBlend(notificationGroup, missedCallGroup);
         CurrentStage = IntroStage.MissedCallReadDelay;
         missedCallReady = false;
@@ -658,33 +695,39 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         StopLoop(ref signatureHandle, ref signaturePaused);
         IsSigned = true;
         SetStatus("서명이 완료되었습니다.");
-        // 강제 테스트는 다른 기능의 저장에도 섞이지 않도록 메모리의 마커도 변경하지 않는다.
-        if (!playIntroForTesting)
-        {
-            DataManager.Instance.CurrentSaveData.trainingNoticeSigned = true;
-            DataManager.Instance.SaveGame();
-        }
         yield return Hold(signatureHold);
+
+        // 휴대폰을 책상에 내려놓고 화면을 끈다.
         CurrentStage = IntroStage.ReturningPhone;
-        Vector2 fromPosition = phoneRig.anchoredPosition;
-        Vector3 fromScale = phoneRig.localScale;
-        Quaternion fromRotation = phoneRig.localRotation;
         yield return Animate(phoneLowerDuration, t => {
-            float p = Ease(t);
-            phoneRig.anchoredPosition = Vector2.LerpUnclamped(fromPosition, phoneRestPosition, p);
-            phoneRig.localScale = Vector3.LerpUnclamped(fromScale, phoneRestScale, p);
-            phoneRig.localRotation = Quaternion.SlerpUnclamped(fromRotation, phoneRestRotation, p);
+            stage.PhoneLift = 1f - Ease(t);
+            if (t > .6f) phonePowerTarget = 0f;
         });
+        stage.PhoneLift = 0f;
+        phonePowerTarget = 0f;
+
+        // 모니터로 다가가 화면이 시야를 채우면, 그 그림 그대로 실제 타이틀 화면으로 넘어간다.
         CurrentStage = IntroStage.ReturningToTitle;
-        StartPrelude();
+        StartPrelude(0f);
         SetStatus("");
-        // 화면 복구를 시작하기 전까지는 플랫폼과 모니터의 어두운 상태를 그대로 유지한다.
         yield return Animate(returnDuration, t => {
-            roomRoot.localScale = Vector3.LerpUnclamped(roomRestScale, screenZoomScale, Ease(t));
-            roomRoot.anchoredPosition = Vector2.LerpUnclamped(roomRestPosition, screenZoomPosition, Ease(t));
+            stage.MonitorZoom = Ease(t);
+            stage.Glance = 1f - Ease(Mathf.Clamp01(t * 2.5f));
         });
+        stage.MonitorZoom = 1f;
+        yield return null;   // 화면이 꽉 찬 그림을 한 프레임 보여 준 뒤 바꾼다
+        stage.End();
+        yield return RecoverRoutine();
+    }
+
+    #endregion
+
+    #region 등이 차례로 켜진다(두 경로 공통)
+
+    private IEnumerator RecoverRoutine()
+    {
         CurrentStage = IntroStage.RestoringPlatform;
-        RestoreScreenMaterial();
+        SetMonochrome(false);
         RestoreScrollUnder(platformRoot);
         IsPlatformRestored = true;
         Play(recoveryFlashFeedback);
@@ -700,7 +743,13 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
             PlayRecoveryLight(RecoveredBackgroundCount);
             yield return Hold(recoveryStepDuration);
         }
+        FinishToTitle();
+    }
+
+    private void FinishToTitle()
+    {
         CurrentStage = IntroStage.RevealingTitle;
+        skippable = false;
         RestoreLegacyObjects();
         RestoreAllScrolling();
         titleIntro.ResumeAfterTrainingNoticeImmediately();
@@ -708,10 +757,18 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         completed = true;
         running = false;
         CurrentStage = IntroStage.Completed;
-        ReleaseLiveScreen();
+        if (stage != null) stage.End();
+        SetStatus("");
         SetGroup(introGroup, false);
         RemoveOwnInput();
     }
+
+    private void SetMonochrome(bool on)
+    {
+        if (monochromeVolume != null) monochromeVolume.weight = on ? 1f : 0f;
+    }
+
+    #endregion
 
     private IEnumerator Animate(float duration, Action<float> step)
     {
@@ -737,100 +794,10 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     }
     private float Ease(float t) => transitionEase != null ? transitionEase.Evaluate(Mathf.Clamp01(t)) : Mathf.SmoothStep(0f, 1f, t);
 
-    private void CreateLiveScreen()
-    {
-        originalCameraTarget = titleCamera.targetTexture;
-        originalScreenTexture = monitorScreen.texture;
-        originalScreenMaterial = monitorScreen.material;
-        int width = Mathf.Clamp(Screen.width, 640, 2560);
-        int height = Mathf.Clamp(Screen.height, 360, 1440);
-        liveScreen = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32)
-        {
-            name = "TitleTrainingNoticeLiveScreen", hideFlags = HideFlags.DontSave,
-            filterMode = FilterMode.Bilinear, antiAliasing = 1
-        };
-        liveScreen.Create();
-        titleCamera.targetTexture = liveScreen;
-        monitorScreen.texture = liveScreen;
-        if (monitorIntroMaterial != null)
-        {
-            liveScreenMaterial = new Material(monitorIntroMaterial)
-            {
-                name = "TitleTrainingNoticeGrayInstance", hideFlags = HideFlags.DontSave
-            };
-            monitorScreen.material = liveScreenMaterial;
-        }
-        // 실제 Display 출력도 유지한다. 원래 카메라만 RT로 돌리면 Game View에는 출력 카메라가 없어진다.
-        var displayObject = new GameObject("TitleTrainingNoticeDisplayCamera") { hideFlags = HideFlags.HideAndDontSave };
-        displayBackingCamera = displayObject.AddComponent<Camera>();
-        displayBackingCamera.targetDisplay = titleCamera.targetDisplay;
-        displayBackingCamera.targetTexture = null;
-        displayBackingCamera.cullingMask = 0;
-        displayBackingCamera.clearFlags = CameraClearFlags.SolidColor;
-        displayBackingCamera.backgroundColor = new Color(.005f, .008f, .012f, 1f);
-        displayBackingCamera.depth = -1000f;
-        displayBackingCamera.allowHDR = displayBackingCamera.allowMSAA = false;
-        displayBackingCamera.useOcclusionCulling = false;
-        displayBackingCamera.enabled = true;
-        var additional = displayBackingCamera.GetUniversalAdditionalCameraData();
-        additional.renderType = CameraRenderType.Base;
-        additional.renderPostProcessing = additional.renderShadows = false;
-        additional.requiresColorOption = CameraOverrideOption.Off;
-        additional.requiresDepthOption = CameraOverrideOption.Off;
-        additional.volumeLayerMask = 0;
-    }
-    private void CalculateScreenZoom()
-    {
-        var canvas = introGroup.GetComponentInParent<Canvas>();
-        var canvasRect = (RectTransform)canvas.transform;
-        var screen = monitorScreen.rectTransform;
-        Vector3 relative = roomRoot.InverseTransformPoint(screen.TransformPoint(screen.rect.center));
-        Vector3[] corners = new Vector3[4]; screen.GetWorldCorners(corners);
-        Vector3 leftBottom = roomRoot.InverseTransformPoint(corners[0]);
-        Vector3 rightTop = roomRoot.InverseTransformPoint(corners[2]);
-        float width = Mathf.Abs(rightTop.x - leftBottom.x), height = Mathf.Abs(rightTop.y - leftBottom.y);
-        float zoom = Mathf.Max(canvasRect.rect.width / Mathf.Max(1f, width), canvasRect.rect.height / Mathf.Max(1f, height));
-        screenZoomScale = Vector3.one * zoom;
-        screenZoomPosition = new Vector2(-relative.x * zoom, -relative.y * zoom);
-    }
-    private void ReleaseLiveScreen()
-    {
-        if (liveScreen != null)
-        {
-            if (titleCamera != null && titleCamera.targetTexture == liveScreen) titleCamera.targetTexture = originalCameraTarget;
-            if (monitorScreen != null && monitorScreen.texture == liveScreen) monitorScreen.texture = originalScreenTexture;
-        }
-        RestoreScreenMaterial();
-        if (displayBackingCamera != null)
-        {
-            displayBackingCamera.enabled = false;
-            if (Application.isPlaying) Destroy(displayBackingCamera.gameObject); else DestroyImmediate(displayBackingCamera.gameObject);
-            displayBackingCamera = null;
-        }
-        if (liveScreen != null)
-        {
-            liveScreen.Release();
-            if (Application.isPlaying) Destroy(liveScreen); else DestroyImmediate(liveScreen);
-            liveScreen = null;
-        }
-        if (liveScreenMaterial != null)
-        {
-            if (Application.isPlaying) Destroy(liveScreenMaterial); else DestroyImmediate(liveScreenMaterial);
-            liveScreenMaterial = null;
-        }
-    }
-
-    private void RestoreScreenMaterial()
-    {
-        if (monitorScreen != null && liveScreenMaterial != null && monitorScreen.material == liveScreenMaterial)
-            monitorScreen.material = originalScreenMaterial;
-    }
-
     private void StopRingtone()
     {
         StopLoop(ref ringtoneHandle, ref ringtonePaused);
         StopLoop(ref vibrationHandle, ref vibrationPaused);
-        if (ringStartedAt >= 0f && ringStoppedAt < 0f) ringStoppedAt = Time.unscaledTime;
     }
 
     private void SyncRingtonePause()
@@ -856,10 +823,10 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         wasPaused = false;
     }
 
-    private void StartPrelude()
+    private void StartPrelude(float startSeconds)
     {
         if (preludeStarted || titleBgmPreludeClip == null || SoundManager.Instance == null) return;
-        SoundManager.Instance.PlayBGM(titleBgmPreludeClip, titleBgmVolume * titleBgmPreludeVolumeRatio, false);
+        SoundManager.Instance.PlayBGM(titleBgmPreludeClip, titleBgmVolume * titleBgmPreludeVolumeRatio, false, startSeconds);
         preludeStarted = true;
         preludePaused = false;
     }
@@ -898,7 +865,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         if (titleMusicStarted && SoundManager.Instance != null)
         {
             float duration = titleMenu != null ? titleMenu.PlayerDisappearTime : 1.0833334f;
-            // 고지서 Intro 뒤 FinalRoom으로 이어지면 곡을 끊지 않고 멀리서 들리게 낮춰 보스 등장 전까지 잇는다.
+            // 최초 시작 세이브로 FinalRoom에 이어지면 곡을 끊지 않고 멀리서 들리게 낮춰 보스 등장 전까지 잇는다.
             if (NightmareIntroSequence.IsStartQueued)
                 SoundManager.Instance.SetBGMDistance(titleBgmClip, titleBgmVolume * distantTitleBgmVolumeRatio, distantTitleBgmCutoff, duration);
             else
@@ -976,8 +943,6 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
             missedCallContinueHint.interactable = missedCallContinueHint.blocksRaycasts = false;
         }
         if (incomingCallGroup != null) incomingCallGroup.interactable = incomingCallGroup.blocksRaycasts = false;
-        if (mailDeliveryGroup != null) mailDeliveryGroup.interactable = mailDeliveryGroup.blocksRaycasts = false;
-        if (phoneScreenGlow != null) phoneScreenGlow.interactable = phoneScreenGlow.blocksRaycasts = false;
         if (signatureGroup != null) signatureGroup.interactable = signatureGroup.blocksRaycasts = false;
         bool footer = reading && IsDocumentAtEnd;
         if (signButton != null) signButton.interactable = footer;
@@ -1034,21 +999,21 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         if (!initialized) { if (titleIntro != null) titleIntro.SetExternalIntroActive(false); return; }
         StopAllCoroutines();
         running = false;
+        skippable = false;
         StopRingtone();
         StopLoop(ref signatureHandle, ref signaturePaused);
         StopPrelude();
         RemoveOwnInput();
-        ReleaseLiveScreen();
+        if (stage != null) stage.End();
+        SetMonochrome(false);
         if (!completed)
         {
             RestoreLegacyObjects();
             CurrentStage = IntroStage.Disabled;
         }
-        // Scene Reload가 꺼진 편집기에서도 다음 재생이 확대된 자세를 기준으로 삼지 않게 한다.
+        // Scene Reload가 꺼진 편집기에서도 다음 재생이 연출 도중의 자세를 기준으로 삼지 않게 한다.
         if (legacyActive != null)
         {
-            if (roomRoot != null) { roomRoot.localScale = roomRestScale; roomRoot.anchoredPosition = roomRestPosition; }
-            if (phoneRig != null) { phoneRig.localScale = phoneRestScale; phoneRig.anchoredPosition = phoneRestPosition; phoneRig.localRotation = phoneRestRotation; }
             SetSignatureFraction(1f);
             if (noticeScroll != null) { noticeScroll.StopMovement(); noticeScroll.verticalNormalizedPosition = 1f; }
             if (scrollingTargets != null)
@@ -1063,8 +1028,6 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         SetGroup(missedCallGroup, false);
         SetGroup(mailReceiveGroup, false);
         SetGroup(incomingCallGroup, false);
-        SetGroup(mailDeliveryGroup, false);
-        SetGroup(phoneScreenGlow, false);
         SetGroup(missedCallContinueHint, false);
         RestoreOwnedUiPresentation();
         SetGroup(introGroup, false);
