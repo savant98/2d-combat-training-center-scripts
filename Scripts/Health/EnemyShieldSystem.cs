@@ -20,6 +20,13 @@ public class EnemyShieldSystem : MonoBehaviour
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetShieldDamageApplied() => ShieldDamageApplied = null;
     public float MaximumShield => data.maxShield;
+
+    // 화면 표시(보스 체력바 등)가 읽기만 하는 상태. 쉴드가 0이 된 뒤 Skill 피해를 기다리는 '브레이크 가능'과, 행동이 멈춘 '브레이크'.
+    public bool IsBreakable => breakable;
+    public bool IsBreaking => isBreaking;
+    // 남은 시간 비율(1 → 0). 그 상태가 아니면 0이다.
+    public float BreakableRemaining01 => breakable && data.breakableDuration > 0f ? Mathf.Clamp01((breakableEndTime - Time.time) / data.breakableDuration) : 0f;
+    public float BreakRemaining01 => isBreaking && data.breakDuration > 0f ? Mathf.Clamp01((breakEndTime - Time.time) / data.breakDuration) : 0f;
     private EnemyShieldDataSO trainingData;
 
     // 공유 SO를 수정하지 않고 자율훈련용 인스턴스의 용량만 조절한다.
@@ -202,7 +209,7 @@ public class EnemyShieldSystem : MonoBehaviour
         breakableEndTime = Time.time + data.breakableDuration;
 
         // 피드백 재생
-        enemyUI.ShowBreakable();
+        enemyUI.ShowBreakable(data.breakableDuration);
         UIManager.Instance.StartShieldBreakEffect();
         FeedbackPlayer.Instance.Play(data.shieldBreakFeedback, transform);
     }

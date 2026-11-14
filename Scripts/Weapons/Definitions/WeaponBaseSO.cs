@@ -5,7 +5,11 @@ using UnityEngine;
 public abstract class WeaponBaseSO : ScriptableObject
 {
     [Header("Weapon Information")]
+    [Tooltip("세이브·판정 키. 화면 이름을 바꾸려면 displayName을 고친다(이 값을 바꾸면 업그레이드 기록과 해머 판정이 끊긴다).")]
     public string weaponName;
+    [Tooltip("화면에 보이는 표준 이름(메뉴·단말기·정산). 비우면 weaponName을 쓴다.")]
+    public string displayName;
+    public string DisplayName => string.IsNullOrWhiteSpace(displayName) ? weaponName : displayName;
     public Sprite weaponSprite;
     public UpgradeNodeInfo unlockInfo;
     public UpgradeNodeInfo leftNodeInfo;

@@ -56,7 +56,12 @@ public class GameManager : MonoBehaviour
 
         Player.Health.OnPlayerDeath += HandlePlayerDeath;
 
-        if (TryGetComponent<NightmareIntroSequence>(out var introSequence)
+        // 게임 진행 이벤트(최초 시작 도입부 등)는 GameEventManager가 총괄한다. 없으면 예전처럼 도입부를 직접 시도한다.
+        if (TryGetComponent<GameEventManager>(out var events))
+        {
+            if (events.TryStartGame(firstSpawnTransitionEffect)) return;
+        }
+        else if (TryGetComponent<NightmareIntroSequence>(out var introSequence)
             && introSequence.TryBegin(firstSpawnTransitionEffect)) return;
 
         // spawn Transition

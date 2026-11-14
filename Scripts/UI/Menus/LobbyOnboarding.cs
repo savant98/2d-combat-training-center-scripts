@@ -103,8 +103,9 @@ public sealed class LobbyOnboarding : MonoBehaviour
         get
         {
             var game = GameManager.Instance;
+            // 최초 시작 도입부의 '가짜 Lobby'(위장한 Lobby)는 Lobby로 치지 않는다(단말기 아이콘·안내를 띄우지 않는다).
             return game != null && game.LobbyRoom != null && RoomManager.Instance != null && RoomManager.Instance.CurrentRoom == game.LobbyRoom
-                && RoomTransitionManager.Instance != null && !RoomTransitionManager.Instance.IsTransitioning;
+                && RoomTransitionManager.Instance != null && !RoomTransitionManager.Instance.IsTransitioning && !LobbyDisguise.IsActive;
         }
     }
 

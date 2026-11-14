@@ -11,6 +11,11 @@ public class EnemyController : CharacterController2D
     [Header("Health")]
     public EnemyHealth enemyHealth;
 
+    [Header("Display")]
+    [Tooltip("화면에 보이는 표준 이름(보스 등장 이름표·보스 체력바). 비우면 오브젝트 이름을 쓴다.")]
+    [SerializeField] private string displayName;
+    public string DisplayName => !string.IsNullOrWhiteSpace(displayName) ? displayName : name.Replace("(Clone)", string.Empty).Trim();
+
     public EnemyController Poolkey { get; set; }
     public EnemyHealth Health => enemyHealth;
     public AiBrain Brain => brain;

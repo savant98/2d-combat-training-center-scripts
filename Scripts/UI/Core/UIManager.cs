@@ -404,11 +404,13 @@ public class UIManager : MonoBehaviour
     {
         hud.SwapWeaponSetImage(weaponSet, value, animate);
     }
-    public void ShowBossHP(bool value)
+    public void ShowBossHP(bool value) => ShowBossHP(value, null);
+    // boss를 넘기면 보스 체력바가 그 보스의 표준 이름과 쉴드 상태(브레이크 가능·브레이크)를 함께 보여 준다.
+    public void ShowBossHP(bool value, EnemyController boss)
     {
         if (value)
         {
-            stageHud.ShowBossHP();
+            stageHud.ShowBossHP(boss);
         }
         else
         {

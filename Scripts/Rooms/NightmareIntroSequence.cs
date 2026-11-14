@@ -4,10 +4,13 @@ using UnityEngine;
 // 고지서 Intro 직후의 일회성 연출 전투만 담당한다. 일반 Nightmare·훈련 재도전과 분리한다.
 // 패배한 뒤에는 Lobby로 보낸다(2026-11-14: 옛 Tutorial 방은 쓰지 않는다). 그때 세이브의 최초 시작 표시를 지우고,
 // 그다음 안내(단말기 메일 → 훈련 메뉴)는 Lobby 쪽 안내가 세이브의 진행 단계를 보고 이어받는다.
+// 2026-11-15: 가로등길 앞에 '가짜 Lobby'를 둔다. 도착하면 Lobby와 똑같은 곳(설비 없이 지형·배경만)이고, 오른쪽으로 8칸 가면
+// 노이즈와 함께 "경고: 경로를 이탈했습니다. 즉시 복귀하세요."(입장 불가 창 형식)가 뜨며, 창을 닫으면 노이즈와 함께 가로등길로 바뀐다.
+// 이 흐름의 시작·순서는 GameEventManager가 총괄한다(이 컴포넌트는 실행자다).
 [DisallowMultipleComponent]
 public sealed class NightmareIntroSequence : MonoBehaviour
 {
-    public enum SequenceStage { Dormant, Entering, Exploring, Shattering, BossEntry, Fighting, Defeat, Guidance, MovingToLobby, Completed }
+    public enum SequenceStage { Dormant, DisguisedLobby, RouteWarning, Entering, Exploring, Shattering, BossEntry, Fighting, Defeat, Guidance, MovingToLobby, Completed }
 
     [SerializeField] private Room finalRoom;
     [SerializeField] private Transform finalSpawnPoint;
@@ -17,7 +20,19 @@ public sealed class NightmareIntroSequence : MonoBehaviour
     [SerializeField] private NightmareScreenEffects screenEffects;
     [SerializeField] private NightmareArrivalTransitionSO arrivalTransition;
 
+    [Header("가짜 Lobby(2026-11-15)")]
+    [SerializeField, Tooltip("도입부 처음에 위장해 쓸 Lobby. 비우면 예전처럼 바로 가로등길로 간다")] private LobbyDisguise lobbyDisguise;
+    [SerializeField, Tooltip("경로 이탈 경고 창(Lobby 입장 불가 창과 같은 Prefab)")] private GameObject routeWarningPopupPrefab;
+    [SerializeField, Tooltip("경고 창이 뜰 때의 소리")] private FeedbackDataSO routeWarningFeedback;
+    [SerializeField, Min(1f), Tooltip("시작 지점에서 오른쪽으로 이만큼(칸) 가면 경고")] private float routeWarningDistance = 8f;
+    [SerializeField] private string routeWarningTitle = "경고";
+    [SerializeField, TextArea] private string routeWarningMessage = "경로를 이탈했습니다.\n즉시 복귀하세요.";
+    [SerializeField, Tooltip("경고 창의 Canvas 정렬. 노이즈 화면(1900)보다 위에 그린다")] private int routeWarningSortingOrder = 1950;
+
     private static bool startRequested;
+    private float disguiseStartX;
+    private Coroutine routeWarningRoutine;
+    private GameObject routePopup;
     private EnemyController nightmare;
     private RoomTransitionEffectSO spawnTransition;
     private GameTimeController pauseOwner;
@@ -34,6 +49,11 @@ public sealed class NightmareIntroSequence : MonoBehaviour
     public NightmareScreenEffects ScreenEffects => screenEffects;
     public NightmareBackdrop Backdrop => backdrop;
     public bool IsEncounterActive => CurrentStage >= SequenceStage.Entering && CurrentStage <= SequenceStage.Fighting;
+    /// <summary>가짜 Lobby에 있거나 경로 이탈 경고를 띄운 단계인가.</summary>
+    public bool IsDisguisePhase => CurrentStage == SequenceStage.DisguisedLobby || CurrentStage == SequenceStage.RouteWarning;
+    public LobbyDisguise LobbyDisguise => lobbyDisguise;
+    public float RouteWarningX => disguiseStartX + routeWarningDistance;
+    public GameObject RouteWarningPopup => routePopup;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetSession() => startRequested = false;
@@ -71,11 +91,73 @@ public sealed class NightmareIntroSequence : MonoBehaviour
         RoomManager.Instance.OnRoomChanged += HandleRoomChanged;
         terminal.ContinueRequested += ContinueToLobby;
         subscribed = true;
+        if (lobbyDisguise != null)
+        {
+            // 먼저 Lobby와 똑같이 생긴 곳(위장한 실제 Lobby)에 도착한다.
+            lobbyDisguise.SetDisguised(true);
+            disguiseStartX = game.LobbySpawnPoint.position.x;
+            CurrentStage = SequenceStage.DisguisedLobby;
+            RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest {
+                targetRoom = game.LobbyRoom, teleportPoint = game.LobbySpawnPoint, transitionEffect = arrivalTransition
+            });
+            return true;
+        }
         CurrentStage = SequenceStage.Entering;
         RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest {
             targetRoom = finalRoom, teleportPoint = backdrop.EntrySpawnPoint, transitionEffect = arrivalTransition
         });
         return true;
+    }
+
+    // 가짜 Lobby에서 오른쪽으로 걸어가면: 화면이 지직거리며 경고 창 → 닫으면 노이즈와 함께 가로등길로.
+    private IEnumerator RouteWarningRoutine()
+    {
+        AcquireGameplayBlock();
+        var player = GameManager.Instance.Player;
+        player.Velocity = new Vector2(0f, player.Velocity.y);
+        screenEffects.BeginStatic(.6f);
+        float t = 0f;
+        while (t < .45f)
+        {
+            t += Time.unscaledDeltaTime;
+            screenEffects.SetSignal(.6f + .3f * Mathf.Sin(t * 40f), .5f);
+            yield return null;
+        }
+
+        bool closed = false;
+        UpgradePurchaseDialog dialog = null;
+        if (routeWarningPopupPrefab != null)
+        {
+            routePopup = Instantiate(routeWarningPopupPrefab);
+            var canvas = routePopup.GetComponent<Canvas>();
+            if (canvas != null) canvas.sortingOrder = routeWarningSortingOrder;   // 노이즈 화면 위에
+            dialog = routePopup.GetComponentInChildren<UpgradePurchaseDialog>(true);
+            yield return null;   // 창의 Awake가 끝난 뒤 띄운다
+        }
+        if (dialog == null || !dialog.ShowWarning(routeWarningMessage, () => closed = true, routeWarningTitle)) closed = true;
+        else if (routeWarningFeedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(routeWarningFeedback, player.transform);
+
+        while (!closed && CurrentStage == SequenceStage.RouteWarning)
+        {
+            // 창이 떠 있는 동안 노이즈가 가늘게 흔들리고 가끔 크게 튄다(표시용이라 전역 난수를 쓰지 않는다).
+            float time = Time.unscaledTime;
+            float burst = Mathf.PerlinNoise(time * 7f, 3.1f) > .78f ? .35f : 0f;
+            screenEffects.SetSignal(.26f + .14f * Mathf.PerlinNoise(time * 3f, .5f) + burst, .3f + burst * .6f);
+            yield return null;
+        }
+        if (routePopup != null) Destroy(routePopup);
+        routePopup = null;
+        routeWarningRoutine = null;
+        if (CurrentStage != SequenceStage.RouteWarning) yield break;
+
+        // 창을 닫으면 노이즈가 차오르며 가로등길로 바뀐다(전환 효과가 같은 노이즈를 이어받는다).
+        screenEffects.SetSignal(1f, .6f);
+        // 전환이 끝날 때 모든 입력 막기를 지우므로 그 전에 내 것을 돌려준다.
+        ReleaseGameplayBlock();
+        CurrentStage = SequenceStage.Entering;
+        RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest {
+            targetRoom = finalRoom, teleportPoint = backdrop.EntrySpawnPoint, transitionEffect = arrivalTransition
+        });
     }
 
     private void HandleEnemySpawned(EnemyController enemy)
@@ -88,6 +170,13 @@ public sealed class NightmareIntroSequence : MonoBehaviour
 
     private void Update()
     {
+        if (CurrentStage == SequenceStage.DisguisedLobby && GameManager.Instance != null && RoomManager.Instance.CurrentRoom == GameManager.Instance.LobbyRoom
+            && !RoomTransitionManager.Instance.IsTransitioning && GameManager.Instance.Player.Health.currentHP > 0
+            && GameManager.Instance.Player.transform.position.x >= RouteWarningX)
+        {
+            CurrentStage = SequenceStage.RouteWarning;
+            routeWarningRoutine = StartCoroutine(RouteWarningRoutine());
+        }
         if (CurrentStage == SequenceStage.Entering && RoomManager.Instance.CurrentRoom == finalRoom
             && !RoomTransitionManager.Instance.IsTransitioning)
             CurrentStage = SequenceStage.Exploring;
@@ -114,6 +203,16 @@ public sealed class NightmareIntroSequence : MonoBehaviour
     private void HandleRoomChanged(RoomType roomType)
     {
         var current = RoomManager.Instance.CurrentRoom;
+        // 가짜 Lobby를 떠나면 Lobby를 원래 모습으로 되돌린다(가로등길로 넘어간 경우 포함).
+        var lobby = GameManager.Instance != null ? GameManager.Instance.LobbyRoom : null;
+        if (lobbyDisguise != null && lobbyDisguise.IsDisguised && current != lobby)
+            lobbyDisguise.SetDisguised(false);
+        if (IsDisguisePhase && current != lobby)
+        {
+            ReleaseEncounter();
+            CurrentStage = SequenceStage.Completed;
+            return;
+        }
         if (IsEncounterActive && current != finalRoom)
         {
             ReleaseEncounter();
@@ -224,6 +323,9 @@ public sealed class NightmareIntroSequence : MonoBehaviour
 
     private void ReleaseEncounter()
     {
+        if (routeWarningRoutine != null) { StopCoroutine(routeWarningRoutine); routeWarningRoutine = null; }
+        if (routePopup != null) { Destroy(routePopup); routePopup = null; }
+        if (lobbyDisguise != null && lobbyDisguise.IsDisguised) lobbyDisguise.SetDisguised(false);
         if (nightmare != null) nightmare.Health.SetMinimumHealth(0f);
         if (subscribed)
         {

@@ -131,7 +131,7 @@ public class Room : MonoBehaviour
             ResetBossEntryCamera();
             yield break;
         }
-        UIManager.Instance.ShowBossHP(true);
+        UIManager.Instance.ShowBossHP(true, bossTr.GetComponent<EnemyController>());
         virtualCamera.Follow = GameManager.Instance.Player.transform;
         bossEntryCameraTween = DOTween.To(() => virtualCamera.Lens.OrthographicSize,
             SetCameraSize,

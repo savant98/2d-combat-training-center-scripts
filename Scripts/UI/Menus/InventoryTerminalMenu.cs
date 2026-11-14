@@ -181,7 +181,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     public bool IsInlineInformationVisible => IsActive && !homeVisible && !detailOpen && sections[selectedTab].inlineInformation;
     private bool NoticeVisible => noticeRoot != null && noticeRoot.activeSelf;
     // 자유 훈련실도 Lobby 분류를 사용하므로 실제로 지정된 Lobby 인스턴스만 허용한다.
-    private bool IsInLobby => lobbyRoom != null && RoomManager.Instance != null && RoomManager.Instance.CurrentRoom == lobbyRoom;
+    // 최초 시작 도입부의 '가짜 Lobby'(위장한 Lobby)에서는 단말기를 열지 않는다.
+    private bool IsInLobby => lobbyRoom != null && RoomManager.Instance != null && RoomManager.Instance.CurrentRoom == lobbyRoom && !LobbyDisguise.IsActive;
     private bool IsTopInput => IsActive && isActiveAndEnabled && UIManager.Instance != null
         && IsInLobby && !UIManager.Instance.IsUIInputBlocked && UIManager.Instance.IsCurrentInputTarget(this);
     private bool CanReceiveInput => IsTopInput && !IsTransitioning && !isClosing;

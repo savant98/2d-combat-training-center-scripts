@@ -92,6 +92,11 @@ public class LobbyBackdropLayoutEditor : EditorWindow
                     }
                 }
             }
+            // Furniture 소품(고장 난 승강기 입구·벤치·CCTV 중계 화면·훈련생 순위 전광판). 배치용 루트만 옮긴다(동작은 안쪽 Model이 한다).
+            var props = root.parent.Find(LobbyPropsPath);
+            if (props != null)
+                foreach (Transform prop in props)
+                    DrawPosition(prop, PropLabel(prop));
             if (showAnchors)
             {
                 EditorGUILayout.Space();
@@ -115,6 +120,24 @@ public class LobbyBackdropLayoutEditor : EditorWindow
                 previewTime = EditorGUILayout.Slider("순환 시간", previewTime, 0, 40);
                 if (EditorGUI.EndChangeCheck()) RefreshPreview(root);
             }
+        }
+    }
+
+    // tools/Unity/LobbyPropDesign.cs가 Lobby 소품을 놓는 자리(Lobby 기준 경로)
+    private const string LobbyPropsPath = "Furniture/LobbyProps";
+
+    // 소품 인스턴스의 원본 Prefab 이름으로 편집 창에 보일 한국어 이름을 정한다.
+    private static string PropLabel(Transform prop)
+    {
+        var source = PrefabUtility.GetCorrespondingObjectFromSource(prop.gameObject);
+        string kind = source != null ? source.name : prop.name;
+        switch (kind)
+        {
+            case "LobbyBrokenElevator": return "고장 난 승강기 입구 (Furniture 소품)";
+            case "LobbyBench": return "벤치 " + prop.name + " (Furniture 소품)";
+            case "LobbyCctvMonitor": return "CCTV 중계 화면 (Furniture 소품)";
+            case "LobbyRankingBoard": return "훈련생 순위 전광판 (Furniture 소품)";
+            default: return prop.name + " (Furniture 소품)";
         }
     }
 
@@ -227,6 +250,10 @@ public class LobbyBackdropLayoutEditor : EditorWindow
         if (sign != null) Handles.Label(sign.position, "LOBBY 간판 (Furniture 전경)");
         var window = root.parent.Find("Furniture/LobbyObservationWindow");
         if (window != null) Handles.Label(window.position, "공장 관찰창 (Furniture 전경)");
+        var props = root.parent.Find(LobbyPropsPath);
+        if (props != null)
+            foreach (Transform prop in props)
+                Handles.Label(prop.position + Vector3.up * .25f, PropLabel(prop));
         Handles.color = new Color(.3f, .7f, 1);
         foreach (var pair in new[] { new[] { 0, 1 }, new[] { 1, 2 }, new[] { 3, 4 }, new[] { 4, 5 }, new[] { 5, 6 } })
             Handles.DrawDottedLine(root.Find(LobbyBackdropLayoutBaker.AnchorPaths[pair[0]]).position,

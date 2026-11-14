@@ -8,6 +8,10 @@ using UnityEngine;
 ///   공회전(기어·전원선·표시등)은 Animator의 다른 층에서 계속 돈다.
 /// - 전원: 꺼져 있으면(방전) 공회전이 멈추고 기능부의 빛과 표시선이 꺼지며, 접근 불가 푯말이 서고 입구가 잠긴다(LobbyInteractionLock).
 ///   나중에 컷씬으로 해금할 때는 SetPowered(true)만 부르면 된다. 사용자 요청: "접근 불가가 풀렸을 때의 디자인을 기준으로 방전된 상태를 보여 주도록".
+/// - 조립 자세(2026-11-15 2차): assembleClip이 있으면(업그레이드·자율훈련장) 방전 중에는 그 Clip의 0초 자세(분해·수납: 콘솔이 하우징 속으로 내려가고,
+///   타워가 눕고, 갠트리가 내려앉고, 상징판이 얹혀 있다)로 서고, 전원이 들어오면 끝 자세(조립 완료 = Prefab에 저장된 자세)로 선다.
+///   사용자 요청: "기계가 조립되는 식으로 만들어줘 … 그렇다면, 접근불가상태일떄의 모습도 달라지겠지". 조립 과정은 LobbyStationUnlock이 재생한다.
+///   자세는 Play 중에만 적용한다(Edit Mode에서 바꾸면 MainScene에 Prefab 재정의가 생긴다).
 /// - 잠긴 입구의 실제 상호작용은 푯말 흔들림·시설 안내 팝업·기존 실패 Feedback으로 알린다.
 /// </summary>
 [DisallowMultipleComponent]
@@ -19,6 +23,10 @@ public sealed class LobbyStation : MonoBehaviour
     [SerializeField, Tooltip("이 설비가 띄우는 메뉴들(IUIInputReceiver를 구현한 컴포넌트. 목록·상세처럼 화면이 여럿이면 모두 넣는다)")] private MonoBehaviour[] menus;
     [SerializeField, Tooltip("방전 중에 잠그는 입구·설비(RoomTrigger·UpgradeTrigger)")] private Component[] lockedTargets;
     [SerializeField, Tooltip("이 설비의 메뉴가 열리면 함께 접히는 다른 장치의 Animator(Lobby 간판: 메뉴 화면과 겹치지 않게 위로 올라간다)")] private Animator[] followers;
+
+    [Header("조립 자세")]
+    [SerializeField, Tooltip("조립 Clip(0초 = 분해·수납된 방전 자세, 끝 = 조립 완료 자세). 비우면 방전 중에도 형상이 그대로다(훈련 메뉴 장치). tools/Unity/LobbyStationAssembly.cs가 만든다")]
+    private AnimationClip assembleClip;
 
     [Header("방전될 때 꺼지는 빛")]
     [SerializeField, Tooltip("전원이 있을 때만 빛나는 부품(기능부·표시선)")] private Renderer[] litRenderers;
@@ -45,12 +53,24 @@ public sealed class LobbyStation : MonoBehaviour
     private float shake;
     private Quaternion barrierRotation;
     private bool barrierCached;
+    // 조립 Clip으로 완료 자세가 아닌 자세를 적용했는가(방전 자세, 해금 연출 도중, 꺼진 채 적용해 반영을 장담할 수 없을 때). 전원이 들어오면 완료 자세로 되돌린다.
+    private bool poseSampled;
 
     /// <summary>전원이 들어와 쓸 수 있는 상태인가.</summary>
     public bool IsPowered => powered;
+    // 해금 연출(LobbyStationUnlock)이 부품을 하나씩 켜 갈 때 읽는 목록. 값은 바꾸지 않는다.
+    public int LitCount => litRenderers != null ? litRenderers.Length : 0;
+    public Renderer LitRenderer(int index) => litRenderers != null && index >= 0 && index < litRenderers.Length ? litRenderers[index] : null;
+    public Material LitMaterial(int index) => litMaterials != null && index >= 0 && index < litMaterials.Length ? litMaterials[index] : null;
+    public GameObject Barrier => barrier;
     /// <summary>지금 이 설비의 메뉴가 떠 있어 장치를 펼쳐 둔 상태인가.</summary>
     public bool IsMenuOpen => menuOpen;
     public Animator Animator => animator;
+    /// <summary>조립 Clip(0초 = 분해·수납된 방전 자세, 끝 = 조립 완료 자세). 없으면 null.</summary>
+    public AnimationClip AssembleClip => assembleClip;
+
+    /// <summary>해금 연출이 조립 Clip의 자세를 직접 적용했음을 알린다. complete가 아니면 다음 전원 적용 때 완료 자세로 되돌린다.</summary>
+    public void NotifyAssemblyPose(bool complete) => poseSampled = !complete;
 
     /// <summary>전원을 켜거나 끈다(빛·공회전·푯말·입구의 잠금이 함께 바뀐다). 해금 컷씬이 부른다.</summary>
     public void SetPowered(bool value)
@@ -95,8 +115,12 @@ public sealed class LobbyStation : MonoBehaviour
                 animator.Play("Closed", 1, 0f);
                 animator.Update(0f);
             }
-            animator.enabled = powered;
+            if (!powered) animator.enabled = false;
         }
+        // 조립 자세: 방전이면 Animator를 끈 뒤 분해 자세를, 전원이면 Animator를 켜기 전에 조립 완료 자세를 둔다
+        // (Animator가 켜질 때 그 순간 값을 기본값으로 묶으므로 완료 자세가 기본값이 된다).
+        ApplyAssemblyPose();
+        if (animator != null) animator.enabled = powered;
         if (litRenderers != null)
             for (int i = 0; i < litRenderers.Length; i++)
             {
@@ -116,6 +140,22 @@ public sealed class LobbyStation : MonoBehaviour
         if (barrier != null && barrier.activeSelf == powered) barrier.SetActive(!powered);
         if (!powered && isActiveAndEnabled) Register();
         else Unregister();
+    }
+
+    private void ApplyAssemblyPose()
+    {
+        if (!Application.isPlaying || assembleClip == null) return;
+        if (!powered)
+        {
+            assembleClip.SampleAnimation(gameObject, 0f);
+            poseSampled = true;
+        }
+        else if (poseSampled || animator == null || !animator.enabled)
+        {
+            assembleClip.SampleAnimation(gameObject, assembleClip.length);
+            // 꺼진 채 적용했다면 켜질 때(OnEnable → Apply) 한 번 더 적용한다.
+            poseSampled = !gameObject.activeInHierarchy;
+        }
     }
 
     private void Register()

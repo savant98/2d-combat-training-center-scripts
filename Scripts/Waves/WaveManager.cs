@@ -16,9 +16,21 @@ public class WaveManager : MonoBehaviour
     public Transform SpawnRoot => spawnRoot;
     private WavePlayerStart playerStartSequence;
     private readonly Dictionary<WaveSpawnInfo, WorldEntityBase> preparedCourses = new();
-    private WavePlayerStart PlayerStartSequence => playerStartSequence != null ? playerStartSequence
-        : playerStartSequence = gameObject.GetComponent<WavePlayerStart>() ?? gameObject.AddComponent<WavePlayerStart>();
-    public bool IsPreparingWave => playerStartSequence != null && playerStartSequence.IsHoldingPlayer;
+    private WavePlayerStart PlayerStartSequence
+    {
+        get
+        {
+            if (playerStartSequence == null && !TryGetComponent(out playerStartSequence)) playerStartSequence = gameObject.AddComponent<WavePlayerStart>();
+            return playerStartSequence;
+        }
+    }
+    // 크레인으로 옮긴 Wave는 구속 상자를 0초 배치 직후까지 남긴다. 그 상자를 남긴 준비의 번호다(0이면 남긴 상자가 없다).
+    // 준비마다 새 번호를 쓰므로, 늦게 도착한 해제가 그 사이 다시 잡은 다음 Wave 준비의 구속을 끊지 않는다.
+    private int heldUntilSpawn;
+    private int preparationSerial;
+    // 지형 준비 중인지: 구속을 시작한 때부터 크레인 도착과 카메라 정착까지다. 크레인으로 옮긴 Wave가 0초 배치를 기다리며
+    // 상자만 남겨 둔 동안(시작 안내 포함)은 준비가 끝난 것으로 본다. 코스 시작 위치 리셋과 복귀 순간이동 판단이 이 의미를 쓴다.
+    public bool IsPreparingWave => playerStartSequence != null && playerStartSequence.IsHoldingPlayer && heldUntilSpawn == 0;
     public bool NextWaveTeleports => waveData != null && currentWaveIndex + 1 < waveData.waves.Length && waveData.waves[currentWaveIndex + 1].teleportAtStart;
     public event Action<Wave> WaveStarted;
     /// <summary>지형과 이동 준비가 끝나고 시작 안내가 표시되는 시점이다. Wave 번호는 1부터 시작한다.</summary>
@@ -53,7 +65,7 @@ public class WaveManager : MonoBehaviour
 
     public void BeginWaves(bool showWaveIntro = true)
     {
-        playerStartSequence?.Release();
+        ReleasePlayer();
         preparedCourses.Clear();
         if (waveData.cellMap.enabled && GetComponentInParent<WaveCellTerrain>(true) == null)
         {
@@ -85,7 +97,7 @@ public class WaveManager : MonoBehaviour
     }
     public void ForceClear()
     {
-        playerStartSequence?.Release();
+        ReleasePlayer();
         preparedCourses.Clear();
         WavesReset?.Invoke();
         ClearActiveWaveHandlers();
@@ -113,7 +125,11 @@ public class WaveManager : MonoBehaviour
     private IEnumerator PrepareWave(bool showWaveIntro)
     {
         var wave = waveData.waves[currentWaveIndex];
+        int preparation = ++preparationSerial;
+        heldUntilSpawn = 0;
         PlayerStartSequence.Hold();
+        // 이 준비가 구속을 풀 책임이 있는지. 크레인으로 옮기지 않은 Wave는 지형 준비 직후에 풀고, 옮긴 Wave는 Wave 시작 때 SpawnRoutine에 넘긴다.
+        bool ownsHold = true;
         try
         {
             var cells = GetComponentInParent<WaveCellTerrain>(true);
@@ -121,6 +137,8 @@ public class WaveManager : MonoBehaviour
             var coordinates = cells != null ? cells.transform : room != null ? room.transform : transform;
             // 시작 좌표로 옮기는 Wave: 지형이 바뀌는 동안 크레인이 구속 상자를 들어 옮긴다(둘을 함께 진행한다).
             PlayerStartSequence.BeginCarry(waveData, currentWaveIndex, coordinates);
+            // 이번 준비에서 크레인이 실제로 옮기는지(시작 좌표 근처이고 새 지형도 없으면 옮기지 않는다). 크레인 이동은 여기서 바로 시작된다.
+            bool carried = PlayerStartSequence.IsCarrying;
             // 안쪽 준비 순서는 Unity에 맡기지 않고(yield return 순서) 직접 돌린다. 맡기면 안쪽에서 예외가 났을 때 이 순서가 그대로 멈춰
             // 아래 finally가 실행되지 않고, Player가 구속된 채(옮기는 Wave면 크레인에 들린 채) 남는다.
             if (cells != null) { for (var step = Unwound(cells.Prepare(currentWaveIndex)); step.MoveNext();) yield return step.Current; }
@@ -146,15 +164,28 @@ public class WaveManager : MonoBehaviour
             }
             // 지형이 다 바뀐 뒤에 내려놓는다. 들고 옮기는 쪽이 보통 더 오래 걸려 지형이 먼저 끝난다.
             for (var step = Unwound(PlayerStartSequence.FinishCarry()); step.MoveNext();) yield return step.Current;
+            // 크레인으로 옮긴 Wave는 시작 안내 동안 상자를 남겨 두었다가 0초 항목을 모두 놓은 직후에 푼다(SpawnRoutine).
+            // 옮기지 않은 Wave는 지형 준비가 끝나면 바로 푼다(바뀔 지형이 없으면 상자가 보이기 전에 풀린다).
+            if (carried) heldUntilSpawn = preparation;
+            else { ownsHold = false; ReleasePlayer(); }
+            if (showWaveIntro)
+            {
+                WaveIntroStarted?.Invoke(currentWaveIndex + 1);
+                UIManager.Instance.StartWavePanelEffect(currentWaveIndex + 1);
+                yield return new WaitForSeconds(2f);
+            }
+            // 여기부터 해제는 SpawnRoutine이 맡는다. SpawnWave 안에서 Wave가 바로 끝나 다음 Wave 준비가 구속을 다시 잡을 수 있으므로
+            // 이 준비는 아래 finally에서도 무조건 풀지 않는다.
+            ownsHold = false;
+            SpawnWave(wave);
         }
-        finally { playerStartSequence?.Release(); }
-        if (showWaveIntro)
+        finally
         {
-            WaveIntroStarted?.Invoke(currentWaveIndex + 1);
-            UIManager.Instance.StartWavePanelEffect(currentWaveIndex + 1);
-            yield return new WaitForSeconds(2f);
+            // 준비나 안내 도중 예외로 끊겼으면 구속을 푼다. Wave 시작 도중 예외로 SpawnRoutine이 상자를 넘겨받지 못했으면 그 상자만 푼다
+            // (이미 풀렸거나 다음 준비가 다시 잡았으면 아무것도 하지 않는다). StopAllCoroutines로 끊긴 경우는 여기로 오지 않고 끊은 쪽이 직접 푼다.
+            if (ownsHold) ReleasePlayer();
+            else ReleaseAfterSpawn(preparation);
         }
-        SpawnWave(wave);
     }
     // 여러 겹의 순서(순서 안에서 다시 순서를 넘기는 것)를 한 겹으로 펴서 돌린다. 기다리는 대상(null·WaitForSeconds 등)은 그대로 넘긴다.
     // 어느 깊이에서 예외가 나도 이 순서를 돌리던 쪽의 finally까지 풀려 나온다.
@@ -170,11 +201,23 @@ public class WaveManager : MonoBehaviour
             else yield return top.Current;
         }
     }
+    // 이 WaveManager가 잡은 구속을 푼다(초기화·중단·Wave 종료). 0초 배치 뒤에 풀려고 남겨 둔 상자도 함께 정리한다.
+    private void ReleasePlayer()
+    {
+        heldUntilSpawn = 0;
+        if (playerStartSequence != null) playerStartSequence.Release();
+    }
+    // 크레인으로 옮긴 Wave가 남겨 둔 상자를 푼다. 같은 준비가 남긴 상자일 때 한 번만 풀고,
+    // 이미 풀렸거나 그 사이 다음 준비가 구속을 다시 잡았으면 아무것도 하지 않는다.
+    private void ReleaseAfterSpawn(int preparation)
+    {
+        if (preparation != 0 && preparation == heldUntilSpawn) ReleasePlayer();
+    }
     private void OnDisable()
     {
         StopAllCoroutines();
         isWaveActive = isSpawnActive = false;
-        playerStartSequence?.Release();
+        ReleasePlayer();
         preparedCourses.Clear();
     }
     // 플레이어가 패배했을 때(사망·훈련 성적 미흡) Wave 진행을 멈춘다. 그 뒤의 처치·목표 도달은 Wave를 끝내지 않고
@@ -185,7 +228,7 @@ public class WaveManager : MonoBehaviour
         // 보스 등장 카메라(보스를 따라가며 확대)가 도는 중이었으면 그 코루틴도 함께 끊기므로 카메라를 플레이어로 돌려 둔다.
         if (RoomManager.Instance != null && RoomManager.Instance.CurrentRoom != null) RoomManager.Instance.CurrentRoom.ResetBossEntryCamera();
         isWaveActive = isSpawnActive = false;
-        playerStartSequence?.Release();
+        ReleasePlayer();
         preparedCourses.Clear();
     }
     private void SpawnWave(Wave wave)
@@ -198,8 +241,8 @@ public class WaveManager : MonoBehaviour
         foreach (var prepared in preparedCourses) InitializeSpawn(prepared.Value.gameObject, prepared.Key);
         WaveStarted?.Invoke(wave);
 
-        // 1. 오브젝트 생성 루틴 시작
-        coroutine = StartCoroutine(SpawnRoutine(wave));
+        // 1. 오브젝트 생성 루틴 시작(크레인으로 옮긴 Wave면 0초 항목을 모두 놓은 직후에 남겨 둔 상자를 푼다)
+        coroutine = StartCoroutine(SpawnRoutine(wave, heldUntilSpawn));
 
         // 2. Wave 클리어 조건별 분기 처리 시작
         if (wave.clearType == WaveClearType.SurviveForTime)
@@ -207,100 +250,117 @@ public class WaveManager : MonoBehaviour
             StartCoroutine(SurviveTimerRoutine(wave.surviveTime));
         }
     }
-    private IEnumerator SpawnRoutine(Wave wave)
+    private IEnumerator SpawnRoutine(Wave wave, int heldPreparation)
     {
-        float sequenceStart = Time.time;
-        if (wave.startDelay > 0) yield return new WaitForSeconds(wave.startDelay);
-        // Spawn Enemy
-        foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
+        // 크레인으로 옮긴 Wave의 남겨 둔 상자는 생성 시각 0인 항목을 모두 놓은 직후, 첫 대기 직전(같은 프레임)에 푼다.
+        // 0초 항목이 없으면(첫 생성 대기 > 0) Wave 시계 0초에, 항목이 하나도 없으면 목록을 다 돈 직후(Wave 완료 판정 전)에 푼다.
+        // 예외나 중간 종료로 빠져나가도 finally가 푼다. 같은 준비의 상자를 한 번만 풀므로 여러 곳에서 불러도 된다.
+        try
         {
-            if (!isWaveActive) yield break;
-            if (info.prefab == null) continue;
-            if (preparedCourses.ContainsKey(info))
+            float sequenceStart = Time.time;
+            if (wave.startDelay > 0)
             {
-                if (info.spawnDelay > 0) yield return new WaitForSeconds(info.spawnDelay);
-                continue;
+                ReleaseAfterSpawn(heldPreparation);
+                yield return new WaitForSeconds(wave.startDelay);
             }
-            // spawn 위치 설정
-            Vector3 spawnPos = new(spawnRoot.position.x + info.spawnPosition.x, spawnRoot.position.y + info.spawnPosition.y, 0);
-            GameObject spawnedObj = null;
-
-            // Enemy인 경우
-            if (info.prefab.TryGetComponent(out EnemyController enemyPrefab))
+            // Spawn Enemy
+            foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
             {
-                EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, spawnPos);
-                enemyInstance.Health.IsBossEnemy = info.isBossEnemy;
-                EnemySpawned?.Invoke(enemyInstance);
-
-                if (info.isBossEnemy)
+                if (!isWaveActive) yield break;
+                if (info.prefab == null) continue;
+                if (preparedCourses.ContainsKey(info))
                 {
-                    StartCoroutine(RoomManager.Instance.CurrentRoom.ActivateBossEntryCamera(enemyInstance.transform));
-                }
-
-                // Enemy 죽으면 알리는 코드
-                if (wave.clearType == WaveClearType.DefeatAllTargets && info.isRequiredToClear)
-                {
-                    aliveTargets++;
-                    activeEnemies.Add(enemyInstance);
-
-                    enemyInstance.SetWaveDeathHandler(() =>
+                    if (info.spawnDelay > 0)
                     {
-                        HandleEnemyDeath(enemyInstance);
-                    });
+                        ReleaseAfterSpawn(heldPreparation);
+                        yield return new WaitForSeconds(info.spawnDelay);
+                    }
+                    continue;
                 }
-                else // 필수 타겟이 아닌 경우 사망시 일반 반환
+                // spawn 위치 설정
+                Vector3 spawnPos = new(spawnRoot.position.x + info.spawnPosition.x, spawnRoot.position.y + info.spawnPosition.y, 0);
+                GameObject spawnedObj = null;
+
+                // Enemy인 경우
+                if (info.prefab.TryGetComponent(out EnemyController enemyPrefab))
                 {
-                    enemyInstance.SetWaveDeathHandler(() =>
+                    EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, spawnPos);
+                    enemyInstance.Health.IsBossEnemy = info.isBossEnemy;
+                    EnemySpawned?.Invoke(enemyInstance);
+
+                    if (info.isBossEnemy)
                     {
-                        EnemyPool.Instance.Despawn(enemyInstance);
-                    });
-                }
+                        StartCoroutine(RoomManager.Instance.CurrentRoom.ActivateBossEntryCamera(enemyInstance.transform));
+                    }
 
-                spawnedObj = enemyInstance.gameObject;
-            }
-            else if (info.prefab.TryGetComponent(out WorldEntityBase worldEntityPrefab)) // WorldEntity인 경우
-            {
-                WorldEntityBase worldEntityInstance = WorldEntityPool.Instance.Spawn(worldEntityPrefab, spawnPos, info.Rotation);
-                // 배치마다 저장한 장치 설정(뻗는 거리·팔 길이·점프 높이 등)을 이 개체에만 적용한다.
-                WaveDeviceSettings.Apply(worldEntityInstance.gameObject, info.deviceSettings);
-                
-                if (!info.keepAfterWave)
-                {
-                    currentWaveEntities.Add(worldEntityInstance);
-                }
-
-                spawnedObj = worldEntityInstance.gameObject;
-
-                // 파괴 가능한 장애물
-                if (wave.clearType == WaveClearType.DefeatAllTargets && info.isRequiredToClear)
-                {
-                    if (spawnedObj.TryGetComponent(out HealthBase health))
+                    // Enemy 죽으면 알리는 코드
+                    if (wave.clearType == WaveClearType.DefeatAllTargets && info.isRequiredToClear)
                     {
                         aliveTargets++;
-                        // 파괴 가능한 오브젝트가 생기면 델리게이트 구독
+                        activeEnemies.Add(enemyInstance);
+
+                        enemyInstance.SetWaveDeathHandler(() =>
+                        {
+                            HandleEnemyDeath(enemyInstance);
+                        });
+                    }
+                    else // 필수 타겟이 아닌 경우 사망시 일반 반환
+                    {
+                        enemyInstance.SetWaveDeathHandler(() =>
+                        {
+                            EnemyPool.Instance.Despawn(enemyInstance);
+                        });
+                    }
+
+                    spawnedObj = enemyInstance.gameObject;
+                }
+                else if (info.prefab.TryGetComponent(out WorldEntityBase worldEntityPrefab)) // WorldEntity인 경우
+                {
+                    WorldEntityBase worldEntityInstance = WorldEntityPool.Instance.Spawn(worldEntityPrefab, spawnPos, info.Rotation);
+                    // 배치마다 저장한 장치 설정(뻗는 거리·팔 길이·점프 높이 등)을 이 개체에만 적용한다.
+                    WaveDeviceSettings.Apply(worldEntityInstance.gameObject, info.deviceSettings);
+                
+                    if (!info.keepAfterWave)
+                    {
+                        currentWaveEntities.Add(worldEntityInstance);
+                    }
+
+                    spawnedObj = worldEntityInstance.gameObject;
+
+                    // 파괴 가능한 장애물
+                    if (wave.clearType == WaveClearType.DefeatAllTargets && info.isRequiredToClear)
+                    {
+                        if (spawnedObj.TryGetComponent(out HealthBase health))
+                        {
+                            aliveTargets++;
+                            // 파괴 가능한 오브젝트가 생기면 델리게이트 구독
+                        }
                     }
                 }
-            }
-            else // 둘 다 아닌 경우
-            {
-                spawnedObj = Instantiate(info.prefab, spawnPos, info.Rotation);
-                if (!info.keepAfterWave) looseObjects.Add(spawnedObj);
-            }
+                else // 둘 다 아닌 경우
+                {
+                    spawnedObj = Instantiate(info.prefab, spawnPos, info.Rotation);
+                    if (!info.keepAfterWave) looseObjects.Add(spawnedObj);
+                }
 
-            if (spawnedObj != null) InitializeSpawn(spawnedObj, info);
+                if (spawnedObj != null) InitializeSpawn(spawnedObj, info);
 
-            if (info.spawnDelay > 0f)
-            {
-                yield return new WaitForSeconds(info.spawnDelay);
+                if (info.spawnDelay > 0f)
+                {
+                    ReleaseAfterSpawn(heldPreparation);
+                    yield return new WaitForSeconds(info.spawnDelay);
+                }
             }
+            ReleaseAfterSpawn(heldPreparation);
+
+            float cellsReady = 0;
+            foreach (var batch in wave.cellBatches) cellsReady = Mathf.Max(cellsReady, batch.time + batch.duration);
+            if (Time.time < sequenceStart + cellsReady) yield return new WaitForSeconds(sequenceStart + cellsReady - Time.time);
+            isSpawnActive = false;
+            if (isWaveActive && wave.clearType == WaveClearType.DefeatAllTargets && aliveTargets == 0)
+                CompleteWave();
         }
-
-        float cellsReady = 0;
-        foreach (var batch in wave.cellBatches) cellsReady = Mathf.Max(cellsReady, batch.time + batch.duration);
-        if (Time.time < sequenceStart + cellsReady) yield return new WaitForSeconds(sequenceStart + cellsReady - Time.time);
-        isSpawnActive = false;
-        if (isWaveActive && wave.clearType == WaveClearType.DefeatAllTargets && aliveTargets == 0)
-            CompleteWave();
+        finally { ReleaseAfterSpawn(heldPreparation); }
     }
 
     private void InitializeSpawn(GameObject item, WaveSpawnInfo info)
@@ -398,8 +458,10 @@ public class WaveManager : MonoBehaviour
         // 사망한 플레이어는 Wave를 끝낼 수 없다(사망 뒤 남은 공격·드론이 마지막 적을 처치해도 훈련 완료로 넘어가지 않는다).
         if (GameManager.Instance != null && GameManager.Instance.Player != null && GameManager.Instance.Player.Health.IsDead) return;
         // 이전 코스가 닫히는 순간부터 다음 지형·Spawn 완료까지 같은 잠금을 유지한다.
+        // 0초 배치를 기다리던 상자가 남아 있었으면 이 잠금(또는 해제)이 이어받으므로 남긴 상자 번호는 비운다.
+        heldUntilSpawn = 0;
         if (currentWaveIndex + 1 < waveData.waves.Length && currentWaveEntities.Exists(e => e is TrainingCourseActivator)) PlayerStartSequence.Hold();
-        else playerStartSequence?.Release();
+        else ReleasePlayer();
         preparedCourses.Clear();
         isWaveActive = false;
         StopAllCoroutines();

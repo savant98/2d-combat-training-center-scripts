@@ -11,8 +11,9 @@ public class PlayerWeaponDataSO : PlayerAbilityDataSO
     [Header("SkillGauge")]
     public float maxSkillGauge;
 
-    [Header("Skill Gauge Orb")]
-    public SkillGaugeOrbSettings skillGaugeOrbSettings;
+    [Header("Skill Battery")]
+    [Tooltip("스킬 게이지를 Player 몸 옆에 세로로 쌓이는 배터리 4칸으로 보여 주는 표시. 칸이 다 찰 때 'Charge!'와 작은 소리를 낸다")]
+    public PlayerSkillBatteryVisual skillBatteryVisual;
 
     [Header("WeaponSwap")]
     public float swapCoolTime = 0.5f;

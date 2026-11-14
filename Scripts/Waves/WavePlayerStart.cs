@@ -187,7 +187,8 @@ public sealed class WavePlayerStart : MonoBehaviour
     {
         terrainReady = true;
         var terrain = GetComponentInParent<WaveCellTerrain>();
-        // 마지막 카메라 경계가 정착한 뒤 구속을 풀고 Wave를 시작한다.
+        // 마지막 카메라 경계가 정착할 때까지 기다린다. 구속은 여기서 풀지 않는다. 푸는 시점은 WaveManager가 정한다
+        // (옮기지 않은 Wave는 이 직후, 크레인으로 옮긴 Wave는 시작 안내 뒤 0초 항목을 모두 놓은 직후. 크레인은 도착하면 바로 올라간다).
         while (IsCarrying || (terrain != null && terrain.IsCameraSettling)) yield return null;
     }
 

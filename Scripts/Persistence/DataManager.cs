@@ -38,6 +38,9 @@ public class SaveData
 
     // 무기 해금 및 업그레이드 정보 리스트
     public List<WeaponSaveData> weaponRecords = new List<WeaponSaveData>();
+
+    // 이미 끝난 게임 이벤트(시설 해금 등)의 이름. GameEventManager가 읽고 쓴다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
+    public List<string> completedEvents = new List<string>();
 }
 
 /// <summary>
@@ -522,6 +525,20 @@ public class DataManager : MonoBehaviour
         SaveGame();
     }
 
+    /// <summary>게임 이벤트(GameEventManager의 이벤트 이름)가 이미 끝났는가.</summary>
+    public bool HasCompletedEvent(string id) =>
+        HasSelectedSlot && !string.IsNullOrEmpty(id) && CurrentSaveData.completedEvents != null && CurrentSaveData.completedEvents.Contains(id);
+
+    /// <summary>게임 이벤트를 끝난 것으로 남기고 저장한다. 이미 있으면 저장하지 않는다.</summary>
+    public void CompleteEvent(string id)
+    {
+        if (!HasSelectedSlot || string.IsNullOrEmpty(id)) return;
+        CurrentSaveData.completedEvents ??= new List<string>();
+        if (CurrentSaveData.completedEvents.Contains(id)) return;
+        CurrentSaveData.completedEvents.Add(id);
+        SaveGame();
+    }
+
     private void ReleaseSlot()
     {
         CurrentSlot = -1;
@@ -558,6 +575,7 @@ public class DataManager : MonoBehaviour
             if (data == null) return null;
             data.weaponRecords ??= new List<WeaponSaveData>();
             data.trainingRoomRecords ??= new List<TrainingRoomSaveData>();
+            data.completedEvents ??= new List<string>();
             data.lastPlayedUtc ??= "";
             return data;
         }

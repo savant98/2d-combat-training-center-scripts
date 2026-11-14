@@ -67,7 +67,7 @@ public sealed class SelfTrainingStatistics
 
         if (row == null)
         {
-            string label = info.sourceWeapon != null ? info.sourceWeapon.weaponName : "출처 미지정";
+            string label = info.sourceWeapon != null ? info.sourceWeapon.DisplayName : "출처 미지정";
             if (string.IsNullOrWhiteSpace(label)) label = info.sourceWeapon.name;
             row = new SelfTrainingDamageRow(info.sourceWeapon, info.damageType, label);
             sources.Add(row);

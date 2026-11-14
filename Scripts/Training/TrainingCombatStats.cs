@@ -81,7 +81,7 @@ public sealed class TrainingCombatStats
         foreach (var record in weapons)
             if (record.Weapon == weapon) return record;
 
-        string name = weapon != null ? weapon.weaponName : UnknownSourceName;
+        string name = weapon != null ? weapon.DisplayName : UnknownSourceName;
         if (string.IsNullOrWhiteSpace(name)) name = weapon.name;
         var created = new TrainingWeaponRecord(weapon, name);
         weapons.Add(created);

@@ -1,4 +1,5 @@
 using DG.Tweening;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -18,6 +19,12 @@ public class EnemyUI : MonoBehaviour
     [SerializeField] private CanvasGroup breakNowGroup;
     [SerializeField] private CanvasGroup knockDownGroup;
     [SerializeField] private CanvasGroup bossMessageGroup;
+    [Tooltip("보스 등장 이름표의 글자. EnemyController.DisplayName(표준 이름)으로 채운다.")]
+    [SerializeField] private TMP_Text bossNameText;
+    [Tooltip("브레이크 가능 아이콘 둘레의 남은 시간 고리(Filled). 브레이크 가능 시간 동안 1에서 0으로 줄어든다.")]
+    [SerializeField] private Image breakTimerFill;
+
+    private Tween breakTimerTween;
 
     private Tween hideShieldTween;
     private Tween hideHPTween;
@@ -110,10 +117,19 @@ public class EnemyUI : MonoBehaviour
             UIManager.Instance.UpdateBossHP(normalized);
         }
     }
-    public void ShowBreakable()
+    public void ShowBreakable() => ShowBreakable(0f);
+    // duration이 있으면 남은 시간 고리가 그동안 줄어든다.
+    public void ShowBreakable(float duration)
     {
         breakNowGroup.alpha = 1f;
         knockDownGroup.alpha = 0f;
+
+        if (breakTimerFill == null)
+            return;
+        breakTimerTween?.Kill();
+        breakTimerFill.fillAmount = 1f;
+        if (duration > 0f)
+            breakTimerTween = breakTimerFill.DOFillAmount(0f, duration).SetEase(Ease.Linear);
     }
     public void ShowKnockDown()
     {
@@ -131,6 +147,10 @@ public class EnemyUI : MonoBehaviour
     }
     public void ResetEnemyHUD()
     {
+        RefreshBossName();
+        breakTimerTween?.Kill();
+        if (breakTimerFill != null) breakTimerFill.fillAmount = 1f;
+
         hpBar.transform.DOKill();
         subHpBar.transform.DOKill();
         subHpBarFadeImage.transform.DOKill();
@@ -148,6 +168,15 @@ public class EnemyUI : MonoBehaviour
 
         if (bossMessageGroup != null)
             ShowBossMessage();
+    }
+    // 이름표의 글자를 적의 표준 이름으로 맞춘다(Prefab에 남은 옛 글자를 덮는다).
+    private void RefreshBossName()
+    {
+        if (bossNameText == null)
+            return;
+        var owner = GetComponentInParent<EnemyController>();
+        if (owner != null)
+            bossNameText.text = owner.DisplayName;
     }
     private void ShowBossMessage()
     {

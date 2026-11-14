@@ -5,6 +5,7 @@ using UnityEngine;
 // 현재 성적이 떨어지면 화면에 커다랗게 표시. Wave가 넘어갈 때 현재 상황판을 화면 중앙에 Animation 효과와 함께 약 2초").
 // 이 Prefab(MainScene의 TrainingScoreboard 인스턴스, UIManager.trainingScoreboardUI)이 훈련 중 화면 연출을 함께 맡는다.
 // - 오른쪽 위 코너판(TrainingStatusView): 현재 성적·남은 시간·남은 피격·Wave 진행. 켜질 때 오른쪽에서 밀려 들어온다.
+//   보스 HP 바가 켜진 동안에는 오른쪽 위 구석의 간략판(등급·시간·피격 숫자)으로 접힌다(SetBossBarArea, 2026-11-15).
 // - 등급 하락 알림(TrainingGradeAlertUI): TrainingRunTracker의 읽기 전용 예상 등급이 떨어지면 띄운다(게임 상태는 바꾸지 않는다).
 // - 한도 경고(TrainingLimitWarningUI): 곧 미흡이 될 때(남은 시간 1분·30초·10초 카운트, 남은 피격 5 이하) 화면에 크게 알린다.
 // - 위험 빛(DangerVignetteUI): 남은 피격이 1 이하이거나 체력 30% 이하일 때 화면 네 변이 붉게 숨 쉰다. 훈련 기록이 없는 방에서도 체력 조건으로 뜬다.
@@ -100,12 +101,18 @@ public class TrainingScoreboardUI : MonoBehaviour
     }
 
     // 보스 HP 바(UIManager.ShowBossHP)가 켜지면 그 사각형을, 꺼지면 null을 받는다.
-    // 보스 바는 Canvas 가운데 기준이라 16:9·16:10에서는 오른쪽 위 코너판과 겹친다. 겹칠 때만 코너판을 바 아래로 내린다.
+    // 보스 HUD(화면 위쪽 가운데 1080×118)는 어느 화면비에서도 원래 코너판과 겹친다. 코너판을 바 아래로 내리면 오른쪽 위가 복잡해지므로
+    // 보스 바가 켜진 동안 코너판을 오른쪽 위 구석의 간략판으로 접고, 꺼지면 원래 판으로 펼친다(2026-11-15 사용자 요청 "보스 전투 중에는 간략화").
+    // 상황판이 보이지 않을 때는 연출 없이 바로 바꾼다. 간략판까지 겹치는 경우(보스 HUD가 더 넓어지는 등)에만 안전장치로 바 아래로 내린다.
     public void SetBossBarArea(RectTransform bar)
     {
         bossBar = bar;
+        if (cornerView != null) cornerView.SetCompact(bar != null, !IsBoardVisible);
         Retarget(AvoidTarget());
     }
+
+    // 코너판이 화면에 보이는지(켜져 있고 루트 알파가 남아 있다)
+    private bool IsBoardVisible => scoreBoardOn && scoreBoardCanvasGroup != null && scoreBoardCanvasGroup.alpha > 0.001f;
 
     // 보스 등장 경고(UIManager.ShowWarningLine)가 시작될 때 부른다. 경고 글자판이 한도 경고와 같은 자리라 그동안 한도 경고를 흐리게 한다.
     public void NotifyBossWarning()
@@ -192,6 +199,7 @@ public class TrainingScoreboardUI : MonoBehaviour
     }
 
     // 코너판이 원래 자리에서 보스 바(+여백)와 겹치면 판 위쪽 끝이 바 아래로 가는 만큼(음수), 아니면 0.
+    // 크기는 지금 향하는 상태의 판 크기다(보스 바가 켜져 접히는 중이면 간략판). 그래서 접는 동안 아래로 내려가거나 떨리지 않는다.
     private float AvoidTarget()
     {
         if (bossBar == null || cornerView == null) return 0f;
@@ -200,7 +208,7 @@ public class TrainingScoreboardUI : MonoBehaviour
         bossBar.GetWorldCorners(corners);
         Vector2 barMin = space.InverseTransformPoint(corners[0]), barMax = space.InverseTransformPoint(corners[2]);
         var view = cornerView.Rect;
-        Vector2 size = Vector2.Scale(view.rect.size, view.localScale);
+        Vector2 size = Vector2.Scale(cornerView.TargetSize, view.localScale);
         float top = space.rect.yMax + cornerBase.y, right = space.rect.xMax + cornerBase.x;
         float bottom = top - size.y, left = right - size.x;
         bool overlapX = left < barMax.x + bossBarMargin && right > barMin.x - bossBarMargin;

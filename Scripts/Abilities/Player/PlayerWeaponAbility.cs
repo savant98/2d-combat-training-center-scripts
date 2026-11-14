@@ -14,9 +14,6 @@ public class PlayerWeaponAbility : PlayerAbility
     [SerializeField] private MeleeHitbox[] hammerSkillBoxes;
     [SerializeField] private GameObject[] weaponModels;
 
-    [Header("Skill Gauge Orb")]
-    [SerializeField] private Transform skillGaugeOrbTarget;
-
     [Header("Gear UI")]
     [SerializeField] private PlayerGearUI gearUI;
 
@@ -63,6 +60,8 @@ public class PlayerWeaponAbility : PlayerAbility
     // Gear·무기 변경의 몸 둘레 표시. DashAbility처럼 실행 중에 Player 아래에 만든다.
     private PlayerGearVisual gearVisual;
     private PlayerWeaponSwapVisual weaponSwapVisual;
+    // 스킬 게이지를 몸 옆 배터리로 보여 주는 표시(2026-11-15, 날아오는 구슬 대신). 게이지는 적중 즉시 오른다.
+    private PlayerSkillBatteryVisual skillBattery;
 
     public override void Initialize(AbilityManager manager)
     {
@@ -95,6 +94,12 @@ public class PlayerWeaponAbility : PlayerAbility
             weaponSwapVisual.Initialize(controller.model.transform.Find("Circle"));
         }
 
+        if (weaponData.skillBatteryVisual != null)
+        {
+            skillBattery = Instantiate(weaponData.skillBatteryVisual, transform);
+            skillBattery.Initialize(controller);
+        }
+
         // HUD의 기어 슬롯·눈금은 머리 위 GearUI의 단계 색을 그대로 쓴다.
         if (gearUI != null)
             UIManager.Instance.SetGearStageColors(gearUI.GetStageColor(1), gearUI.GetStageColor(2), gearUI.GetStageColor(3));
@@ -103,6 +108,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
         selectedWeapon = normalWeapon;
         skillGauge = 0;
+        if (skillBattery != null) skillBattery.SetGauge(0f, maxSkillGauge, true);
 
         CancelGear();
 
@@ -115,7 +121,15 @@ public class PlayerWeaponAbility : PlayerAbility
     public void ResetSkillGauge()
     {
         skillGauge = 0;
-        UIManager.Instance.UpdateSkillGauge(0f, maxSkillGauge, weaponData.weaponSets[currentSetIndex]);
+        PublishSkillGauge(true);
+    }
+
+    // 게이지가 바뀌는 곳은 모두 여기로 모아 HUD와 몸 옆 배터리를 함께 갱신한다.
+    // silent면 칸이 다 차도 'Charge!'와 소리를 내지 않는다(방 초기화 등).
+    private void PublishSkillGauge(bool silent = false)
+    {
+        UIManager.Instance.UpdateSkillGauge(skillGauge, maxSkillGauge, weaponData.weaponSets[currentSetIndex]);
+        if (skillBattery != null) skillBattery.SetGauge(skillGauge, maxSkillGauge, silent);
     }
     private void TryAttack()
     {
@@ -243,7 +257,7 @@ public class PlayerWeaponAbility : PlayerAbility
         skillGauge -= normalWeapon.skillGauge;
         MarkWeaponUsed(normalWeapon);
 
-        UIManager.Instance.UpdateSkillGauge(skillGauge, maxSkillGauge, weaponData.weaponSets[currentSetIndex]);
+        PublishSkillGauge();
 
         CancelGear();
         StartWindup();
@@ -280,10 +294,7 @@ public class PlayerWeaponAbility : PlayerAbility
         skillGauge -= selectedWeapon.skillGauge;
         MarkWeaponUsed(gearWeapon);
 
-        UIManager.Instance.UpdateSkillGauge(
-            skillGauge,
-            maxSkillGauge,
-            weaponData.weaponSets[currentSetIndex]);
+        PublishSkillGauge();
 
         CancelGear(PlayerGearVisual.EndReason.Fired);
         StartWindup();
@@ -305,7 +316,7 @@ public class PlayerWeaponAbility : PlayerAbility
         skillGauge -= secondaryWeapon.skillGauge;
         MarkWeaponUsed(secondaryWeapon);
 
-        UIManager.Instance.UpdateSkillGauge(skillGauge, maxSkillGauge, weaponData.weaponSets[currentSetIndex]);
+        PublishSkillGauge();
 
         CancelGear();
         StartWindup();
@@ -477,49 +488,15 @@ public class PlayerWeaponAbility : PlayerAbility
         if (selectedWeapon.skillGainPerHit <= 0)
             return;
 
-        SpawnSkillGaugeOrb(hitPoint, selectedWeapon.skillGainPerHit);
-    }
-    private void SpawnSkillGaugeOrb(Vector2 hitPoint, float gainAmount)
-    {
-        SkillGaugeOrbSettings settings = weaponData.skillGaugeOrbSettings;
-
-        if (settings == null || settings.orbPrefab == null)
-        {
-            AddSkillGauge(gainAmount);
-            return;
-        }
-
-        Transform target = skillGaugeOrbTarget != null
-            ? skillGaugeOrbTarget
-            : controller.transform;
-
-        float gaugePerOrb = Mathf.Max(0.0001f, settings.gaugePerOrb);
-        int orbCount = Mathf.Max(1, Mathf.CeilToInt(gainAmount / gaugePerOrb));
-
-        float remainingGain = gainAmount;
-
-        for (int i = 0; i < orbCount; i++)
-        {
-            float orbGain = Mathf.Min(gaugePerOrb, remainingGain);
-            remainingGain -= orbGain;
-
-            SkillGaugeOrb orb = WorldEntityPool.Instance.Spawn(
-                settings.orbPrefab,
-                hitPoint,
-                Quaternion.identity);
-
-            orb.Play(hitPoint, target, orbGain, settings, AddSkillGauge);
-        }
+        // 예전에는 적중 지점에서 구슬이 날아와 도착할 때 게이지가 올랐다(투사체와 헷갈린다는 지적). 이제 바로 오른다.
+        AddSkillGauge(selectedWeapon.skillGainPerHit);
     }
     private void AddSkillGauge(float amount)
     {
         skillGauge += amount;
         skillGauge = Mathf.Min(skillGauge, maxSkillGauge);
 
-        UIManager.Instance.UpdateSkillGauge(
-            skillGauge,
-            maxSkillGauge,
-            weaponData.weaponSets[currentSetIndex]);
+        PublishSkillGauge();
     }
     #endregion
 

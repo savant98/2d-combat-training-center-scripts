@@ -74,7 +74,7 @@ public class WeaponUpgradeSlot : MonoBehaviour
         var node = nodeType == 0 ? weaponData.unlockInfo : nodeType == 1 ? weaponData.leftNodeInfo : weaponData.rightNodeInfo;
         string label = nodeType == 0 ? "해금" : !string.IsNullOrWhiteSpace(node.nodeName)
             ? node.nodeName : nodeType == 1 ? "왼쪽 모듈" : "오른쪽 모듈";
-        purchaseName = WeaponID + " · " + label;
+        purchaseName = weaponData.DisplayName + " · " + label;
         price = node.upgradeCost;
         return price >= 0;
     }
@@ -199,7 +199,7 @@ public class WeaponUpgradeSlot : MonoBehaviour
         }
 
         // 1. 고정 데이터 반영 (이름, 아이콘)
-        weaponNameText.text = weaponData.weaponName;
+        weaponNameText.text = weaponData.DisplayName;
         weaponIconImage.sprite = weaponData.weaponSprite;
 
         // 2. DataManager로부터 동적 데이터(해금 여부, 레벨) 조회
