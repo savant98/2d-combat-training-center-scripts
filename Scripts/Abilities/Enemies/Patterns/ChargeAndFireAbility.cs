@@ -535,7 +535,8 @@ public class ChargeAndFireAbility : AiAbility
         RaycastHit2D hit = Physics2D.Linecast(from, to, ChargeData.teleportBlockMask);
         return hit.collider != null;
     }
-    // 베기가 끝나는 순간 코어 중심에서 유도탄을 좌우로 벌려 쏜다(예전에는 여기서 지뢰를 뿌렸다).
+    // 베기가 끝나는 순간 코어 중심에서 유도탄을 수직에 가깝게 좌우로 조금 벌려 밀어 올린다(예전에는 여기서 지뢰를 뿌렸다).
+    // Constructor 유도탄과 같은 사출 방식이다: 솟구치는 동안은 방향을 바꾸지 않고 느려지다가, 각속도를 천천히 올려 큰 호를 그리며 Player를 쫓는다.
     // 이동·벽 충돌·피격·폭발 판정은 유도탄(ConstructorHomingMissile)이 기존 모터 경로로 처리한다.
     private void FireSlashMissiles()
     {
@@ -559,9 +560,14 @@ public class ChargeAndFireAbility : AiAbility
         {
             // 위쪽을 기준으로 좌우로 고르게 벌린다. 2발이면 왼쪽·오른쪽으로 벌림 각도만큼 기울인다.
             float side = count == 1 ? 0f : i / (float)(count - 1) * 2f - 1f;
-            float radians = (90f - GetMissileLaunchAngle(origin, side)) * Mathf.Deg2Rad;
+            float tilt = GetMissileLaunchAngle(origin, side);
+            float radians = (90f - tilt) * Mathf.Deg2Rad;
             Vector2 direction = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians));
             totalDirection += direction;
+
+            // 사출은 좌우(부호)와 수평에서 잰 각도로 넘긴다. 가운데 탄(기울기 0)은 오른쪽으로 1도 기운 거의 수직이 된다(사출 각도는 1 ~ 89도).
+            int ejectSide = tilt < 0f ? -1 : 1;
+            float ejectAngle = Mathf.Clamp(90f - Mathf.Abs(tilt), 1f, 89f);
 
             ConstructorHomingMissile missile = WorldEntityPool.Instance.Spawn(
                 ChargeData.missilePrefab,
@@ -581,6 +587,12 @@ public class ChargeAndFireAbility : AiAbility
                 ChargeData.missileSlowDuration,
                 ChargeData.missileSlowSpeedRatio,
                 ChargeData.missileSlowTurnRateDegrees);
+
+            missile.ConfigureEjection(
+                ejectSide,
+                ejectAngle,
+                ChargeData.missileCoastTurnDecayDuration,
+                ChargeData.missileSteeringAcceleration);
 
             missile.ConfigureExplosion(
                 ChargeData.missileExplosionRadius,
@@ -605,7 +617,7 @@ public class ChargeAndFireAbility : AiAbility
     }
 
     // 유도탄 한 발이 나가는 각도(위쪽에서 기운 정도, 도. 오른쪽이 +).
-    // 퍼져 나갈 길에 벽이 가까우면 위쪽으로 세워 쏜다(나오자마자 벽에 부딪혀 터지지 않게). 세워도 막혀 있으면 원래 각도로 쏜다.
+    // 솟구칠 길에 벽이 가까우면 위쪽으로 세워 쏜다(나오자마자 벽에 부딪혀 터지지 않게). 세워도 막혀 있으면 원래 각도로 쏜다.
     // 지형은 투사체가 쓰는 기존 모터의 질의로 확인한다(탄의 크기만큼 두께를 준다).
     private float GetMissileLaunchAngle(Vector2 origin, float side)
     {

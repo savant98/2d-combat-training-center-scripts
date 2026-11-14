@@ -11,6 +11,8 @@ using UnityEngine;
 /// - 가시 묶음이 돌면(검을 휘두를 때) 톱니 고리가 맞물린 것처럼 반대로 돈다. 가시의 움직임 자체는 읽기만 한다.
 /// - 지평선은 힘을 모으면 커지고(horizon) 가동이 꺼지면 사라진다. 톱니가 가로로 펼쳐지는 배율(등장)을 그대로 따라간다.
 ///   빛 고리는 열기와 섬광에 따라 밝아지고 Admin의 블랙홀처럼 미세하게 깜빡인다.
+/// - 지평선 둘레에는 Admin의 블랙홀처럼 나선 무늬의 강착원반 두 장(안쪽은 빠르게, 바깥쪽은 느리게)이 늘 돈다.
+///   화면 기준 각도로 돌려 Model 루트의 90도 전환·좌우 반전에 끊기지 않고, 열기가 오르면 빨라지고 밝아진다. 크기·드러남은 지평선을 따른다.
 /// - 코어 둘레는 Admin의 블랙홀과 같은 노말맵 굴절로 일렁인다. Nightmare의 발광 파츠만 따로 그려 굴절시키므로(SelfDistortionSource)
 ///   Player·배경·다른 개체는 일그러지지 않는다. 세기는 가동과 열기를 따라간다(평소에는 약하게, 힘을 모으면 강하게).
 ///   빛 고리는 가산 발광이라 함께 일렁이고, 검은 원판은 뒤를 가리는 그림이라 대상에 넣지 않는다.
@@ -39,6 +41,8 @@ public sealed class NightmareCore : MonoBehaviour
     [SerializeField] private SpriteRenderer gearRenderer;
     [SerializeField, Tooltip("사건의 지평선(검은 원판). 톱니·가시보다 뒤에서 배경을 가린다")] private SpriteRenderer horizonRenderer;
     [SerializeField, Tooltip("지평선 가장자리의 빛 고리(가산 발광)")] private SpriteRenderer ringRenderer;
+    [SerializeField, Tooltip("지평선 둘레를 빠르게 도는 안쪽 강착원반(가산 발광, Admin 블랙홀의 AccretionInner와 같은 나선)")] private SpriteRenderer diskInnerRenderer;
+    [SerializeField, Tooltip("안쪽 원반 바깥을 느리게 도는 바깥쪽 강착원반(가산 발광, Admin 블랙홀의 AccretionOuter와 같은 나선)")] private SpriteRenderer diskOuterRenderer;
     [SerializeField, Tooltip("좌우 반전의 기준(FacingObject). 비워 두면 뒤집히지 않은 것으로 본다")] private Transform facing;
     [SerializeField, Tooltip("가시 묶음의 회전축(OuterCircle). 읽기만 한다")] private Transform swing;
     [SerializeField, Tooltip("코어 둘레의 자기 왜곡(Nightmare의 발광 파츠만 굴절시킨다)")] private SelfDistortionSource distortion;
@@ -70,6 +74,15 @@ public sealed class NightmareCore : MonoBehaviour
     [SerializeField, Range(0f, .6f), Tooltip("빛 고리의 미세한 깜빡임(Admin 블랙홀과 같은 방식)")] private float ringFlicker = .18f;
     [SerializeField, Min(0f), Tooltip("섬광 때 빛 고리의 세기에 더하는 비율")] private float ringFlashBoost = .6f;
 
+    [Header("강착원반(회전)")]
+    [SerializeField, Tooltip("안쪽 원반이 도는 속도(도/초, +가 반시계). Admin 블랙홀과 같은 210")] private float diskInnerSpin = 210f;
+    [SerializeField, Tooltip("바깥쪽 원반이 도는 속도(도/초). Admin 블랙홀과 같은 95. 두 원반이 다른 속도로 돌아 소용돌이가 겹쳐 흐른다")] private float diskOuterSpin = 95f;
+    [SerializeField, Min(0f), Tooltip("열기가 가장 낮을 때 도는 속도의 배율(대기 열기 0.5에서 약 1배)")] private float diskCoolSpin = .75f;
+    [SerializeField, Min(0f), Tooltip("열기가 가장 높을 때(힘을 모을 때) 도는 속도의 배율")] private float diskHotSpin = 1.6f;
+    [SerializeField, Min(0f), Tooltip("열기가 가장 낮을 때 원반의 밝기 비율")] private float diskCoolGlow = .7f;
+    [SerializeField, Min(0f), Tooltip("열기가 가장 높을 때 원반의 밝기 비율")] private float diskHotGlow = 1.35f;
+    [SerializeField, Min(0f), Tooltip("섬광 때 원반의 세기에 더하는 비율")] private float diskFlashBoost = .4f;
+
     [Header("빛")]
     [SerializeField, Range(0f, 1f), Tooltip("꺼졌을 때의 밝기 비율")] private float offBrightness = .12f;
     [SerializeField, ColorUsage(false, true), Tooltip("섬광의 색")] private Color flashColor = new Color(4.5f, 3.4f, 1.7f, 1f);
@@ -94,6 +107,8 @@ public sealed class NightmareCore : MonoBehaviour
     private MaterialPropertyBlock block;
     private float aimAngle, aimVelocity, aimStrength, gearAngle, gearJoltRate, clock;
     private float lastSwingLocal, horizonSize;
+    // 강착원반의 화면 기준 각도(도). 시작 각도는 두 원반이 겹쳐 보이지 않게 어긋나게 둔다.
+    private float diskInnerAngle, diskOuterAngle = 137f;
     private bool hasSwing, hasHorizonSize;
     // 쏘는 순간의 반응(화면 기준)
     private Vector2 firedDirection, kick;
@@ -118,6 +133,13 @@ public sealed class NightmareCore : MonoBehaviour
     public float HorizonShown { get; private set; }
     /// <summary>빛 고리에 넣은 밝기 비율(Material의 세기에 곱한 값, 섬광 제외). 검증용.</summary>
     public float RingGlow { get; private set; }
+    public SpriteRenderer DiskInner => diskInnerRenderer;
+    public SpriteRenderer DiskOuter => diskOuterRenderer;
+    /// <summary>강착원반의 화면 기준 각도(도, 0 ~ 360, 반시계가 +). 검증용.</summary>
+    public float DiskInnerAngle => diskInnerAngle;
+    public float DiskOuterAngle => diskOuterAngle;
+    /// <summary>강착원반에 넣은 밝기 비율(Material의 세기에 곱한 값, 섬광 제외). 검증용.</summary>
+    public float DiskGlow { get; private set; }
 
     private void OnEnable()
     {
@@ -193,6 +215,11 @@ public sealed class NightmareCore : MonoBehaviour
         float spin = Mathf.Clamp((IdleSpinRate + gearJoltRate) * lit + swingLocalRate * gearRatio, -maxSpin, maxSpin);
         gearAngle = Mathf.Repeat(gearAngle + spin * delta, 360f);
 
+        // 강착원반: Admin 블랙홀처럼 두 원반이 서로 다른 속도로 늘 돈다. 화면 기준 각도라 Model 루트의 90도 전환·좌우 반전과 무관하다.
+        float diskRate = DiskSpinRate(lit);
+        diskInnerAngle = Mathf.Repeat(diskInnerAngle + diskInnerSpin * diskRate * delta, 360f);
+        diskOuterAngle = Mathf.Repeat(diskOuterAngle + diskOuterSpin * diskRate * delta, 360f);
+
         Apply(aimAngle + Tremble(clock), sign, clock, delta);
         Warp(lit);
     }
@@ -212,6 +239,9 @@ public sealed class NightmareCore : MonoBehaviour
         aimStrength = Mathf.Clamp01(target.magnitude);
         if (aimStrength > .05f) aimAngle = Mathf.Atan2(target.y, target.x) * Mathf.Rad2Deg;
         gearAngle = Mathf.Repeat(time * IdleSpinRate * Mathf.Clamp01(power), 360f);
+        float diskRate = DiskSpinRate(Mathf.Clamp01(power));
+        diskInnerAngle = Mathf.Repeat(time * diskInnerSpin * diskRate, 360f);
+        diskOuterAngle = Mathf.Repeat(137f + time * diskOuterSpin * diskRate, 360f);
         Apply(aimAngle, FacingSign, time, -1f);
         Warp(Mathf.Clamp01(power));
     }
@@ -220,6 +250,9 @@ public sealed class NightmareCore : MonoBehaviour
 
     // 열기가 오르면 톱니가 눈에 띄게 빨라진다(대기 0.5 → 0.7배, 힘을 모을 때 1.25 → 2.8배).
     private float IdleSpinRate => idleSpin * (.3f + 1.6f * heat * heat);
+
+    // 강착원반이 도는 속도의 배율: 열기를 따라 빨라지고(힘을 모을 때 소용돌이가 거세진다), 가동이 꺼지면 멈춘다.
+    private float DiskSpinRate(float lit) => Mathf.Lerp(diskCoolSpin, diskHotSpin, Mathf.Clamp01(heat / 1.3f)) * lit;
 
     private Vector2 Origin => gear != null ? (Vector2)gear.position : (Vector2)transform.parent.position;
 
@@ -263,12 +296,12 @@ public sealed class NightmareCore : MonoBehaviour
         Glow(hubRenderer, brightness, shownFlash, flashBoost);
         Glow(gearRenderer, brightness, shownFlash * .6f, flashBoost);
 
-        ApplyHorizon(gearScale, lit, shownFlash, time, delta);
+        ApplyHorizon(gearScale, sign, lit, shownFlash, time, delta);
     }
 
     // 사건의 지평선과 빛 고리: 톱니와 같은 자리에 놓고, 톱니가 펼쳐진 비율(등장 때의 가로 펼침)을 그대로 따라간다.
     // 원형이라 Model 루트의 회전이나 좌우 반전은 보이지 않는다. 표시(enabled)는 건드리지 않는다(순간이동이 숨기고 되돌린다).
-    private void ApplyHorizon(Vector3 gearScale, float lit, float shownFlash, float time, float delta)
+    private void ApplyHorizon(Vector3 gearScale, float sign, float lit, float shownFlash, float time, float delta)
     {
         float amount = Mathf.Max(0f, horizon) * Mathf.Sqrt(lit);                 // 가동이 꺼지면 지평선도 사라진다
         float shown = Mathf.Clamp01(amount / horizonFadeIn);
@@ -299,6 +332,23 @@ public sealed class NightmareCore : MonoBehaviour
             Place(ringRenderer.transform, local, scale);
             Glow(ringRenderer, RingGlow * flicker, shownFlash * shown, ringFlashBoost);
         }
+
+        // 강착원반: 그림은 평소 크기(지평선 값 1)로 그려 두고, 지평선과 같은 비율로 부풀고 줄며 함께 나타나고 사라진다.
+        // 화면 기준 각도로 돌린다. 좌우로 뒤집힌 부모 아래에서는 배율의 부호로 거울상을 되돌려 나선이 감긴 방향을 늘 같게 둔다(원판과 같은 방식).
+        DiskGlow = Mathf.Lerp(offBrightness, 1f, lit) * Mathf.Lerp(diskCoolGlow, diskHotGlow, Mathf.Clamp01(heat / 1.3f)) * shown;
+        var diskScale = new Vector3(size * gearScale.x / gearRestScale * sign, size * gearScale.y / gearRestScale, 1f);
+        Spin(diskInnerRenderer, local, diskScale, diskInnerAngle, shownFlash * shown);
+        Spin(diskOuterRenderer, local, diskScale, diskOuterAngle, shownFlash * shown);
+    }
+
+    private void Spin(SpriteRenderer disk, Vector3 localPosition, Vector3 localScale, float angle, float shownFlash)
+    {
+        if (disk == null) return;
+        Transform part = disk.transform;
+        part.localPosition = new Vector3(localPosition.x, localPosition.y, part.localPosition.z);
+        part.localScale = localScale;
+        part.rotation = Quaternion.Euler(0f, 0f, angle);
+        Glow(disk, DiskGlow, shownFlash, diskFlashBoost);
     }
 
     private static void Place(Transform part, Vector3 localPosition, Vector3 localScale)
