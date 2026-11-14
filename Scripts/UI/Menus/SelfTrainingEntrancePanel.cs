@@ -12,6 +12,10 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
     [SerializeField] private UnityEngine.UI.Button[] buttons;
     [SerializeField] private CinemachineCamera menuCamera;
     [SerializeField] private FeedbackDataSO moveFeedback, confirmFeedback;
+    [Header("자율훈련 메뉴 색상")]
+    [SerializeField] private Color selectedBackground = new Color32(155, 232, 188, 255);
+    [SerializeField] private Color normalBackground = new Color32(4, 6, 9, 255);
+    [SerializeField] private Color selectedText = new Color32(9, 14, 20, 255);
     private Action enter;
     private PlayerController player;
     private bool open;
@@ -93,8 +97,8 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
         for (int i=0;i<buttons.Length;i++)
         {
             if(buttons[i] == null) continue;
-            buttons[i].targetGraphic.color = i == selection ? new Color(.18f,.65f,.9f,1f) : new Color(.035f,.12f,.18f,1f);
-            foreach(var label in buttons[i].GetComponentsInChildren<TextMeshProUGUI>()) label.color = i == selection ? new Color(.015f,.06f,.09f) : new Color(.85f,.95f,1f);
+            buttons[i].targetGraphic.color = i == selection ? selectedBackground : normalBackground;
+            foreach(var label in buttons[i].GetComponentsInChildren<TextMeshProUGUI>()) label.color = i == selection ? selectedText : new Color(.85f,.95f,1f);
         }
     }
     private void Play(FeedbackDataSO data) { if(data != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(data,transform); }

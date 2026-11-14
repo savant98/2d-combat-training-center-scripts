@@ -17,6 +17,7 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField] private TextMeshProUGUI hitCountText;
     [SerializeField] private TextMeshProUGUI timeTakenText;
     [SerializeField] private TextMeshProUGUI gradeText;
+    [SerializeField, Tooltip("현재 훈련의 성적 조건입니다. 미흡을 제외하고 훈련 데이터에서 읽습니다.")] private TextMeshProUGUI gradeConditionsText;
 
     [Header("Training List (Optional)")]
     [SerializeField] private TrainingMenu listMenu;
@@ -167,8 +168,9 @@ public class TrainingMenuController : MonoBehaviour
     private void RefreshUI()
     {
         if (currentTraining == null) return;
+        if (gradeConditionsText != null) gradeConditionsText.text = TrainingRecordView.FormatConditions(currentTraining);
         TrainingRoomSaveData best = DataManager.Instance.GetTrainingRoomRecord(currentTraining.trainingId);
-        if (best != null)
+        if (DataManager.IsCleared(best))
         {
             hitCountText.text = best.bestHitCount == int.MaxValue ? "-" : best.bestHitCount.ToString();
             timeTakenText.text = best.bestTimeSeconds == float.MaxValue ? "-" : TrainingScoreFormatHelper.FormatTime(best.bestTimeSeconds);
@@ -181,7 +183,8 @@ public class TrainingMenuController : MonoBehaviour
         {
             hitCountText.text = "-";
             timeTakenText.text = "-";
-            TrainingScoreFormatHelper.GradeToText(default, gradeText);
+            gradeText.text = "-";
+            gradeText.color = Color.white;
         }
         
     }

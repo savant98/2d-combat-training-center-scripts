@@ -79,6 +79,12 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     [SerializeField] private UnityEngine.UI.Image[] tabHighlights;
     [SerializeField] private SectionBinding[] sections;
 
+    [Header("버튼 선택 색상")]
+    [SerializeField, Tooltip("훈련 목표·적 도감·장비·수신함 순서의 불투명 선택 배경입니다.")]
+    private Color[] selectionColors = { new Color32(248, 212, 106, 255), new Color32(155, 232, 188, 255),
+        new Color32(158, 217, 255, 255), new Color32(245, 184, 217, 255) };
+    [SerializeField] private Color selectionInk = new Color32(9, 14, 20, 255);
+
     [Header("Preview Notice")]
     [SerializeField] private GameObject noticeRoot;
     [SerializeField] private TextMeshProUGUI noticeText;
@@ -139,6 +145,9 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         public UnityEngine.UI.Graphic fill;
         public UnityEngine.UI.Graphic face;
         public Color faceColor;
+        public UnityEngine.UI.Graphic[] foreground;
+        public Color[] foregroundColors;
+        public bool inverted;
     }
 
     /// <summary>단말기에서 하는 조작. 안내가 받을 조작을 가릴 때 쓴다(ActionGuard).</summary>
@@ -347,11 +356,31 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
 
     private void CacheButtonVisual(UnityEngine.UI.Button button)
     {
+        var foreground = new List<UnityEngine.UI.Graphic>();
+        var statusMark = button.transform.Find("OnboardingMark");
+        foreach (var graphic in button.GetComponentsInChildren<UnityEngine.UI.Graphic>(true))
+        {
+            // 장식 테두리와 상태 배지를 제외하고 글자·아이콘만 배경색으로 바꾼다.
+            if (statusMark != null && graphic.transform.IsChildOf(statusMark)) continue;
+            if (graphic is TMP_Text || graphic is TerminalEquipmentGlyph
+                || IsButtonGlyph(graphic.transform, button.transform)) foreground.Add(graphic);
+        }
         buttonVisuals[button] = new ButtonVisual
         {
             fill = button.transform.Find("SelectionFill")?.GetComponent<UnityEngine.UI.Graphic>(),
-            face = button.targetGraphic, faceColor = button.targetGraphic != null ? button.targetGraphic.color : Color.white
+            face = button.targetGraphic, faceColor = button.targetGraphic != null ? button.targetGraphic.color : new Color(.06f, .14f, .2f),
+            foreground = foreground.ToArray(), foregroundColors = new Color[foreground.Count]
         };
+    }
+
+    private static bool IsButtonGlyph(Transform graphic, Transform button)
+    {
+        if (graphic.name.StartsWith("CloseStroke", StringComparison.Ordinal)
+            || graphic.name.StartsWith("ConfirmStroke", StringComparison.Ordinal)
+            || graphic.name.StartsWith("Knurl", StringComparison.Ordinal)) return true;
+        for (var parent = graphic; parent != null && parent != button; parent = parent.parent)
+            if (parent.name == "Emblem" || parent.name == "CategoryGlyph") return true;
+        return false;
     }
 
     private bool CanHighlight(UnityEngine.UI.Button button)
@@ -1076,15 +1105,37 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             bool selected = button.gameObject.activeInHierarchy && IsActive && !isClosing &&
                 (button == hoveredButton || IsSelectedButton(button));
             if (button.TryGetComponent<TerminalButtonMotion>(out var motion)) motion.Select(selected);
-            // 선택된 버튼은 테두리만 밝힌다(분류의 테마색은 테두리에만 쓴다). 면을 테마색으로 채우지 않고, 글자·기호의 색도 바꾸지 않는다.
-            if (visual.fill != null)
+            // 분류별 밝은 선택면과 짙은 전경으로 대비를 유지한다. 상세·안내 버튼도 현재 분류를 따른다.
+            var selectionColor = SelectionColor(button);
+            if (visual.fill != null) visual.fill.color = selected ? selectionColor : new Color(1f, 1f, 1f, 0f);
+            else if (visual.face != null) visual.face.color = selected ? selectionColor : visual.faceColor;
+            for (int i = 0; i < visual.foreground.Length; i++)
             {
-                // 선택 표시가 테두리(TrainingHologramGraphic)면 그 테두리를 켜고, 면(Image)이면 옅게만 밝힌다.
-                float lit = visual.fill is TrainingHologramGraphic ? 1f : .14f;
-                visual.fill.color = new Color(1f, 1f, 1f, selected ? lit : 0f);
+                var graphic = visual.foreground[i];
+                if (graphic == null) continue;
+                if (selected && !visual.inverted) visual.foregroundColors[i] = graphic.color;
+                if (selected)
+                {
+                    var ink = selectionInk;
+                    ink.a = visual.foregroundColors[i].a;
+                    // 아이콘 뒤의 기계식 받침은 비워 흰 선택면 위에 아이콘이 보이게 한다.
+                    if (graphic is TerminalChassisGraphic) ink.a = 0f;
+                    graphic.color = ink;
+                }
+                else if (visual.inverted) graphic.color = visual.foregroundColors[i];
             }
-            else if (visual.face != null) visual.face.color = selected ? Color.Lerp(visual.faceColor, Color.white, .2f) : visual.faceColor;
+            visual.inverted = selected;
         }
+    }
+
+    private Color SelectionColor(UnityEngine.UI.Button button)
+    {
+        int category = homeVisible ? selectedHomeIndex : selectedTab;
+        for (int i = 0; i < sections.Length; i++)
+            if (button == homeButtons[i] || button == tabButtons[i]
+                || (sections[i].root != null && button.transform.IsChildOf(sections[i].root.transform)))
+            { category = i; break; }
+        return selectionColors != null && selectionColors.Length > category ? selectionColors[category] : Color.white;
     }
 
     private bool IsSelectedButton(UnityEngine.UI.Button button)

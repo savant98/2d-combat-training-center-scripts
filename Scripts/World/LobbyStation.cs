@@ -13,7 +13,8 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class LobbyStation : MonoBehaviour
 {
-    [SerializeField, Tooltip("전원. 끄면 방전된 모습으로 서고 입구가 잠긴다")] private bool powered = true;
+    [Header("시설 이용 상태")]
+    [SerializeField, Tooltip("Scene에서 켜면 이용 가능, 끄면 이용 불가입니다. Play 전·실행 중 모두 변경할 수 있으며 빛·애니메이션·푯말·입구 잠금이 함께 바뀝니다. 첫 입소 안내 중에는 환영 메일을 먼저 확인해야 합니다.")] private bool powered = true;
     [SerializeField] private Animator animator;
     [SerializeField, Tooltip("이 설비가 띄우는 메뉴들(IUIInputReceiver를 구현한 컴포넌트. 목록·상세처럼 화면이 여럿이면 모두 넣는다)")] private MonoBehaviour[] menus;
     [SerializeField, Tooltip("방전 중에 잠그는 입구·설비(RoomTrigger·UpgradeTrigger)")] private Component[] lockedTargets;
