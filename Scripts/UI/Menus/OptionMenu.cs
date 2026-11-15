@@ -474,8 +474,9 @@ public class OptionMenu : SelectableMenuUI
         {
             case 20: draft.language = draft.language == "en" ? "ko" : "en"; break;
             case 0:
-                int mode = draft.windowed ? 0 : draft.exclusiveFullscreen ? 2 : 1;
-                mode = (mode + direction + 3) % 3;
+                int mode = draft.windowed ? 0 : DisplayOptions.Mode(draft) == FullScreenMode.ExclusiveFullScreen ? 2 : 1;
+                int modeCount = DisplayOptions.CanUseExclusive(draft) ? 3 : 2;
+                mode = (mode + direction + modeCount) % modeCount;
                 draft.windowed = mode == 0; draft.exclusiveFullscreen = mode == 2; break;
             case 21:
                 var displays = DisplayOptions.Layout();
@@ -523,7 +524,7 @@ public class OptionMenu : SelectableMenuUI
 
     private void Refresh()
     {
-        optionRows[0].value.text = draft.windowed ? "창 모드" : draft.exclusiveFullscreen ? "독점 전체 화면" : "테두리 없는 전체 화면";
+        optionRows[0].value.text = draft.windowed ? "창 모드" : DisplayOptions.Mode(draft) == FullScreenMode.ExclusiveFullScreen ? "독점 전체 화면" : "테두리 없는 전체 화면";
         var displayLayout = DisplayOptions.Layout();
         int monitor = DisplayOptions.Monitor(draft, displayLayout);
         optionRows[21].value.text = monitor >= 0 ? $"{monitor + 1}. {displayLayout[monitor].name}" : "기본 모니터";
@@ -615,17 +616,7 @@ public class OptionMenu : SelectableMenuUI
     private void BuildResolutions()
     {
         resolutions.Clear();
-        foreach (var r in DisplayOptions.Modes(draft))
-        {
-            var size = new Vector2Int(r.width, r.height);
-            if (r.width >= 960 && r.height >= 540 && !resolutions.Contains(size)) resolutions.Add(size);
-        }
-        var current = new Vector2Int(EffectiveWidth(draft), EffectiveHeight(draft));
-        if (!resolutions.Contains(current)) resolutions.Add(current);
-        if (draft.windowed)
-            foreach (var size in new[] { new Vector2Int(1280, 720), new Vector2Int(1600, 900) })
-                if (!resolutions.Contains(size) && size.x <= current.x && size.y <= current.y) resolutions.Add(size);
-        resolutions.Sort((a, b) => a.x == b.x ? a.y.CompareTo(b.y) : a.x.CompareTo(b.x));
+        resolutions.AddRange(DisplayOptions.Resolutions(draft));
     }
 
     public static int FindBinding(InputAction action, string part)

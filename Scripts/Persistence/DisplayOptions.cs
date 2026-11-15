@@ -26,7 +26,52 @@ public static class DisplayOptions
         return Mathf.Clamp(settings.monitorIndex, 0, displays.Count - 1);
     }
 
-    public static bool CanChangeRefresh(OptionSettings settings) => !settings.windowed && settings.exclusiveFullscreen;
+    public static bool CanChangeRefresh(OptionSettings settings) => Mode(settings) == FullScreenMode.ExclusiveFullScreen;
+
+    /// <summary>게임의 16:9 비율을 유지하며 요청한 영역 안에 최대 4K UHD로 맞춘다.</summary>
+    public static Vector2Int FitResolution(Vector2Int size)
+    {
+        int unit = Mathf.Clamp(Mathf.Min(size.x / 16, size.y / 9), 1, 240);
+        return new Vector2Int(unit * 16, unit * 9);
+    }
+
+    public static bool IsWidescreen(Vector2Int size) => size.x > 0 && size.y > 0 && (long)size.x * 9 == (long)size.y * 16;
+
+    /// <summary>모니터 지원 모드와 창·테두리 없는 전체 화면의 표준 렌더 해상도를 합친다.</summary>
+    public static List<Vector2Int> Resolutions(OptionSettings settings) => ResolutionChoices(Modes(settings), DesktopSize(settings), Size(settings));
+
+    public static List<Vector2Int> ResolutionChoices(IEnumerable<Resolution> modes, Vector2Int desktop, Vector2Int current)
+    {
+        var result = new List<Vector2Int>();
+        void Add(Vector2Int size)
+        {
+            if (size.x >= 960 && size.y >= 540 && size.x <= 3840 && size.y <= 2160 && IsWidescreen(size) && !result.Contains(size)) result.Add(size);
+        }
+        foreach (var mode in modes) Add(new Vector2Int(mode.width, mode.height));
+        var limit = FitResolution(desktop);
+        foreach (var size in new[] { new Vector2Int(960, 540), new Vector2Int(1280, 720), new Vector2Int(1600, 900),
+            new Vector2Int(1920, 1080), new Vector2Int(2560, 1440), new Vector2Int(3200, 1800), new Vector2Int(3840, 2160) })
+            if (size.x <= limit.x && size.y <= limit.y) Add(size);
+        var currentSize = FitResolution(current);
+        if (currentSize.x >= 640 && currentSize.y >= 360 && !result.Contains(currentSize)) result.Add(currentSize);
+        if (result.Count == 0) result.Add(new Vector2Int(960, 540));
+        result.Sort((a, b) => a.x.CompareTo(b.x));
+        return result;
+    }
+
+    public static bool CanUseExclusive(OptionSettings settings) => SupportsExclusive(DesktopSize(settings), Size(settings), Modes(settings));
+
+    public static bool SupportsExclusive(Vector2Int desktop, Vector2Int size, IEnumerable<Resolution> modes)
+    {
+        if (!IsWidescreen(desktop)) return false;
+        foreach (var mode in modes)
+            if (mode.width == size.x && mode.height == size.y) return true;
+        return false;
+    }
+
+    /// <summary>비16:9 모니터는 Unity의 기본 레터박스를 보장하는 FullScreenWindow를 사용한다.</summary>
+    public static FullScreenMode Mode(OptionSettings settings) => settings.windowed ? FullScreenMode.Windowed :
+        settings.exclusiveFullscreen && CanUseExclusive(settings) ? FullScreenMode.ExclusiveFullScreen : FullScreenMode.FullScreenWindow;
 
     public static void NormalizeMonitor(OptionSettings settings)
     {
@@ -69,8 +114,10 @@ public static class DisplayOptions
         }
     }
 
-    public static int Width(OptionSettings settings) => settings.width > 0 ? settings.width : DesktopSize(settings).x;
-    public static int Height(OptionSettings settings) => settings.height > 0 ? settings.height : DesktopSize(settings).y;
+    public static Vector2Int Size(OptionSettings settings) => FitResolution(settings.width > 0 && settings.height > 0
+        ? new Vector2Int(settings.width, settings.height) : DesktopSize(settings));
+    public static int Width(OptionSettings settings) => Size(settings).x;
+    public static int Height(OptionSettings settings) => Size(settings).y;
     private static Vector2Int DesktopSize(OptionSettings settings)
     {
         var displays = Layout();

@@ -26,6 +26,8 @@ public class Room : MonoBehaviour
     private float defaultOrthographicSize = 7f;
     private float waitForBossEntryTime = 3.5f;
     private Tween bossEntryCameraTween;
+    private bool ownsBossWarning;
+    private uint bossEntryVersion;
     private Vector3 currentSpawnPoint;
     private Coroutine waveCompleteRoutine;
     public void ReleaseContent()
@@ -116,7 +118,9 @@ public class Room : MonoBehaviour
     public IEnumerator ActivateBossEntryCamera(Transform bossTr)
     {
         ResetBossEntryCamera();
+        uint entryVersion = bossEntryVersion;
         UIManager.Instance.ShowWarningLine();
+        ownsBossWarning = true;
 
         virtualCamera.Follow = bossTr;
         bossEntryCameraTween = DOTween.To(() => virtualCamera.Lens.OrthographicSize,
@@ -126,11 +130,15 @@ public class Room : MonoBehaviour
 
         yield return new WaitForSeconds(waitForBossEntryTime);
 
+        if (entryVersion != bossEntryVersion) yield break;
+
         if (bossTr == null || !bossTr.gameObject.activeInHierarchy || RoomManager.Instance.CurrentRoom != this)
         {
             ResetBossEntryCamera();
             yield break;
         }
+        UIManager.Instance.HideWarningLine();
+        ownsBossWarning = false;
         UIManager.Instance.ShowBossHP(true, bossTr.GetComponent<EnemyController>());
         virtualCamera.Follow = GameManager.Instance.Player.transform;
         bossEntryCameraTween = DOTween.To(() => virtualCamera.Lens.OrthographicSize,
@@ -145,6 +153,9 @@ public class Room : MonoBehaviour
     }
     public void ResetBossEntryCamera()
     {
+        bossEntryVersion++;
+        if (ownsBossWarning && UIManager.Instance != null) UIManager.Instance.HideWarningLine();
+        ownsBossWarning = false;
         bossEntryCameraTween?.Kill();
         bossEntryCameraTween = null;
         if (virtualCamera == null) return;

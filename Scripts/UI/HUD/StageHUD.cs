@@ -1,4 +1,5 @@
 using DG.Tweening;
+using System.Collections;
 using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -78,6 +79,7 @@ public class StageHUD : MonoBehaviour
 
     [Header("Warning Effect")]
     [SerializeField] private GameObject warningEffect;
+    private Coroutine warningRoutine;
 
     private static readonly int FillID = Shader.PropertyToID("_Fill");
     private static readonly int TrailID = Shader.PropertyToID("_Trail");
@@ -141,6 +143,7 @@ public class StageHUD : MonoBehaviour
         if (breakableGroup != null) breakableGroup.alpha = 0f;
         if (breakGroup != null) breakGroup.alpha = 0f;
         CreateCounter();
+        HideWarningLine();
     }
 
     private void OnEnable() => EnemyHealth.DamageApplied += OnEnemyDamageApplied;
@@ -148,6 +151,7 @@ public class StageHUD : MonoBehaviour
     private void OnDisable()
     {
         EnemyHealth.DamageApplied -= OnEnemyDamageApplied;
+        HideWarningLine();
         ResetBreakTracking();
     }
 
@@ -169,8 +173,35 @@ public class StageHUD : MonoBehaviour
 
     public void ShowWarningLine()
     {
-        warningEffect.SetActive(false);
+        HideWarningLine();
+        if (warningEffect == null || !isActiveAndEnabled) return;
         warningEffect.SetActive(true);
+        warningRoutine = StartCoroutine(HideWarningAfterAnimation());
+    }
+
+    // 화살표 LineRenderer까지 함께 끈다. CanvasGroup의 투명도만으로는 화살표가 남는다.
+    public void HideWarningLine()
+    {
+        if (warningRoutine != null) StopCoroutine(warningRoutine);
+        warningRoutine = null;
+        if (warningEffect != null) warningEffect.SetActive(false);
+    }
+
+    private IEnumerator HideWarningAfterAnimation()
+    {
+        float duration = 3f;
+        var animator = warningEffect.GetComponent<Animator>();
+        if (animator != null && animator.runtimeAnimatorController != null)
+        {
+            duration = 0f;
+            foreach (var clip in animator.runtimeAnimatorController.animationClips)
+                duration = Mathf.Max(duration, clip.length);
+            duration /= Mathf.Max(.01f, Mathf.Abs(animator.speed));
+        }
+        // 경고 Animator와 같은 게임 시간을 써서 일시정지 중에는 종료도 기다린다.
+        yield return new WaitForSeconds(duration);
+        warningRoutine = null;
+        if (warningEffect != null) warningEffect.SetActive(false);
     }
 
     public void ShowBossHP() => ShowBossHP(null);

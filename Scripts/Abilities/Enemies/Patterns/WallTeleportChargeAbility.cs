@@ -191,6 +191,9 @@ public class WallTeleportChargeAbility : AiAbility
 
     private void UnsubscribeWallHit()
     {
+        if (controller == null)
+            return;
+
         controller.OnWallHit -= HandleWallHit;
     }
 

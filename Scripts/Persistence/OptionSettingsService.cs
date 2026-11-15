@@ -103,8 +103,7 @@ public class OptionSettingsService : MonoBehaviour
                     if (move != null) yield return move;
                     if (pendingDisplay != null) continue;
                 }
-                var mode = settings.windowed ? FullScreenMode.Windowed : settings.exclusiveFullscreen ?
-                    FullScreenMode.ExclusiveFullScreen : FullScreenMode.FullScreenWindow;
+                var mode = DisplayOptions.Mode(settings);
                 try
                 {
                     Screen.SetResolution(DisplayOptions.Width(settings), DisplayOptions.Height(settings), mode,

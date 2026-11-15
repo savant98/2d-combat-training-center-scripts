@@ -420,6 +420,9 @@ public class UIManager : MonoBehaviour
         if (trainingScoreboardUI != null)
             trainingScoreboardUI.SetBossBarArea(value ? stageHud.BossBarRect : null);
     }
+    /// <summary>보스 등장 경고와 화살표를 즉시 정리한다.</summary>
+    public void HideWarningLine() => stageHud?.HideWarningLine();
+
     public void ShowWarningLine()
     {
         stageHud.ShowWarningLine();
