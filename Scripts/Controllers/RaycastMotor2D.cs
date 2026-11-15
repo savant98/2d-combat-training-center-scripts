@@ -98,7 +98,8 @@ public class RaycastMotor2D : MonoBehaviour
     private Collider2D groundCollider;
     private Collider2D ignoredOneWay;
     private float ignoreOneWayUntil;
-    private static int OneWayLayer => 1 << LayerMask.NameToLayer("TransparentPlatform");
+    // 레이어 번호는 OneWayPlatform이 처음 한 번만 찾아 둔 값을 쓴다(광선마다 하던 NameToLayer 문자열 검색 제거, 값은 같다).
+    private static int OneWayLayer => 1 << OneWayPlatform.SurfaceLayer;
     public bool SupportsOneWayPlatforms { get; set; }
 
     // 이동 구속: 켜져 있는 동안 몸통이 이 월드 사각형 밖으로 나가지 못한다.

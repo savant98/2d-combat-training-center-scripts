@@ -26,12 +26,15 @@ public class FloatingText : MonoBehaviour
         public Color bottomColor;
     }
     private Sequence seq;
+    // 표시가 끝나면 풀로 돌려보내는 콜백. 피격마다 람다를 새로 만들지 않도록 Awake에서 한 번만 만든다.
+    private TweenCallback returnToPool;
    
     private void Awake()
     {
         rect = GetComponent<RectTransform>();
         txt = GetComponentInChildren<TextMeshProUGUI>();
         group = GetComponent<CanvasGroup>();
+        returnToPool = ReturnToPool;
     }
 
     public void Show(WeaponBaseSO.DamageInfo damageInfo, Color? overrideColor = null)
@@ -76,9 +79,19 @@ public class FloatingText : MonoBehaviour
         // Fade Out
         seq.Join(txt.DOFade(0f, lifeTime));
 
-        seq.OnComplete(() =>
-        {
+        seq.OnComplete(returnToPool);
+    }
+
+    // 기존에는 끝나면 비활성화만 하고 풀에 돌려보내지 않아(Return 호출처 0곳) 풀 20개를 다 쓴 뒤
+    // 피격마다 새로 Instantiate했다. 이제 FloatingTextManager.Return이 비활성화와 풀 반환을 함께 한다.
+    // 다시 꺼낼 때는 Show가 글자·크기·색·투명도·배율을, 매니저가 위치를 다시 정하므로 표시와 수명은 같다.
+    private void ReturnToPool()
+    {
+        seq = null;
+        var manager = FloatingTextManager.Instance;
+        if (manager != null)
+            manager.Return(this);
+        else
             gameObject.SetActive(false);
-        });
     }
 }

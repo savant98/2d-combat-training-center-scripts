@@ -36,6 +36,9 @@ public class FloatingTextManager : MonoBehaviour
             CreateInstance();
 
         var obj = pool.Dequeue();
+        // 반환된 개체를 다시 쓰므로, 예전처럼 새로 만든 개체와 같이 가장 위(마지막 형제)에 그린다.
+        // (기존에는 풀 소진 뒤 새 Instantiate가 늘 마지막 형제라 최신 숫자가 위에 겹쳐 보였다.)
+        obj.transform.SetAsLastSibling();
         obj.gameObject.SetActive(true);
         return obj;
     }

@@ -42,6 +42,10 @@ public class PlayerWeaponAbility : PlayerAbility
     private float lastMeleeAttackTime = -999f;
     private float lastWeaponSwapTime = -999f;
     private bool comboQueuedThisStep;
+    // 피격 경직과 겹친 기본 공격을 경직이 끝난 첫 행동 가능 프레임에 1타부터 내보내기 위한 표시(HoldAttackThroughHit).
+    // restartAfterHit: 판정이 켜지기 전에 끊긴 첫 타격(효과 없음)을 다시 시작할지. currentHitboxOpened: 이번 타격의 판정이 한 번이라도 켜졌는지.
+    private bool restartAfterHit;
+    private bool currentHitboxOpened;
 
     //Gear
     private enum GearState
@@ -134,7 +138,11 @@ public class PlayerWeaponAbility : PlayerAbility
     private void TryAttack()
     {
         if (!CanDo())
+        {
+            HoldAttackThroughHit();
             return;
+        }
+        restartAfterHit = false;
 
         // Gear 상태에서는 Normal 입력을 기본공격 버퍼로 남기면 안 된다.
         if (gearState != GearState.Inactive)
@@ -165,6 +173,49 @@ public class PlayerWeaponAbility : PlayerAbility
             StartSecondaryWeapon();
         }
     }
+    // 피격 경직(0.3초) 동안은 행동할 수 없는데 입력 버퍼(0.15초)가 그보다 먼저 만료되어, 피격 직후에 누른 공격은 버려지고
+    // 경직 끝 무렵에 누른 공격만 나갔다. 같은 조작에도 1타가 나가거나 안 나가는 원인이었다. 경직 동안 입력을 붙잡아 두고,
+    // 판정 전에 피격으로 끊긴 첫 타격도 다시 맡겨, 경직이 끝난 첫 행동 가능 프레임에 1타부터 시작한다(피격이 공격을 끊는 규칙은 그대로).
+    private void HoldAttackThroughHit()
+    {
+        if (manager.StateMachine.CurrentState != PlayerState.Hit)
+        {
+            restartAfterHit = false;
+            return;
+        }
+
+        if (restartAfterHit)
+        {
+            restartAfterHit = false;
+            normalWeaponBuffer.RegisterInput();
+        }
+        normalWeaponBuffer.Hold();
+    }
+
+    // 끊긴 공격이 아직 아무 효과도 내지 않은 기본 무기의 첫 타격인지. 게이지를 쓰는 무기는 두 번 차감되지 않게 제외한다.
+    private bool IsUnresolvedFirstStrike()
+    {
+        if (normalWeapon == null || selectedWeapon != normalWeapon || normalWeapon.skillGauge > 0f)
+            return false;
+        if (selectedWeapon is MeleeWeaponSO && meleeComboIndex != 0)
+            return false;
+        if (abilityState == AbilityState.Windup)
+            return true;
+        // 근접 무기는 실행 Clip이 판정을 켜므로, 실행 단계여도 판정이 켜지기 전이면 효과가 없었다.
+        return abilityState == AbilityState.Execute && selectedWeapon is MeleeWeaponSO && !currentHitboxOpened && !IsCurrentHitboxOpen();
+    }
+
+    // 지금 타격의 판정 Collider가 켜져 있는지(실행 Clip의 m_IsActive 곡선이 켠다). StartExecute와 같은 판정 묶음을 본다.
+    private bool IsCurrentHitboxOpen()
+    {
+        if (selectedWeapon is not MeleeWeaponSO melee)
+            return false;
+        var boxes = melee.weaponName == hammerWeaponName ? hammerHitBoxes : hammerSkillBoxes;
+        if (boxes == null || meleeComboIndex < 0 || meleeComboIndex >= boxes.Length || boxes[meleeComboIndex] == null)
+            return false;
+        return boxes[meleeComboIndex].gameObject.activeInHierarchy;
+    }
+
     private void TryQueueComboInput()
     {
         if (comboQueuedThisStep) // 이미 예약됐으면 금지
@@ -325,6 +376,8 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (abilityState != AbilityState.None)
         {
+            if (abilityState == AbilityState.Execute && !currentHitboxOpened && IsCurrentHitboxOpen())
+                currentHitboxOpened = true;
             TryQueueComboInput();
             timer -= Time.deltaTime;
 
@@ -834,6 +887,7 @@ public class PlayerWeaponAbility : PlayerAbility
         grabCleanup?.Invoke(); grabCleanup = null;
         StopAllCoroutines();
         normalWeaponBuffer.Reset(); secondaryWeaponBuffer.Reset();
+        restartAfterHit = false;
     }
     public override void Interrupt()
     {
@@ -842,6 +896,9 @@ public class PlayerWeaponAbility : PlayerAbility
             CancelGear();
             return;
         }
+
+        // 판정 전에 끊긴 첫 타격인지 먼저 기록한다. 피격으로 끊긴 경우에만 경직 뒤 다시 시작한다(HoldAttackThroughHit).
+        restartAfterHit = IsUnresolvedFirstStrike();
 
         controller.PlayerCounterState.EndCounter();
 
@@ -870,6 +927,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
         abilityState = AbilityState.Windup;
         comboQueuedThisStep = false;
+        currentHitboxOpened = false;
 
         if (selectedWeapon is MeleeWeaponSO melee)
         {

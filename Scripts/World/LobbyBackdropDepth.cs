@@ -36,6 +36,7 @@ public class LobbyBackdropDepth : MonoBehaviour
         public RenderTexture Blurred;
         public Transform[] Objects;
         public int[] OriginalLayers;
+        public bool VolumeScripted;
     }
 
     private BandResources[] resources;
@@ -88,7 +89,9 @@ public class LobbyBackdropDepth : MonoBehaviour
             resource.Camera.depth = mainCamera.depth - bands.Length + i - 1;
             resource.Camera.clearFlags = CameraClearFlags.SolidColor;
             resource.Camera.backgroundColor = Color.clear;
-            resource.Camera.allowHDR = true;
+            // 대상 RT가 있는 카메라는 RT 형식(ARGBHalf)이 그대로 카메라 색 형식이 되므로 HDR을 꺼도 1을 넘는 발광 값이 잘리지 않는다.
+            // HDR이 켜져 있으면 URP 2D가 같은 형식의 중간 색·깊이 버퍼를 따로 만들어 그린 뒤 RT로 복사(최종 Blit)만 하므로, 꺼서 그 버퍼와 복사를 없앤다.
+            resource.Camera.allowHDR = false;
             resource.Camera.allowMSAA = false;
             resource.Camera.useOcclusionCulling = false;
 
@@ -129,7 +132,22 @@ public class LobbyBackdropDepth : MonoBehaviour
             return;
         }
         foreach (var resource in resources)
-            if (resource != null && resource.Camera == camera) Synchronize(resource);
+            if (resource != null && resource.Camera == camera)
+            {
+                UseScriptedVolumeUpdate(resource);
+                Synchronize(resource);
+            }
+    }
+
+    // 밴드 카메라는 후처리를 끄고 Volume 마스크를 0으로 두어 늘 기본 Volume 값만 받는다.
+    // 카메라 설정이 '파이프라인 설정 사용'이면 URP 에셋의 EveryFrame을 따라 밴드마다 매 프레임 VolumeManager.Update를 다시 돌리므로,
+    // ViaScripting으로 바꿔 처음 한 번 만든 카메라 전용 스택을 재사용한다. 받는 값이 같아 화면 결과는 같다.
+    // OnEnable 시점에는 VolumeManager가 아직 초기화되지 않았을 수 있고(이때 URP가 오류 로그를 남김), 렌더 시작 콜백에서는 초기화가 끝나 있으므로 여기서 한 번만 바꾼다.
+    private static void UseScriptedVolumeUpdate(BandResources resource)
+    {
+        if (resource.VolumeScripted) return;
+        resource.Camera.SetVolumeFrameworkUpdateMode(VolumeFrameworkUpdateMode.ViaScripting);
+        resource.VolumeScripted = true;
     }
 
     private void Synchronize(BandResources resource)

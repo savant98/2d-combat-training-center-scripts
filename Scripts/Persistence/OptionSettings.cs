@@ -15,7 +15,8 @@ public class OptionSettings
     public uint refreshNumerator;
     public uint refreshDenominator;
     public bool vSync;
-    public int frameRate = 144;
+    // 새 설정의 기본 프레임 제한(2026-11-15 144 → 240). 이미 저장된 설정 값은 그대로 쓴다.
+    public int frameRate = 240;
     public float masterVolume = 1f;
     public float bgmVolume = 0.17782794f; // 기존 -15 dB 유지
     public float sfxVolume = 1f;
@@ -34,7 +35,7 @@ public class OptionSettings
         if (refreshDenominator == 0 || refreshNumerator / (double)refreshDenominator > 1000)
             refreshNumerator = refreshDenominator = 0;
         if (width < 640 || height < 360 || width > 16384 || height > 16384) width = height = 0;
-        if (frameRate != -1 && frameRate != 60 && frameRate != 120 && frameRate != 144 && frameRate != 165 && frameRate != 240) frameRate = 144;
+        if (frameRate != -1 && frameRate != 60 && frameRate != 120 && frameRate != 144 && frameRate != 165 && frameRate != 240) frameRate = 240;
         masterVolume = Finite01(masterVolume, 1f);
         bgmVolume = Finite01(bgmVolume, 0.17782794f);
         sfxVolume = Finite01(sfxVolume, 1f);

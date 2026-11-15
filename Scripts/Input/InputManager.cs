@@ -169,10 +169,11 @@ public class InputManager : MonoBehaviour
         UpdateButton(menuConfirm);
         UpdateButton(menuCancel);
         // Pressed/Released는 한 프레임만 유지
-        var keys = new List<Button>(buttonDatas.Keys);
-        foreach (var key in keys)
+        // 매 프레임 키 목록(List)을 새로 만들던 것을 값 직접 순회로 바꿔 할당을 없앤다.
+        // UpdateButton은 ButtonData의 필드만 바꾸고 Dictionary에 넣거나 빼지 않으므로 순회 중 수정 예외가 없고, 순서도 키 목록과 같다.
+        foreach (var data in buttonDatas.Values)
         {
-            UpdateButton(buttonDatas[key]);
+            UpdateButton(data);
         }
     }
     private void UpdateButton(ButtonData button)

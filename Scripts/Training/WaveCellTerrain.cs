@@ -49,6 +49,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private readonly List<WaveMapCell[]> eventAdded = new();
     private readonly Dictionary<WaveMapCell, int> generations = new();
     private readonly Dictionary<WaveMapCell, (float time, int token)> expiry = new();
+    // FixedUpdate가 이번 틱에 수명이 끝난 칸을 모으는 재사용 목록(매 틱 LINQ Where().ToArray() 할당 제거).
+    private readonly List<KeyValuePair<WaveMapCell, (float time, int token)>> expiredRows = new();
     private readonly Dictionary<WaveMapCell, int> removing = new();
     // 추격 분쇄기(ChasingGrinder)가 삼킨 생성 발판. 충돌과 덩어리 외곽선에서는 빠졌고, 값이 true면 그림이 아직 켜져 있다(분쇄 날 사이로 보이는 동안).
     private readonly Dictionary<WaveMapCell, bool> ground = new();
@@ -1488,12 +1490,18 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (expiry.Count == 0) return;
         // 같은 틱에 수명이 끝난 칸은 한 묶음으로 없앤다(패널 연출의 구동음·외곽선 갱신을 칸마다 반복하지 않는다).
         List<WaveMapCell> expired = null;
-        foreach (var row in expiry.Where(e => e.Value.time <= Time.time).ToArray())
+        // 예전 expiry.Where(...).ToArray()와 같은 조건·같은 순서(Dictionary 순회 순서)로 먼저 모은 뒤 지운다.
+        // 순회 중에 Dictionary를 바꾸지 않도록 따로 모으는 것은 같고, 모을 곳만 재사용 목록으로 바꿔 매 틱 할당을 없앴다.
+        expiredRows.Clear();
+        foreach (var row in expiry)
+            if (row.Value.time <= Time.time) expiredRows.Add(row);
+        foreach (var row in expiredRows)
         {
             expiry.Remove(row.Key);
             if (active.Contains(row.Key) && generations.TryGetValue(row.Key, out var token) && token == row.Value.token)
                 (expired ??= new List<WaveMapCell>()).Add(row.Key);
         }
+        expiredRows.Clear();
         if (expired != null) StartCoroutine(Animate(expired.ToArray(), false, .55f));
     }
     private int GroupOf(Transform anchor) => anchor != null ? Array.IndexOf(groupAnchors, anchor) + 1 : 0;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class EnemyController : CharacterController2D
@@ -23,6 +24,10 @@ public class EnemyController : CharacterController2D
     private bool weaponKnockbackEnabled = true;
     public bool CanReceiveWeaponKnockback => weaponKnockbackEnabled && !(enemyHealth is TrainingDummyHealth);
     private AnimatorOverrideController animatorOverride;
+    // 패턴 Animation 교체용 캐시. Attack0_Windup·Execute·Recover 원본 Clip을 처음 교체할 때 한 번만 이름으로 찾아 둔다.
+    private AnimationClip[] attackOriginals;
+    // ApplyOverrides에 넘길 (원본, 새 Clip) 3쌍. 매번 비우고 다시 채워 할당하지 않는다.
+    private readonly List<KeyValuePair<AnimationClip, AnimationClip>> attackOverrides = new(3);
     private bool canTouchDamage = true;
     private EnemyShieldSystem shieldSystem;
     private EnemySpawnController spawnController;
@@ -105,9 +110,38 @@ public class EnemyController : CharacterController2D
     }
     public void ApplyAttackAnimation(AnimationSetSO set)
     {
-        animatorOverride["Attack0_Windup"] = set.windup;
-        animatorOverride["Attack0_Execute"] = set.execute;
-        animatorOverride["Attack0_Recover"] = set.recover;
+        // 예전에는 인덱서(이름)로 3번 넣어 넣을 때마다 다시 바인딩(3회, 비용은 Transform 수에 비례)했다.
+        // 같은 원본 Clip에 같은 순서·같은 Clip을 ApplyOverrides로 한 번에 넣어 다시 바인딩을 1회로 줄인다(최종 Override 결과는 같다).
+        // 같은 Clip이어도 건너뛰지 않고 늘 다시 바인딩한다. 예전 세 번의 바인딩 사이에는 Animator 평가가 없었으므로
+        // 패턴 시작 순간의 자세를 기본값으로 잡는 결과도 예전과 같다.
+        if (attackOriginals == null)
+            attackOriginals = FindAttackOriginals();
+        attackOverrides.Clear();
+        AddAttackOverride(attackOriginals[0], set.windup);
+        AddAttackOverride(attackOriginals[1], set.execute);
+        AddAttackOverride(attackOriginals[2], set.recover);
+        // 이름이 맞는 원본이 없으면 인덱서도 바꾸지 않았으므로, 넣을 것이 없을 때는 다시 바인딩하지 않는다.
+        if (attackOverrides.Count > 0)
+            animatorOverride.ApplyOverrides(attackOverrides);
+    }
+    private AnimationClip[] FindAttackOriginals()
+    {
+        var clips = new List<KeyValuePair<AnimationClip, AnimationClip>>();
+        animatorOverride.GetOverrides(clips);
+        return new[] { FindOriginalClip(clips, "Attack0_Windup"), FindOriginalClip(clips, "Attack0_Execute"), FindOriginalClip(clips, "Attack0_Recover") };
+    }
+    // 인덱서가 이름으로 찾던 원본 Clip(EnemyBase.controller 안에서 원본 이름은 겹치지 않는다).
+    private static AnimationClip FindOriginalClip(List<KeyValuePair<AnimationClip, AnimationClip>> clips, string name)
+    {
+        foreach (var pair in clips)
+            if (pair.Key != null && pair.Key.name == name)
+                return pair.Key;
+        return null;
+    }
+    private void AddAttackOverride(AnimationClip original, AnimationClip clip)
+    {
+        if (original != null)
+            attackOverrides.Add(new KeyValuePair<AnimationClip, AnimationClip>(original, clip));
     }
     public void RequestTouchDamage(PlayerHealth player, float dmg)
     {

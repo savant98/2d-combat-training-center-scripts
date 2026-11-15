@@ -14,6 +14,12 @@ public class LobbyCableScroll : MonoBehaviour
     private readonly List<Material> scrollingMaterials = new List<Material>();
     private float scrollOffset;
 
+    /// <summary>
+    /// true인 동안 흐름을 멈추고 지금 오프셋을 그대로 둔다. false로 돌리면 그 자리에서 이어 흐른다(실행 중 Material은 그대로 유지).
+    /// 반복 배경(WaveRoomBackdrop)이 화면에서 먼 모듈의 매 프레임 갱신을 줄일 때 쓴다. enabled를 끄면 Material을 해제·재생성하므로 쓰지 않는다.
+    /// </summary>
+    public bool Paused { get; set; }
+
     private void OnEnable()
     {
         if (!Application.isPlaying || lineRenderers == null) return;
@@ -48,7 +54,7 @@ public class LobbyCableScroll : MonoBehaviour
 
     private void Update()
     {
-        if (scrollingMaterials.Count == 0) return;
+        if (Paused || scrollingMaterials.Count == 0) return;
         scrollOffset = Mathf.Repeat(scrollOffset + scrollSpeed * Time.deltaTime, 1f);
         ApplyOffset();
     }

@@ -17,6 +17,17 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         public bool shown;
         public Layer layer;
         public Vector2Int cell;
+        // 화면에서 멀 때 멈추는 대상. 이 모듈에서 실제로 켜 둔 것만 담는다(FarStructure처럼 처음부터 끈 것은 null).
+        public Animator animator;
+        public AnimatorCullingMode cullingMode;
+        public TrainingFabricationFlow flow;
+        public LobbyCableScroll scroll;
+        // false면 화면에서 멀어 Animator·제작 흐름·케이블 흐름을 멈춰 둔 상태다.
+        public bool awake = true;
+        // 마지막으로 켠 프레임. Renderer 범위는 켠 다음 프레임부터 잰다.
+        public int shownFrame;
+        // 이 모듈로 Renderer 범위를 재 보았는지(그릴 것이 없어 실패했어도 다시 재지 않는다).
+        public bool footprintTried;
     }
     private sealed class Layer
     {
@@ -32,6 +43,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         public readonly HashSet<Vector2Int> wanted = new();
         // 필요하지만 아직 켜지 않은 모듈 수.
         public int pending;
+        // 모듈 Renderer가 차지하는 범위(depth 원점 기준, 이 컴포넌트의 로컬 좌표). [0]은 cell.y == 0 모듈, [1]은 외곽판을 끈 그 밖의 모듈. 재기 전에는 null이다.
+        public readonly Rect?[] footprints = new Rect?[2];
     }
     private readonly List<Layer> layers = new();
     private Transform art;
@@ -51,9 +64,15 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
     public int ModuleCount => 1 + layers.Sum(l => l.modules.Values.Count(m => m.shown));
     // 원본 + 지금까지 만들어 둔 반복 모듈 수(꺼 둔 것 포함).
     public int CachedModuleCount => 1 + layers.Sum(l => l.modules.Count);
+    // 켜 둔 반복 모듈 중 화면 근처라 Animator·제작 흐름·케이블 흐름이 도는 모듈 수(나머지는 화면에서 멀어 멈춰 둔 것, 검증용).
+    public int AwakeModuleCount => layers.Sum(l => l.modules.Values.Count(m => m.shown && m.awake));
     // 필요 없어진 모듈은 한꺼번에 끄지 않고 프레임마다 조금씩 끈다.
     private readonly Queue<Module> retiring = new();
     private const int ShowPerFrame = 3, RetirePerFrame = 4;
+    // 화면 밖 모듈을 가릴 때 잰 Renderer 범위에 더하는 여유(칸). MeasureViewport가 이미 1칸을 더하므로 화면 가장자리에서 5칸 이상 떨어져야 먼 것으로 본다.
+    // 정지 자세로 잰 범위 밖으로 나가는 움직임(제작 흐름 크레인이 제품을 depth 기준 y -6까지 내리는 것 등 약 2칸)보다 넉넉하게 잡는다.
+    private const float WakeMargin = 4f;
+    private static readonly List<Renderer> footprintRenderers = new();
 
     public void Configure(Transform content) => Configure(content, sourceBounds);
     public void Configure(Transform content, Rect originalBounds)
@@ -138,8 +157,15 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
             var scroll = copy.GetComponent<LobbyCableScroll>();
             if (scroll != null) scroll.enabled = false;
         }
-        if (shown) copy.gameObject.SetActive(true);
-        return new Module { root = copy, depth = depth, shown = shown, layer = layer, cell = cell };
+        var module = new Module { root = copy, depth = depth, shown = shown, layer = layer, cell = cell };
+        // 화면에서 멀 때 멈출 대상은 이 모듈에서 실제로 도는 것만 기억한다(위에서 끈 것은 건드리지 않는다).
+        var ambient = copy.GetComponent<Animator>();
+        if (ambient != null && ambient.enabled) { module.animator = ambient; module.cullingMode = ambient.cullingMode; }
+        if (flow != null && flow.enabled) module.flow = flow;
+        var cables = copy.GetComponent<LobbyCableScroll>();
+        if (cables != null && cables.enabled) module.scroll = cables;
+        if (shown) { module.shownFrame = Time.frameCount; copy.gameObject.SetActive(true); }
+        return module;
     }
     // 이 공간에서 카메라가 양 끝에 갔을 때 화면에 걸리는 모듈 번호를 모은다.
     private void CollectWanted(Layer layer, Rect bounds, HashSet<Vector2Int> wanted)
@@ -272,8 +298,11 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
                 }
                 else
                 {
+                    // 멈춰 둔 채 꺼졌던 모듈은 켜기 전에 깨운다. 켜지는 프레임부터 지금처럼 원래 Culling 설정의 Animator와 제작 흐름이 돈다.
+                    SetAwake(module, true);
                     module.root.gameObject.SetActive(true);
                     module.shown = true;
+                    module.shownFrame = Time.frameCount;
                 }
                 module.root.localPosition = origin + new Vector3(cell.x * layer.repeat.x, cell.y * layer.repeat.y);
                 module.depth.localPosition = layer.home + (Vector3)Follow(layer, delta);
@@ -296,6 +325,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
     public void SetBackgroundVisible(bool value)
     {
         visible = value;
+        // 다시 켜질 때 지금과 같은 상태로 시작하도록, 켜고 끄기 전에 멈춰 둔 모듈을 모두 깨운다.
+        WakeAll();
         if (art != null) art.gameObject.SetActive(visible);
         foreach (var layer in layers) layer.root.gameObject.SetActive(visible);
     }
@@ -311,6 +342,7 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
             limit.y * (float)System.Math.Tanh(delta.y * rest / limit.y));
     }
     private Vector2 Follow(Layer layer, Vector2 delta) => delta - Residual(layer, delta);
+    private static Vector2 Follow(Layer layer, Vector2 delta, Vector2 extent) => delta - Residual(layer, delta, extent);
 
     private void LateUpdate()
     {
@@ -322,13 +354,107 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         if (view == null) return;
         var required = MeasureViewport();
         if (hasBounds && (required.x > viewportExtent.x + .25f || required.y > viewportExtent.y + .25f)) Resize(currentBounds);
-        Vector3 delta = transform.InverseTransformPoint(view.transform.position) - origin;
+        // 화면 범위는 Resize 뒤에 프레임마다 한 번만 잰다(같은 프레임에는 카메라가 그대로라 층·모듈마다 다시 잰 값과 같다).
+        Vector2 extent = MeasureViewport();
+        Vector3 viewPoint = transform.InverseTransformPoint(view.transform.position);
+        Vector3 delta = viewPoint - origin;
         delta.z = 0;
+        bool measured = false;
         foreach (var layer in layers)
         {
-            layer.original.localPosition = layer.home + (Vector3)Follow(layer, delta);
-            foreach (var module in layer.modules.Values) if (module.shown) module.depth.localPosition = layer.home + (Vector3)Follow(layer, delta);
+            // 한 층의 원본과 반복 모듈은 모두 같은 시차 위치를 쓰므로 층마다 한 번만 구한다.
+            Vector3 depth = layer.home + (Vector3)Follow(layer, delta, extent);
+            SetLocalPosition(layer.original, depth);
+            foreach (var module in layer.modules.Values)
+            {
+                if (!module.shown) continue;
+                // 올바른 위치가 화면(+여유) 근처인 모듈만 움직임을 유지한다. 깨어 있는 모듈은 1칸 더 멀어져야 멈춘다(경계에서 매 프레임 바뀌지 않게).
+                bool near = IsNear(module, depth, viewPoint, extent, module.awake ? WakeMargin + 1f : WakeMargin);
+                // 위치는 올바른 자리나 지금 놓인 자리 중 하나라도 화면 근처면 이번 프레임 값으로 맞춘다. 둘 다 멀면 화면에 보이지 않으므로 이전 자리에 둔다.
+                // (시차 층은 카메라를 따라오지만 맞추지 않은 모듈은 제자리에 있으므로, 카메라가 다가가면 지금 놓인 자리가 먼저 화면에 들어올 수 있다.)
+                Vector3 current = module.depth.localPosition;
+                if ((near || IsNear(module, current, viewPoint, extent, WakeMargin))
+                    && (current.x != depth.x || current.y != depth.y || current.z != depth.z))
+                    module.depth.localPosition = depth;
+                SetAwake(module, near);
+                // 범위를 아직 모르는 종류는 켜진 모듈 하나로 잰다(한 프레임에 하나만).
+                if (!measured && !module.footprintTried && !layer.footprints[Kind(module)].HasValue
+                    && Time.frameCount > module.shownFrame && module.root.gameObject.activeInHierarchy)
+                {
+                    MeasureFootprint(module);
+                    measured = true;
+                }
+            }
         }
     }
+    // 같은 값이면 쓰지 않는다. Transform setter는 같은 값이어도 하위 Renderer 수백 개를 변경된 것으로 처리한다.
+    private static void SetLocalPosition(Transform target, Vector3 value)
+    {
+        Vector3 current = target.localPosition;
+        if (current.x != value.x || current.y != value.y || current.z != value.z) target.localPosition = value;
+    }
+    private static int Kind(Module module) => module.cell.y == 0 ? 0 : 1;
+    // depth를 localPosition에 두었을 때 depth 원점의 이 컴포넌트 로컬 좌표(layer.root는 이 컴포넌트 원점에 그대로 있다).
+    private static Vector2 DepthAnchor(Module module, Vector3 localPosition)
+    {
+        var root = module.root;
+        return root.localPosition + root.localRotation * Vector3.Scale(root.localScale, localPosition);
+    }
+    // 모듈 Renderer 범위 + margin이 화면 범위(MeasureViewport, 1칸 여유 포함)와 겹치면 true.
+    // 범위를 아직 재지 못한 종류의 모듈은 늘 true로 두어 지금과 똑같이 위치를 맞추고 움직이게 한다.
+    private static bool IsNear(Module module, Vector3 depthPosition, Vector3 viewPoint, Vector2 extent, float margin)
+    {
+        var footprint = module.layer.footprints[Kind(module)];
+        if (!footprint.HasValue) return true;
+        Vector2 anchor = DepthAnchor(module, depthPosition);
+        Rect area = footprint.Value;
+        return anchor.x + area.xMax + margin > viewPoint.x - extent.x && anchor.x + area.xMin - margin < viewPoint.x + extent.x
+            && anchor.y + area.yMax + margin > viewPoint.y - extent.y && anchor.y + area.yMin - margin < viewPoint.y + extent.y;
+    }
+    // 켜진 모듈 하나의 Renderer 범위를 depth 원점 기준으로 재 같은 종류(층, 외곽판 유무)의 모듈 전체에 쓴다.
+    // 반복 모듈은 모두 같은 template의 복제이고 종류마다 같은 개체를 끄므로 구성이 같다. 꺼져 있던 제품·레이저와 움직이는 부품은 WakeMargin이 덮는다.
+    private void MeasureFootprint(Module module)
+    {
+        module.footprintTried = true;
+        module.depth.GetComponentsInChildren(false, footprintRenderers);
+        Matrix4x4 toLocal = transform.worldToLocalMatrix;
+        Vector2 anchor = DepthAnchor(module, module.depth.localPosition);
+        Vector2 min = new Vector2(float.PositiveInfinity, float.PositiveInfinity), max = -min;
+        foreach (var item in footprintRenderers)
+        {
+            if (!item.enabled) continue;
+            Bounds bounds = item.bounds;
+            // 아직 그린 것이 없는 Renderer(입자 등)는 범위가 비어 있으므로 개체 위치로 대신한다.
+            if (bounds.size == Vector3.zero) bounds = new Bounds(item.transform.position, Vector3.zero);
+            Vector3 low = bounds.min, high = bounds.max;
+            for (int i = 0; i < 4; i++)
+            {
+                Vector2 point = toLocal.MultiplyPoint3x4(new Vector3((i & 1) == 0 ? low.x : high.x, (i & 2) == 0 ? low.y : high.y, bounds.center.z));
+                min = Vector2.Min(min, point);
+                max = Vector2.Max(max, point);
+            }
+        }
+        footprintRenderers.Clear();
+        if (min.x > max.x) return;
+        module.layer.footprints[Kind(module)] = Rect.MinMaxRect(min.x - anchor.x, min.y - anchor.y, max.x - anchor.x, max.y - anchor.y);
+    }
+    // 화면에서 먼 모듈의 Animator·제작 흐름·케이블 흐름을 멈추고, 가까워지면 멈춘 자리에서 이어 간다(처음부터 다시 시작하지 않아 튀지 않는다).
+    // Animator Clip(TrainingBackdrop_Ambient_Loop)은 이벤트·전이·파라미터가 없는 8초 반복이라 멈췄다 이어 가도 놓치는 것이 없다.
+    // CullCompletely는 Unity가 Renderer가 보인다고 판단하면 그대로 돌리므로, 먼 동안에도 보이는 경우에는 멈추지 않는다.
+    private static void SetAwake(Module module, bool awake)
+    {
+        if (module.awake == awake) return;
+        module.awake = awake;
+        if (module.animator != null) module.animator.cullingMode = awake ? module.cullingMode : AnimatorCullingMode.CullCompletely;
+        if (module.flow != null) module.flow.Paused = !awake;
+        if (module.scroll != null) module.scroll.Paused = !awake;
+    }
+    private void WakeAll()
+    {
+        foreach (var layer in layers)
+            foreach (var module in layer.modules.Values) SetAwake(module, true);
+    }
+    // 방이 꺼졌다 다시 켜질 때도 원래 설정으로 시작하도록 깨워 둔다.
+    private void OnDisable() => WakeAll();
     private void OnDestroy() { foreach (var mesh in meshes) if (mesh != null) Destroy(mesh); }
 }

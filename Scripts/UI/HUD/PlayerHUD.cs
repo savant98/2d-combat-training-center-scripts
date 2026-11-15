@@ -26,6 +26,9 @@ public class PlayerHUD : MonoBehaviour
         // 기어 슬롯 톱니의 단계 색 재질(PlayerGearUI의 색을 받아 실행 중에 만든다). 없으면 공용 재질을 쓴다.
         [System.NonSerialized] public Material readyMaterial;
         [System.NonSerialized] public Material preparingMaterial;
+
+        // 쿨다운 글자에 마지막으로 넣은 표시 키(0 = 아직 없음). 표시 문자열이 바뀔 때만 text를 다시 넣으려고 둔다.
+        [System.NonSerialized] public int shownCooldownKey;
     }
 
     // 체력 깎인 양을 잠시 남겨 보여 주는 뒤쪽 값(셰이더 _Trail)과 그 줄어드는 Tween
@@ -291,9 +294,11 @@ public class PlayerHUD : MonoBehaviour
         if (slot.cooldownText != null)
         {
             slot.cooldownText.gameObject.SetActive(coolingDown);
-            slot.cooldownText.text = remaining > 1f
-                ? Mathf.CeilToInt(remaining).ToString()
-                : remaining.ToString("0.0");
+
+            // 숨겨진 동안에는 글자가 보이지 않으므로 넣지 않는다(대기 중 매 프레임 "0.0" 문자열을 만들던 할당 제거).
+            // 다시 보일 때는 위 SetActive와 같은 호출에서 바로 맞추므로 보이는 글자는 기존과 같다.
+            if (coolingDown)
+                ApplyCooldownText(slot.cooldownText, remaining, ref slot.shownCooldownKey);
         }
 
         SetSlotCooldownReady(slot, !coolingDown);
@@ -312,9 +317,47 @@ public class PlayerHUD : MonoBehaviour
         if (slot.cooldownText != null)
         {
             slot.cooldownText.text = "";
+            slot.shownCooldownKey = 0;
             slot.cooldownText.gameObject.SetActive(false);
         }
     }
+    // 쿨다운 남은 시간 글자를 넣는다. 표시 규칙은 기존 식과 같다(1초 초과는 올림 정수, 1초 이하는 ToString("0.0")).
+    // 표시 키(1초 초과 = 올림 정수, 1초 이하 = -(0.1초 단위 + 1))가 바뀔 때만 문자열을 만들어 넣어 매 프레임 할당과 비교를 없앤다.
+    // PlayerGearUI의 단계 무기 쿨다운 글자도 이 함수를 같이 써서 규칙을 한 곳에 둔다.
+    internal static void ApplyCooldownText(TMP_Text text, float remaining, ref int shownKey)
+    {
+        if (remaining > 1f)
+        {
+            int seconds = Mathf.CeilToInt(remaining);
+            if (seconds == shownKey)
+                return;
+
+            shownKey = seconds;
+            text.text = seconds.ToString();
+            return;
+        }
+
+        // 0.1초 반올림 경계(x.x5) 바로 근처는 반올림 결과가 구현에 따라 갈릴 수 있으므로 기존 식을 그대로 써서 같은 문자열을 보장한다.
+        float scaled = remaining * 10f;
+        float whole = Mathf.Floor(scaled);
+        float fraction = scaled - whole;
+        if (Mathf.Abs(fraction - 0.5f) < 0.01f)
+        {
+            shownKey = 0;
+            text.text = remaining.ToString("0.0");
+            return;
+        }
+
+        // 경계에서 떨어진 값은 가장 가까운 0.1초로 반올림된다. 그 0.1초 값(tenths / 10f)을 같은 형식으로 만들면 같은 문자열이 나온다.
+        int tenths = (int)whole + (fraction > 0.5f ? 1 : 0);
+        int key = -1 - tenths;
+        if (key == shownKey)
+            return;
+
+        shownKey = key;
+        text.text = (tenths / 10f).ToString("0.0");
+    }
+
     public void SwapWeaponSetImage(WeaponSet weaponSet, float value, bool animate = false)
     {
         if (weaponSwapAnimator != null)

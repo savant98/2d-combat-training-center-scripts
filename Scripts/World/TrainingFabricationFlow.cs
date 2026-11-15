@@ -66,6 +66,12 @@ public sealed class TrainingFabricationFlow : MonoBehaviour
     private float scanEnd;
     private float beltDuration;
 
+    /// <summary>
+    /// true인 동안 연출을 진행하지 않고 지금 자세와 진행 시간을 그대로 둔다. false로 돌리면 멈춘 자리에서 이어 간다.
+    /// 반복 배경(WaveRoomBackdrop)이 화면에서 먼 모듈을 멈출 때 쓴다. enabled를 끄면 OnDisable/OnEnable이 제품을 숨기고 처음부터 다시 시작하므로 쓰지 않는다.
+    /// </summary>
+    public bool Paused { get; set; }
+
     private void OnEnable()
     {
         if (depthLayer == null || conveyor == null || crane == null || cranePivot == null ||
@@ -142,7 +148,7 @@ public sealed class TrainingFabricationFlow : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (active == null) return;
+        if (active == null || Paused) return;
         elapsed += Time.deltaTime;
         float prepareEnd = Mathf.Max(.01f, preparationDuration);
         float revealEnd = prepareEnd + Mathf.Max(.01f, revealDuration);

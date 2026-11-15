@@ -142,6 +142,9 @@ public class PlayerGearUI : MonoBehaviour
     private bool stageWeaponReady;
     private bool hasStageWeaponReadyState;
 
+    // 단계 무기 쿨다운 글자에 마지막으로 넣은 표시 키(0 = 아직 없음). PlayerHUD.ApplyCooldownText가 갱신한다.
+    private int shownStageCooldownKey;
+
     private Vector2 smallGearStartPos;
     private Vector2 smallGearEndPos;
 
@@ -233,9 +236,10 @@ public class PlayerGearUI : MonoBehaviour
         if (stageWeaponCooldownText != null)
         {
             stageWeaponCooldownText.gameObject.SetActive(coolingDown);
-            stageWeaponCooldownText.text = remaining > 1f
-                ? Mathf.CeilToInt(remaining).ToString()
-                : remaining.ToString("0.0");
+
+            // 숨겨진 동안에는 넣지 않고, 표시 문자열이 바뀔 때만 넣는다(PlayerHUD 슬롯과 같은 규칙, 매 프레임 문자열 할당 제거).
+            if (coolingDown)
+                PlayerHUD.ApplyCooldownText(stageWeaponCooldownText, remaining, ref shownStageCooldownKey);
         }
     }
     private void SetStageWeaponReadyVisual(bool ready, bool forceOff)
@@ -296,6 +300,7 @@ public class PlayerGearUI : MonoBehaviour
         if (stageWeaponCooldownText != null)
         {
             stageWeaponCooldownText.text = "";
+            shownStageCooldownKey = 0;
             stageWeaponCooldownText.gameObject.SetActive(false);
         }
     }

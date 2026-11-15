@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class PlayerController : CharacterController2D
@@ -43,6 +44,10 @@ public class PlayerController : CharacterController2D
 
     private AnimatorOverrideController animatorOverride;
     private AbilityManager abilityManager;
+    // 무장 Animation 교체용 캐시. weaponAnim 이름마다 "Player_<이름>1·2·3" 원본 Clip을 처음 한 번만 이름으로 찾아 둔다.
+    private readonly Dictionary<string, AnimationClip[]> weaponAnimOriginals = new();
+    // ApplyOverrides에 넘길 (원본, 새 Clip) 3쌍. 매번 비우고 다시 채워 할당하지 않는다.
+    private readonly List<KeyValuePair<AnimationClip, AnimationClip>> weaponAnimOverrides = new(3);
     protected override void Awake()
     {
         base.Awake();
@@ -72,9 +77,46 @@ public class PlayerController : CharacterController2D
         // Clip을 바꾸면 Animator가 다시 바인딩하면서 그 순간 자세를 Write Defaults 기본값으로 잡는다.
         // 이동·점프 Animation 도중 공격해도 몸의 위치·배율이 Idle에 남지 않도록 바꾸기 전에 기본 자세로 되돌린다.
         animator.WriteDefaultValues();
-        animatorOverride["Player_" + animName + "1"] = set.windup;
-        animatorOverride["Player_" + animName + "2"] = set.execute;
-        animatorOverride["Player_" + animName + "3"] = set.recover;
+        // 예전에는 인덱서(이름)로 3번 넣어 넣을 때마다 다시 바인딩(3회)하고 이름 문자열도 3개 만들었다.
+        // 같은 원본 Clip에 같은 순서·같은 Clip을 ApplyOverrides로 한 번에 넣어 다시 바인딩을 1회로 줄인다(최종 Override 결과는 같다).
+        // 같은 Clip이어도 건너뛰지 않고 늘 다시 바인딩한다. 예전 세 번의 바인딩 사이에는 Animator 평가가 없었으므로
+        // 위 WriteDefaultValues 직후 자세를 기본값으로 잡는 결과도 예전과 같다.
+        AnimationClip[] originals = GetWeaponAnimOriginals(animName);
+        weaponAnimOverrides.Clear();
+        AddOverride(weaponAnimOverrides, originals[0], set.windup);
+        AddOverride(weaponAnimOverrides, originals[1], set.execute);
+        AddOverride(weaponAnimOverrides, originals[2], set.recover);
+        // 이름이 맞는 원본이 없으면 인덱서도 바꾸지 않았으므로, 넣을 것이 없을 때는 다시 바인딩하지 않는다.
+        if (weaponAnimOverrides.Count > 0)
+            animatorOverride.ApplyOverrides(weaponAnimOverrides);
+    }
+    private AnimationClip[] GetWeaponAnimOriginals(string animName)
+    {
+        // 예전 문자열 연결은 null을 빈 문자열처럼 이어 붙였으므로 키도 같게 맞춘다.
+        string key = animName ?? string.Empty;
+        if (weaponAnimOriginals.TryGetValue(key, out var originals))
+            return originals;
+
+        var clips = new List<KeyValuePair<AnimationClip, AnimationClip>>();
+        animatorOverride.GetOverrides(clips);
+        originals = new AnimationClip[3];
+        for (int i = 0; i < originals.Length; i++)
+            originals[i] = FindOriginalClip(clips, "Player_" + key + (i + 1));
+        weaponAnimOriginals.Add(key, originals);
+        return originals;
+    }
+    // 인덱서가 이름으로 찾던 원본 Clip(PlayerBase.controller 안에서 원본 이름은 겹치지 않는다).
+    private static AnimationClip FindOriginalClip(List<KeyValuePair<AnimationClip, AnimationClip>> clips, string name)
+    {
+        foreach (var pair in clips)
+            if (pair.Key != null && pair.Key.name == name)
+                return pair.Key;
+        return null;
+    }
+    private static void AddOverride(List<KeyValuePair<AnimationClip, AnimationClip>> overrides, AnimationClip original, AnimationClip clip)
+    {
+        if (original != null)
+            overrides.Add(new KeyValuePair<AnimationClip, AnimationClip>(original, clip));
     }
     private void Update()
     {

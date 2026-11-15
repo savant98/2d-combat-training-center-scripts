@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 using UnityEngine.Rendering;
+using UnityEngine.Video;
 
 /// <summary>
 /// 타이틀의 시작 연출.
@@ -107,6 +108,8 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     private float visualTime;
     private UiRectState[] ownedRectStates;
     private UiGroupState[] ownedGroupStates;
+    // 방 연출 동안 숨겨지는 영상 패널에 그림을 보내다가 일시정지한 VideoPlayer(PauseHiddenVideos 참고)
+    private readonly System.Collections.Generic.List<VideoPlayer> pausedVideos = new System.Collections.Generic.List<VideoPlayer>();
 
     private struct UiRectState
     {
@@ -235,6 +238,8 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
             // 휴대폰 화면(방 안의 World Space Canvas)을 마우스로 누를 수 있도록 화면을 덮는 면의 입력을 푼다.
             if (inputBlocker != null) inputBlocker.raycastTarget = false;
             if (anyKeyPrompt != null) anyKeyPrompt.gameObject.SetActive(true);
+            // 영상 패널(WorldCanvas1~4)은 방 연출 내내 숨겨지므로 그 동안 영상 디코딩을 멈춘다(2026-11-15 성능).
+            PauseHiddenVideos();
             CurrentStage = IntroStage.WaitingForInput;
             RefreshControls();
         }
@@ -708,6 +713,9 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
 
         // 모니터로 다가가 화면이 시야를 채우면, 그 그림 그대로 실제 타이틀 화면으로 넘어간다.
         CurrentStage = IntroStage.ReturningToTitle;
+        // 멈춘 영상을 지금 다시 재생한다. 첫 영상 패널이 보이기까지 다가가는 시간(returnDuration)과 첫 점등 단계만큼
+        // 여유가 있어, 패널이 보일 때는 영상이 이미 흐르고 있다(멈추지 않았을 때와 같은 화면).
+        ResumeHiddenVideos();
         StartPrelude(0f);
         SetStatus("");
         yield return Animate(returnDuration, t => {
@@ -726,6 +734,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
 
     private IEnumerator RecoverRoutine()
     {
+        ResumeHiddenVideos();   // 영상 패널이 보이기 전에 재생을 보장한다(이미 재생 중이면 아무 일도 없다)
         CurrentStage = IntroStage.RestoringPlatform;
         SetMonochrome(false);
         RestoreScrollUnder(platformRoot);
@@ -750,6 +759,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
     {
         CurrentStage = IntroStage.RevealingTitle;
         skippable = false;
+        ResumeHiddenVideos();
         RestoreLegacyObjects();
         RestoreAllScrolling();
         titleIntro.ResumeAfterTrainingNoticeImmediately();
@@ -883,6 +893,56 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         }
     }
 
+    /// <summary>
+    /// 방 연출 동안 숨겨지는 영상 패널(WorldCanvas1~4의 RawImage)에만 그림을 보내는 VideoPlayer를 일시정지한다(2026-11-15 성능).
+    /// 패널을 꺼도 VideoPlayer는 별도 Scene 루트라 60fps 영상 4개를 계속 디코딩했다. 고지서를 읽는 동안 이 비용을 없앤다.
+    /// - Scene을 고치지 않도록 실행 중에 찾는다. 숨김 대상 아래의 RawImage가 쓰는 RenderTexture를 받는 VideoPlayer만 고른다.
+    /// - 숨기지 않는 다른 RawImage도 같은 텍스처를 쓰면 화면에 보이는 것이므로 건드리지 않는다.
+    /// - 재생 중이거나 곧 재생할(Play On Awake) 것만 멈춘다. 다시 재생할 때 원래 멈춰 있던 영상을 켜지 않기 위해서다.
+    /// - 일시정지 동안 패널은 꺼져 있으므로 화면은 달라지지 않는다.
+    /// 세이브가 있을 때(등 켜지는 연출)는 숨김이 1~3초뿐이고 재생을 이을 여유도 짧아 멈추지 않는다.
+    /// </summary>
+    private void PauseHiddenVideos()
+    {
+        ResumeHiddenVideos();
+        var hiddenTextures = new System.Collections.Generic.HashSet<Texture>();
+        var shownTextures = new System.Collections.Generic.HashSet<Texture>();
+        foreach (var image in FindObjectsByType<UnityEngine.UI.RawImage>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (image.texture == null) continue;
+            if (IsUnderHiddenObject(image.transform)) hiddenTextures.Add(image.texture);
+            else shownTextures.Add(image.texture);
+        }
+        foreach (var player in FindObjectsByType<VideoPlayer>(FindObjectsSortMode.None))
+        {
+            if (player.gameObject.scene != gameObject.scene || !player.isActiveAndEnabled
+                || player.renderMode != VideoRenderMode.RenderTexture) continue;
+            var target = player.targetTexture;
+            if (target == null || !hiddenTextures.Contains(target) || shownTextures.Contains(target)) continue;
+            if (player.isPaused || !(player.isPlaying || player.playOnAwake)) continue;
+            player.Pause();
+            pausedVideos.Add(player);
+        }
+    }
+
+    private bool IsUnderHiddenObject(Transform target)
+    {
+        foreach (var root in hiddenUntilIntroComplete)
+            if (root != null && target.IsChildOf(root.transform)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// PauseHiddenVideos로 멈춘 영상을 다시 재생한다. 패널이 다시 보이기 전(모니터로 다가가기 시작할 때) 부르고,
+    /// 점등·끝·비활성화 경로에서도 한 번 더 부른다(목록이 비었거나 이미 재생 중이면 아무 일도 없다).
+    /// </summary>
+    private void ResumeHiddenVideos()
+    {
+        foreach (var player in pausedVideos)
+            if (player != null && player.isActiveAndEnabled) player.Play();
+        pausedVideos.Clear();
+    }
+
     private void RevealLegacyObject(GameObject target)
     {
         if (target == null || legacyActive == null) return;
@@ -1004,6 +1064,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         StopLoop(ref signatureHandle, ref signaturePaused);
         StopPrelude();
         RemoveOwnInput();
+        ResumeHiddenVideos();   // 연출 도중에 꺼져 영상 패널을 되돌릴 때도 영상이 멈춘 채 남지 않게 한다
         if (stage != null) stage.End();
         SetMonochrome(false);
         if (!completed)
