@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class DownAttackAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Execute && controller.Velocity.y < -.01f;
+
     // basic
     private EnemyTeleporter teleporter;
     private MeleeHitbox hitbox;

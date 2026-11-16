@@ -13,6 +13,10 @@ public class StomperHammerVisual : MonoBehaviour
     [SerializeField] private GameObject visualPrefab;
     [SerializeField] private Transform impactPoint;
 
+    [Header("비공격 표시")]
+    [SerializeField, Range(0f, 1f)] private float visualOpacity = .35f;
+    public float VisualOpacity => visualOpacity;
+
     [Header("Animator 구동")]
     [Range(0f, 1f)] public float swingProgress;
 
@@ -201,6 +205,17 @@ public class StomperHammerVisual : MonoBehaviour
         detachedVisual.name = owner.name + "_StomperHammerVisual";
         detachedVisual.transform.SetParent(null, false);
         detachedVisual.SetActive(false);
+        // 별도 표시 개체에만 적용한다. Additive 셰이더도 흐려지도록 알파와 발광을 함께 낮춘다.
+        foreach (var sprite in detachedVisual.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            var color = sprite.color; color.a *= visualOpacity; sprite.color = color;
+            var block = new MaterialPropertyBlock(); sprite.GetPropertyBlock(block);
+            int intensity = Shader.PropertyToID("_Intensity");
+            float baseline = block.HasProperty(intensity) ? block.GetFloat(intensity)
+                : sprite.sharedMaterial != null && sprite.sharedMaterial.HasProperty(intensity)
+                    ? sprite.sharedMaterial.GetFloat(intensity) : 1f;
+            block.SetFloat(intensity, baseline * visualOpacity); sprite.SetPropertyBlock(block);
+        }
     }
 
     void ApplyPose(float angle)

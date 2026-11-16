@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class WallTeleportChargeAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Execute && executeStarted && !executeFinished && Mathf.Abs(controller.Velocity.x) > .01f;
+
     private EnemyTeleporter teleporter;
     private Transform playerTr;
 

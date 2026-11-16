@@ -18,17 +18,22 @@ public sealed partial class EnemyBalanceWindow
             EditorGUILayout.HelpBox("접촉 피해가 없는 Enemy입니다.", MessageType.None);
             return;
         }
+        var enemySettings = Serialized(entry.Prefab);
+        EditorGUILayout.PropertyField(enemySettings.FindProperty("continuousBodyDamage"), new GUIContent("상시 몸통 접촉 피해"));
+        if (enemySettings.ApplyModifiedProperties() && !editedContactPrefabs.Contains(entry.Prefab.gameObject))
+            editedContactPrefabs.Add(entry.Prefab.gameObject);
         foreach (var contact in contacts)
         {
             var settings = Serialized(contact);
             var damage = settings.FindProperty("damage");
             string path = AnimationUtility.CalculateTransformPath(contact.transform, entry.Prefab.transform);
-            string label = contact.name == "TouchDamageBox" ? "몸통 피해" : contact.name + " 접촉 피해";
-            DrawDamageValue(damage, new GUIContent(label, path));
+            string label = contact.IsBodyContact ? "상시 몸통 피해" : contact.name + " 무기 접촉 피해";
+            using (new EditorGUI.DisabledScope(contact.IsBodyContact && !entry.Prefab.ContinuousBodyDamage))
+                DrawDamageValue(damage, new GUIContent(label, path));
             if (settings.ApplyModifiedProperties() && !editedContactPrefabs.Contains(entry.Prefab.gameObject))
                 editedContactPrefabs.Add(entry.Prefab.gameObject);
         }
-        EditorGUILayout.LabelField("Prefab 기본값입니다. 실행 중 패턴의 접촉 피해를 별도로 지정하면 그 값이 우선합니다.", EditorStyles.wordWrappedMiniLabel);
+        EditorGUILayout.LabelField("상시 몸통 피해는 Swarmer·Bulwark만 사용합니다. 다른 적의 몸통 공격은 패턴별 몸통 공격 피해에서 설정합니다.", EditorStyles.wordWrappedMiniLabel);
     }
 
     private void SaveContactPrefabs()
@@ -85,13 +90,16 @@ public sealed partial class EnemyBalanceWindow
         EditorGUILayout.Space(6);
         EditorGUILayout.LabelField("패턴 피해 설정", EditorStyles.boldLabel);
         var settings = Serialized(data);
-        EditorGUILayout.PropertyField(settings.FindProperty("overrideContactDamage"), new GUIContent("패턴 접촉 피해 별도 지정"));
+        EditorGUILayout.PropertyField(settings.FindProperty("bodyAttackEnabled"), new GUIContent("몸통 공격 사용"));
+        if (settings.FindProperty("bodyAttackEnabled").boolValue)
+            DrawDamageValue(settings.FindProperty("bodyAttackDamage"), new GUIContent("실제 공격 구간 몸통 피해"));
+        EditorGUILayout.PropertyField(settings.FindProperty("overrideContactDamage"), new GUIContent("검 · 다리 무기 피해 별도 지정"));
         if (settings.FindProperty("overrideContactDamage").boolValue)
-            DrawDamageValue(settings.FindProperty("contactDamage"), new GUIContent("몸통 · 검 · 돌진 접촉 피해"));
+            DrawDamageValue(settings.FindProperty("contactDamage"), new GUIContent("검 · 다리 무기 접촉 피해"));
         foreach (string path in DamagePaths(settings))
             DrawDamageValue(settings.FindProperty(path), new GUIContent(DamageLabel(path), path));
         if (settings.ApplyModifiedProperties()) MarkEdited(data);
-        EditorGUILayout.LabelField("패턴 SO의 피해값이며 모든 페이즈에 공통 적용됩니다. 총알·레이저·폭발은 표시된 각 항목에서 따로 정합니다.", EditorStyles.wordWrappedMiniLabel);
+        EditorGUILayout.LabelField("몸통 피해는 패턴 코드가 지정한 실제 돌진·낙하 구간에서만 적용됩니다. 검·다리, 총알·레이저·폭발은 각각 별도 피해값을 사용합니다.", EditorStyles.wordWrappedMiniLabel);
     }
 }
 #endif

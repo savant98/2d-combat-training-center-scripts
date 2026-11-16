@@ -19,7 +19,15 @@ public class EnemyShieldSystem : MonoBehaviour
     public static event Action<EnemyHealth, WeaponBaseSO.DamageInfo, float> ShieldDamageApplied;
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetShieldDamageApplied() => ShieldDamageApplied = null;
-    public float MaximumShield => data.maxShield;
+    private float initialMaximumShield;
+    public float InitialMaximumShield
+    {
+        get => initialMaximumShield > 0f ? initialMaximumShield : data != null ? Mathf.Max(1f, data.maxShield) : 1f;
+        private set => initialMaximumShield = value;
+    }
+    public int SuccessfulBreakCount { get; private set; }
+    public float CapacityRatio => Mathf.Max(.5f, 1f - SuccessfulBreakCount * .1f);
+    public float MaximumShield => InitialMaximumShield * CapacityRatio;
 
     // 화면 표시(보스 체력바 등)가 읽기만 하는 상태. 쉴드가 0이 된 뒤 Skill 피해를 기다리는 '브레이크 가능'과, 행동이 멈춘 '브레이크'.
     public bool IsBreakable => breakable;
@@ -75,7 +83,9 @@ public class EnemyShieldSystem : MonoBehaviour
     private Coroutine coroutine;
     private void Awake()
     {
-        CurrentShield = data.maxShield;
+        InitialMaximumShield = Mathf.Max(1f, data.maxShield);
+        SuccessfulBreakCount = 0;
+        CurrentShield = MaximumShield;
         if (sprites != null)
         {
             shieldMaterials = new Material[sprites.Length];
@@ -91,7 +101,9 @@ public class EnemyShieldSystem : MonoBehaviour
     }
     public void ResetShield()
     {
-        CurrentShield = data.maxShield;
+        InitialMaximumShield = Mathf.Max(1f, data.maxShield);
+        SuccessfulBreakCount = 0;
+        CurrentShield = MaximumShield;
         breakable = false;
         isBreaking = false;
         regenTimer = 0f;
@@ -149,10 +161,10 @@ public class EnemyShieldSystem : MonoBehaviour
         }
 
         // 쉴드 회복
-        if (CurrentShield < data.maxShield)
+        if (CurrentShield < MaximumShield)
         {
-            CurrentShield = Mathf.Min(data.maxShield, CurrentShield + data.shieldRegenRate * Time.deltaTime);
-            enemyUI.ShowShield(CurrentShield / data.maxShield, health.IsBossEnemy);
+            CurrentShield = Mathf.Min(MaximumShield, CurrentShield + data.shieldRegenRate * Time.deltaTime);
+            enemyUI.ShowShield(CurrentShield / MaximumShield, health.IsBossEnemy);
         }
     }
 
@@ -189,7 +201,7 @@ public class EnemyShieldSystem : MonoBehaviour
         regenTimer = data.regenDelay;
 
         // UI 표시
-        enemyUI.ShowShield(CurrentShield / data.maxShield, health.IsBossEnemy);
+        enemyUI.ShowShield(CurrentShield / MaximumShield, health.IsBossEnemy);
         FloatingTextManager.Instance.ShowDamage(dmgInfo, hitPosition + Vector3.up * 0.5f);
 
         if (CurrentShield > 0)
@@ -215,6 +227,8 @@ public class EnemyShieldSystem : MonoBehaviour
     }
     private void EnterBreakState()
     {
+        // 쉴드 소진이 아닌 실제 Skill 브레이크 성공 때 최초 용량의 10%를 잃는다.
+        SuccessfulBreakCount++;
         isBreaking = true;
         breakable = false;
 
@@ -252,14 +266,14 @@ public class EnemyShieldSystem : MonoBehaviour
     }
     private void RecoverShield(float recoveryValue)
     {
-        CurrentShield = data.maxShield * recoveryValue;
+        CurrentShield = MaximumShield * Mathf.Clamp01(recoveryValue);
         regenTimer = data.regenDelay;
 
         // 선택적으로 브레이크 실패 피드백
         if (data.shieldRegenFeedback != null)
             FeedbackPlayer.Instance.Play(data.shieldRegenFeedback, transform);
 
-        enemyUI.ShowShield(CurrentShield / data.maxShield, health.IsBossEnemy);
+        enemyUI.ShowShield(CurrentShield / MaximumShield, health.IsBossEnemy);
         enemyUI.HideBreakable();
     }
 

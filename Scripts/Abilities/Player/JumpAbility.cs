@@ -15,6 +15,7 @@ public class JumpAbility : PlayerAbility
 
     public int currentJumpCount = 0;
     private bool releasedThisJump = false;
+    private bool extraJumpAscending;
     private InputBuffer jumpBuffer = new InputBuffer(0.2f);
     private PlayerJumpDataSO jumpData;
     public override void Initialize(AbilityManager manager)
@@ -57,6 +58,10 @@ public class JumpAbility : PlayerAbility
     }
     public override void Tick()
     {
+        // 같은 프레임의 공격·대시가 상승을 취소하면 새 착지 이벤트 없이 접지 상태가 이어질 수 있다.
+        // 상승 중 잠깐 남은 IsGrounded에서는 복구하지 않아 공중 점프 횟수는 유지한다.
+        if (controller.IsGrounded && controller.Velocity.y <= 0f && currentJumpCount < maxJumpCount)
+            ResetJumpCount();
         // 점프 시작
         TryJump();
 
@@ -65,14 +70,15 @@ public class JumpAbility : PlayerAbility
 
         bool canUseLowGravity = !releasedThisJump && jumpHeld && controller.Velocity.y > 0;
 
-        // 높은 점프 체크
-        if (canUseLowGravity)
-            controller.Gravity = lowGravity;
-        else
-            controller.Gravity = highGravity;
+        if (controller.Velocity.y <= 0f) extraJumpAscending = false;
+        // 이단 점프는 초기 상승 속도를 유지하고 상승 중력만 조정한다.
+        // 원래 최고점 도달 시간과 상승 높이의 65%를 사용한다.
+        float ascentScale = extraJumpAscending && controller.Velocity.y > 0f ? 1f / .65f : 1f;
+        controller.Gravity = (canUseLowGravity ? lowGravity : highGravity) * ascentScale;
     }
     private void Jump()
     {
+        extraJumpAscending = currentJumpCount < maxJumpCount;
         currentJumpCount--;
 
         //릴리즈 이력이 있으면 롱점프 불가능한 상태로 점프
@@ -98,6 +104,7 @@ public class JumpAbility : PlayerAbility
     private void ResetJumpCount()
     {
         currentJumpCount = maxJumpCount;
+        extraJumpAscending = false;
 
         controller.Gravity = highGravity;
 
@@ -115,6 +122,7 @@ public class JumpAbility : PlayerAbility
     public override void Interrupt()
     {
         releasedThisJump = true;
+        extraJumpAscending = false;
         controller.Gravity = highGravity;
     }
 }

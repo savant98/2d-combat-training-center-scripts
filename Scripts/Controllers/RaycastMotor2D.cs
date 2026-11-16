@@ -294,6 +294,15 @@ public class RaycastMotor2D : MonoBehaviour
         return col.Overlap(position, angle, filter, results);
     }
 
+    // 몸통 Collider의 실제 형상을 재사용한다. 별도 Rigidbody나 충돌 모터는 만들지 않는다.
+    public int OverlapAttackCollider(Collider2D source, ContactFilter2D filter,
+        System.Collections.Generic.List<Collider2D> results)
+    {
+        PrepareAttackQueries();
+        results.Clear();
+        return source.Overlap(filter, results);
+    }
+
     private void CalculateRaySpacing()
     {
         bounds = col.bounds;

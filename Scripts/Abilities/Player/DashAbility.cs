@@ -15,6 +15,7 @@ public class DashAbility : PlayerAbility
     private FeedbackDataSO dashBrakeFeedback;
     private PlayerDashVisual dashVisual;
 
+    private int dashDirection;
     private bool isDashing = false;
     private float timer = 0f;
     private float lastDashTime = -999f;
@@ -34,6 +35,14 @@ public class DashAbility : PlayerAbility
         dashVisual.Initialize();
 
         controller.OnDashInput += () => buffer.RegisterInput();
+    }
+    protected override bool CanDo()
+    {
+        // 저장과 공중 내려찍기는 기존 공격의 회수 단계 제한과 별도로 취소할 수 있다.
+        if (manager.StateMachine.CurrentState == PlayerState.Attack && manager.AttackAbility != null
+            && (manager.AttackAbility.IsStoringSkill || manager.AttackAbility.IsHammerDropActive))
+            return true;
+        return base.CanDo();
     }
     private void TryDash()
     {
@@ -56,8 +65,15 @@ public class DashAbility : PlayerAbility
     {
         if (isDashing)
         {
+            // 시작 방향의 반대 입력은 즉시 제동한다. 중립·같은 방향은 대시를 유지한다.
+            if (controller.MoveInput.x * dashDirection < -.1f)
+            {
+                EndDash();
+                feedbackPlayer.Play(dashBrakeFeedback, dashVisual.transform);
+                return;
+            }
             // Dash 방향으로 고정 속도 부여
-            controller.Velocity = new Vector2(controller.Facing * dashForce, 0f);
+            controller.Velocity = new Vector2(dashDirection * dashForce, 0f);
 
             timer -= Time.deltaTime;
             if (timer <= 0f)
@@ -80,6 +96,7 @@ public class DashAbility : PlayerAbility
             controller.FacingUpdate(inputDir);
         }
 
+        dashDirection = controller.Facing;
         isDashing = true;
         timer = dashDuration;
 

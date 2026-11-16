@@ -6,6 +6,30 @@ public class PlayerWeaponAbility : PlayerAbility
     public override PlayerActionType ActionType => PlayerActionType.Attack;
     public override bool IsActive => abilityState != AbilityState.None;
     public AbilityState AttackPhase => abilityState;
+    public Vector2 PrimaryFireDirection { get; private set; } = Vector2.right;
+    public bool IsStarShotActive => !isStoringSkill && !isHammerDrop && IsActive && selectedWeapon == normalWeapon
+        && normalWeapon is RangedWeaponSO ranged && ranged.projectilePrefab is StarShot;
+    private PlayerStarShotAim starAim;
+    private bool restoreStorageIdle;
+    public bool QueuePrimaryStarShot(RangedWeaponSO weapon, WeaponBaseSO.DamageInfo damage, Vector2 direction)
+        => starAim != null && starAim.Queue(weapon, damage, direction);
+    public const int StoredSkillCapacity = 3;
+    private readonly List<StoredGearSkill> storedSkills = new();
+    public IReadOnlyList<StoredGearSkill> StoredSkills => storedSkills;
+    public bool IsStoringSkill => isStoringSkill;
+    public bool IsHammerDropActive => isHammerDrop;
+    public float SkillStorageProgress => isStoringSkill ? 1f - Mathf.Clamp01(timer / weaponData.skillStoreDuration) : 0f;
+    public event System.Action StoredSkillsChanged;
+    public event System.Action<StoredGearSkill> SkillStorageStarted;
+    public event System.Action<bool> SkillStorageFinished;
+    private StoredGearSkill pendingSkill;
+    private bool isStoringSkill, isHammerDrop, hammerDiving;
+    private float dropElapsed;
+    private int executionSetIndex = -1;
+    private bool suppressHeldPrimaryUntilRelease;
+    private readonly Dictionary<WeaponBaseSO, System.Action<CharacterController2D, Vector2>> hitHandlers = new();
+    private readonly Collider2D[] dropHits = new Collider2D[32];
+    private readonly HashSet<EnemyHealth> dropTargets = new();
 
     [Header("Melee Hitboxes")]
     [SerializeField] private string hammerWeaponName = "Hammer";
@@ -42,10 +66,12 @@ public class PlayerWeaponAbility : PlayerAbility
     private float lastMeleeAttackTime = -999f;
     private float lastWeaponSwapTime = -999f;
     private bool comboQueuedThisStep;
+    private bool comboQueuedByHold;
     // 피격 경직과 겹친 기본 공격을 경직이 끝난 첫 행동 가능 프레임에 1타부터 내보내기 위한 표시(HoldAttackThroughHit).
     // restartAfterHit: 판정이 켜지기 전에 끊긴 첫 타격(효과 없음)을 다시 시작할지. currentHitboxOpened: 이번 타격의 판정이 한 번이라도 켜졌는지.
     private bool restartAfterHit;
     private bool currentHitboxOpened;
+    private bool IsNormalHammer => !isHammerDrop && !isStoringSkill && selectedWeapon == normalWeapon && selectedWeapon is MeleeWeaponSO && selectedWeapon.weaponName == hammerWeaponName;
 
     //Gear
     private enum GearState
@@ -78,8 +104,8 @@ public class PlayerWeaponAbility : PlayerAbility
         normalWeaponBuffer.SetBufferTime(data.inputBufferTime);
         secondaryWeaponBuffer.SetBufferTime(data.inputBufferTime);
 
-        controller.OnNormalWeapon += () => normalWeaponBuffer.RegisterInput();
-        controller.OnSecondaryWeapon += () => secondaryWeaponBuffer.RegisterInput();
+        controller.OnNormalWeapon += RegisterNormalAttack;
+        controller.OnSecondaryWeapon += RegisterSecondaryAttack;
         controller.OnSwapWeaponSet += SwapWeaponSet;
 
         // 다음 단계에서 PlayerController에 추가할 이벤트
@@ -108,6 +134,14 @@ public class PlayerWeaponAbility : PlayerAbility
         if (gearUI != null)
             UIManager.Instance.SetGearStageColors(gearUI.GetStageColor(1), gearUI.GetStageColor(2), gearUI.GetStageColor(3));
 
+        if (weaponData.skillMemoryVisual != null)
+        {
+            var memoryVisual = Instantiate(weaponData.skillMemoryVisual, transform);
+            memoryVisual.Initialize(this, weaponData);
+        }
+        starAim = gameObject.AddComponent<PlayerStarShotAim>();
+        starAim.Initialize(controller, this);
+        controller.OnLanded += HandleHammerDropLanding;
         ApplyWeaponSet(0, true);
 
         selectedWeapon = normalWeapon;
@@ -124,6 +158,9 @@ public class PlayerWeaponAbility : PlayerAbility
 
     public void ResetSkillGauge()
     {
+        if (isStoringSkill || isHammerDrop || executionSetIndex >= 0) Interrupt();
+        storedSkills.Clear();
+        StoredSkillsChanged?.Invoke();
         skillGauge = 0;
         PublishSkillGauge(true);
     }
@@ -135,43 +172,55 @@ public class PlayerWeaponAbility : PlayerAbility
         UIManager.Instance.UpdateSkillGauge(skillGauge, maxSkillGauge, weaponData.weaponSets[currentSetIndex]);
         if (skillBattery != null) skillBattery.SetGauge(skillGauge, maxSkillGauge, silent);
     }
+    private void RegisterNormalAttack()
+    {
+        suppressHeldPrimaryUntilRelease = gearState != GearState.Inactive;
+        if (isStoringSkill || isHammerDrop) { normalWeaponBuffer.Reset(); return; }
+        if (gearState == GearState.Waiting && controller.MoveInput.y >= -.5f)
+        {
+            var target = weaponData.weaponSets[currentSetIndex].GetGearWeapon(gearStage);
+            if (target == null || !IsWeaponCooldownReady(target)) { normalWeaponBuffer.Reset(); return; }
+        }
+        // Gear+공격 동시 입력은 모든 입력 이벤트가 끝난 Tick에서 해석한다.
+        normalWeaponBuffer.RegisterInput();
+    }
+    private void RegisterSecondaryAttack()
+    {
+        if (isStoringSkill || isHammerDrop || secondaryWeapon == null || !IsWeaponCooldownReady(secondaryWeapon))
+        { secondaryWeaponBuffer.Reset(); return; }
+        secondaryWeaponBuffer.RegisterInput();
+    }
+    private bool CanRepeatPrimary => !suppressHeldPrimaryUntilRelease && gearState == GearState.Inactive && controller.CanReceiveInput
+        && InputManager.Held(Button.Attack) && (!IsActive || selectedWeapon == normalWeapon);
+    private void RepeatPrimaryInput()
+    {
+        // 유지 입력은 실제 선입력 버퍼에 남기지 않아 키를 놓으면 다음 자동 타격이 취소된다.
+        if (!InputManager.Held(Button.Attack)) suppressHeldPrimaryUntilRelease = false;
+        if (comboQueuedByHold && !InputManager.Held(Button.Attack))
+        { comboQueuedThisStep = comboQueuedByHold = false; }
+    }
     private void TryAttack()
     {
-        if (!CanDo())
-        {
-            HoldAttackThroughHit();
-            return;
-        }
+        if (!CanDo()) { HoldAttackThroughHit(); return; }
         restartAfterHit = false;
-
-        // Gear 상태에서는 Normal 입력을 기본공격 버퍼로 남기면 안 된다.
         if (gearState != GearState.Inactive)
         {
-            if (normalWeaponBuffer.Use())
+            if (normalWeaponBuffer.ConsumeIfValid())
             {
-                normalWeaponBuffer.Clear();
-                TryStartGearWeapon();
+                suppressHeldPrimaryUntilRelease = true;
+                if (gearState == GearState.Charging && chargingTargetStage == 1 && gearStage == 0)
+                    TryUseStoredSkill();
+                else if (gearState == GearState.Waiting && controller.MoveInput.y < -.5f)
+                    TryStoreGearSkill();
+                else TryStartGearWeapon();
+                if (IsActive) { secondaryWeaponBuffer.Reset(); return; }
             }
-
-            if (secondaryWeaponBuffer.Use())
-            {
-                secondaryWeaponBuffer.Clear();
-                StartSecondaryWeapon();
-            }
-
+            if (secondaryWeaponBuffer.ConsumeIfValid()) StartSecondaryWeapon();
             return;
         }
-
-        if (normalWeaponBuffer.Use())
-        {
-            StartNormalWeapon();
-            return;
-        }
-
-        if (secondaryWeaponBuffer.Use())
-        {
-            StartSecondaryWeapon();
-        }
+        // 보조무기는 기본 공격 키 유지 중에도 새 입력으로 우선 사용할 수 있다.
+        if (secondaryWeaponBuffer.ConsumeIfValid()) { StartSecondaryWeapon(); return; }
+        if (normalWeaponBuffer.ConsumeIfValid() || CanRepeatPrimary) StartNormalWeapon();
     }
     // 피격 경직(0.3초) 동안은 행동할 수 없는데 입력 버퍼(0.15초)가 그보다 먼저 만료되어, 피격 직후에 누른 공격은 버려지고
     // 경직 끝 무렵에 누른 공격만 나갔다. 같은 조작에도 1타가 나가거나 안 나가는 원인이었다. 경직 동안 입력을 붙잡아 두고,
@@ -224,15 +273,14 @@ public class PlayerWeaponAbility : PlayerAbility
         if (selectedWeapon is not MeleeWeaponSO melee)
             return;
 
-        // normal 입력만 콤보로 처리
-        if (!normalWeaponBuffer.Use())
-            return;
-
-        // 콤보 입력 허용 구간
-        if (!IsInComboQueueWindow(melee))
+        // 허용 구간 전의 짧은 선입력은 버퍼 수명 동안 유지한다.
+        if (!IsInComboQueueWindow(melee)) return;
+        bool freshInput = normalWeaponBuffer.ConsumeIfValid();
+        if (!freshInput && !(IsNormalHammer && CanRepeatPrimary))
             return;
 
         comboQueuedThisStep = true;
+        comboQueuedByHold = !freshInput;
     }
     private bool IsInComboQueueWindow(MeleeWeaponSO melee)
     {
@@ -242,10 +290,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
         // Execute에서는 끝나기 직전 comboQueueWindow에만 예약 허용
         if (abilityState == AbilityState.Execute)
-        {
-            normalWeaponBuffer.Clear();
             return timer <= comboQueueWindow;
-        }
 
         return false;
     }
@@ -267,7 +312,7 @@ public class PlayerWeaponAbility : PlayerAbility
             }
 
             // 바로 다음 공격으로 이어가기
-            normalWeaponBuffer.Clear();
+            normalWeaponBuffer.Reset();
             StartWindup();
             return true;
         }
@@ -276,7 +321,7 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void StartNormalWeapon()
     {
-        normalWeaponBuffer.Clear();
+        normalWeaponBuffer.Reset();
 
         if (skillGauge < normalWeapon.skillGauge)
         {
@@ -288,6 +333,12 @@ public class PlayerWeaponAbility : PlayerAbility
             return;
 
         selectedWeapon = normalWeapon;
+        if (normalWeapon is MeleeWeaponSO && normalWeapon.weaponName == hammerWeaponName
+            && !controller.IsGrounded && controller.MoveInput.y < -.5f && weaponData.hammerDropAnimation != null)
+        {
+            StartHammerDrop();
+            return;
+        }
 
         if (selectedWeapon is MeleeWeaponSO melee)
         {
@@ -353,9 +404,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
     private void StartSecondaryWeapon()
     {
-        selectedWeapon = secondaryWeapon;
-
-        if (skillGauge < secondaryWeapon.skillGauge)
+        if (secondaryWeapon == null || skillGauge < secondaryWeapon.skillGauge)
         {
             // 무기 스킬 게이지 없을때 사용 피드백 필요
             return;
@@ -364,6 +413,7 @@ public class PlayerWeaponAbility : PlayerAbility
         if (!IsWeaponCooldownReady(secondaryWeapon))
             return;
 
+        selectedWeapon = secondaryWeapon;
         skillGauge -= secondaryWeapon.skillGauge;
         MarkWeaponUsed(secondaryWeapon);
 
@@ -374,12 +424,19 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     public override void Tick()
     {
+        if (isStoringSkill) { TickSkillStorage(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
+        if (isHammerDrop) { TickHammerDrop(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
+        RepeatPrimaryInput();
         if (abilityState != AbilityState.None)
         {
             if (abilityState == AbilityState.Execute && !currentHitboxOpened && IsCurrentHitboxOpen())
                 currentHitboxOpened = true;
             TryQueueComboInput();
             timer -= Time.deltaTime;
+
+            // 후속 입력이 회수 중 들어와도 남은 회수 시간을 기다리지 않는다.
+            if (IsNormalHammer && abilityState == AbilityState.Recover && CancelAttack())
+                return;
 
             if (timer > 0)
             {
@@ -395,6 +452,8 @@ public class PlayerWeaponAbility : PlayerAbility
                     break;
 
                 case AbilityState.Execute:
+                    if (IsNormalHammer && CancelAttack())
+                        break;
                     if (selectedWeapon.ShouldEnterRecover())
                         StartRecover();
                     else
@@ -444,11 +503,6 @@ public class PlayerWeaponAbility : PlayerAbility
         // 바꾸기 전 세트의 기본 무기(교체 아이콘에 나가는 쪽으로 표시)
         WeaponBaseSO previousWeapon = firstInit ? null : normalWeapon;
 
-        if (!firstInit)
-        {
-            UnBindWeaponEvents();
-        }
-
         currentSetIndex = setIndex;
 
         var set = weaponData.weaponSets[currentSetIndex];
@@ -464,8 +518,8 @@ public class PlayerWeaponAbility : PlayerAbility
         lastWeaponSwapTime = Time.time;
         comboQueuedThisStep = false;
 
-        normalWeaponBuffer.Clear();
-        secondaryWeaponBuffer.Clear();
+        normalWeaponBuffer.Reset();
+        secondaryWeaponBuffer.Reset();
 
         CancelGear();
 
@@ -503,46 +557,37 @@ public class PlayerWeaponAbility : PlayerAbility
         BindWeaponEvent(set.secondary);
     }
 
-    private void UnBindWeaponEvents()
-    {
-        var set = weaponData.weaponSets[currentSetIndex];
-
-        UnBindWeaponEvent(set.normal);
-        UnBindWeaponEvent(set.gearStage1);
-        UnBindWeaponEvent(set.gearStage2);
-        UnBindWeaponEvent(set.gearStage3);
-        UnBindWeaponEvent(set.secondary);
-    }
-
     private void BindWeaponEvent(WeaponBaseSO weapon)
     {
-        if (weapon == null)
-            return;
-
-        weapon.OnHitEnemy -= OnWeaponHitEnemy;
-        weapon.OnHitEnemy += OnWeaponHitEnemy;
+        if (weapon == null || hitHandlers.ContainsKey(weapon)) return;
+        // 회수 뒤에도 살아 있는 저장 투사체의 보상은 발사한 원본 무기를 기준으로 한다.
+        System.Action<CharacterController2D, Vector2> handler = (owner, point) => OnWeaponHitEnemy(weapon, owner, point);
+        hitHandlers.Add(weapon, handler);
+        weapon.OnHitEnemy += handler;
     }
-
-    private void UnBindWeaponEvent(WeaponBaseSO weapon)
+    private void OnDisable()
     {
-        if (weapon == null)
-            return;
-
-        weapon.OnHitEnemy -= OnWeaponHitEnemy;
+        if (controller == null || controller.animator == null || selectedWeapon == null) return;
+        Interrupt();
+    }
+    private void OnDestroy()
+    {
+        foreach (var pair in hitHandlers) if (pair.Key != null) pair.Key.OnHitEnemy -= pair.Value;
+        hitHandlers.Clear();
     }
     #endregion
 
     #region OnWeaponHit
-    private void OnWeaponHitEnemy(CharacterController2D owner, Vector2 hitPoint)
+    private void OnWeaponHitEnemy(WeaponBaseSO source, CharacterController2D owner, Vector2 hitPoint)
     {
         if (owner != controller)
             return;
 
-        if (selectedWeapon.skillGainPerHit <= 0)
+        if (source.skillGainPerHit <= 0)
             return;
 
         // 예전에는 적중 지점에서 구슬이 날아와 도착할 때 게이지가 올랐다(투사체와 헷갈린다는 지적). 이제 바로 오른다.
-        AddSkillGauge(selectedWeapon.skillGainPerHit);
+        AddSkillGauge(source.skillGainPerHit);
     }
     private void AddSkillGauge(float amount)
     {
@@ -697,7 +742,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
         // Gear 상태에서 눌렀던 Normal 입력이
         // Gear 해제 후 기본공격으로 발동되는 것을 방지
-        normalWeaponBuffer.Clear();
+        normalWeaponBuffer.Reset();
 
         if (gearVisual != null)
             gearVisual.End(reason);
@@ -898,23 +943,28 @@ public class PlayerWeaponAbility : PlayerAbility
         }
 
         // 판정 전에 끊긴 첫 타격인지 먼저 기록한다. 피격으로 끊긴 경우에만 경직 뒤 다시 시작한다(HoldAttackThroughHit).
-        restartAfterHit = IsUnresolvedFirstStrike();
+        bool wasStoring = isStoringSkill;
+        restartAfterHit = !isHammerDrop && !isStoringSkill && IsUnresolvedFirstStrike();
+        CancelSpecialAttack();
+        ClearNormalHammerPresentation();
 
         controller.PlayerCounterState.EndCounter();
 
         comboQueuedThisStep = false;
         meleeComboIndex = 0; // 혹은 유지 정책
 
-        normalWeaponBuffer.Clear();
-        secondaryWeaponBuffer.Clear();
+        normalWeaponBuffer.Reset();
+        secondaryWeaponBuffer.Reset();
 
         CancelGear();
 
-        //StopAllCoroutines();
+        StopAllCoroutines();
         controller.GravityOn = true;
         abilityState = AbilityState.None;
 
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 0);
+        RestoreExecutionModel();
+        if (wasStoring) RestoreStorageAnimation();
     }
     private void StartWindup()
     {
@@ -925,8 +975,13 @@ public class PlayerWeaponAbility : PlayerAbility
             controller.FacingUpdate(inputDir);
         }
 
+        if (selectedWeapon == normalWeapon)
+        {
+            float vertical = Mathf.Abs(controller.MoveInput.y) > .5f ? Mathf.Sign(controller.MoveInput.y) : 0f;
+            PrimaryFireDirection = new Vector2(controller.Facing, vertical * .577350269f).normalized;
+        }
         abilityState = AbilityState.Windup;
-        comboQueuedThisStep = false;
+        comboQueuedThisStep = comboQueuedByHold = false;
         currentHitboxOpened = false;
 
         if (selectedWeapon is MeleeWeaponSO melee)
@@ -950,6 +1005,12 @@ public class PlayerWeaponAbility : PlayerAbility
         controller.Velocity = Vector2.zero;
 
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 1);
+        if (IsNormalHammer)
+        {
+            // Execute에서 다음 Windup으로 바로 이어도 새 Clip의 첫 프레임부터 평가한다.
+            controller.animator.Play("WeaponWindup", 0, 0f);
+            controller.animator.Update(0f);
+        }
     }
     private void StartExecute()
     {
@@ -1015,13 +1076,168 @@ public class PlayerWeaponAbility : PlayerAbility
 
         StartRecover();
     }
+    private void TryStoreGearSkill()
+    {
+        var weapon = weaponData.weaponSets[currentSetIndex].GetGearWeapon(gearStage);
+        if (weapon == null || storedSkills.Count >= StoredSkillCapacity || skillGauge < weapon.skillGauge
+            || weaponData.skillStoreAnimation == null) return;
+        pendingSkill = new StoredGearSkill(weapon, currentSetIndex, gearStage,
+            gearUI != null ? gearUI.GetStageColor(gearStage) : Color.cyan);
+        skillGauge -= weapon.skillGauge;
+        PublishSkillGauge();
+        selectedWeapon = weapon;
+        CancelGear(PlayerGearVisual.EndReason.Fired);
+        normalWeaponBuffer.Reset(); secondaryWeaponBuffer.Reset();
+        isStoringSkill = true;
+        abilityState = AbilityState.Windup;
+        timer = Mathf.Max(.01f, weaponData.skillStoreDuration);
+        controller.ApplyWeaponAnimation(weaponData.skillStoreAnimation, weapon.weaponAnim);
+        controller.GravityOn = false; controller.Velocity = Vector2.zero;
+        controller.animator.SetInteger(weapon.weaponAnim, 1);
+        controller.animator.Play("WeaponWindup", 0, 0f); controller.animator.Update(0f);
+        SkillStorageStarted?.Invoke(pendingSkill);
+    }
+    private void TickSkillStorage()
+    {
+        controller.Velocity = Vector2.zero;
+        timer -= Time.deltaTime;
+        if (timer > .0001f) return;
+        storedSkills.Add(pendingSkill);
+        isStoringSkill = false;
+        StoredSkillsChanged?.Invoke();
+        SkillStorageFinished?.Invoke(true);
+        controller.animator.WriteDefaultValues();
+        EndAttack();
+        // 저장은 Execute/Recover를 거치지 않으므로 Windup의 종료 전이에 의존하지 않는다.
+        RestoreStorageAnimation();
+    }
+    private void RestoreStorageAnimation()
+    {
+        restoreStorageIdle = !controller.animator.isActiveAndEnabled;
+        if (restoreStorageIdle) return;
+        controller.animator.Play("Idle", 0, 0f);
+        controller.animator.Update(0f);
+    }
+    private void OnEnable()
+    {
+        if (restoreStorageIdle && controller != null) RestoreStorageAnimation();
+    }
+    private void TryUseStoredSkill()
+    {
+        if (storedSkills.Count == 0) return;
+        var skill = storedSkills[0];
+        if (skill.Weapon == null) return;
+        storedSkills.RemoveAt(0);
+        StoredSkillsChanged?.Invoke();
+        selectedWeapon = skill.Weapon;
+        executionSetIndex = skill.SetIndex;
+        for (int i = 0; i < weaponModels.Length; i++) weaponModels[i].SetActive(i == executionSetIndex);
+        BindWeaponEvent(selectedWeapon);
+        meleeComboIndex = 0; lastMeleeAttackTime = Time.time;
+        CancelGear(PlayerGearVisual.EndReason.Fired);
+        StartWindup();
+    }
+    private void RestoreExecutionModel()
+    {
+        if (executionSetIndex < 0) return;
+        executionSetIndex = -1;
+        for (int i = 0; i < weaponModels.Length; i++) weaponModels[i].SetActive(i == currentSetIndex);
+    }
+    private void StartHammerDrop()
+    {
+        normalWeaponBuffer.Reset(); secondaryWeaponBuffer.Reset();
+        CancelGear(); ClearNormalHammerPresentation();
+        MarkWeaponUsed(normalWeapon);
+        isHammerDrop = true; hammerDiving = false; dropElapsed = 0f;
+        abilityState = AbilityState.Windup; timer = weaponData.hammerDropWindup;
+        controller.ApplyWeaponAnimation(weaponData.hammerDropAnimation, selectedWeapon.weaponAnim);
+        controller.GravityOn = false; controller.Velocity = Vector2.zero;
+        controller.animator.SetInteger(selectedWeapon.weaponAnim, 1);
+        controller.animator.Play("WeaponWindup", 0, 0f); controller.animator.Update(0f);
+    }
+    private void TickHammerDrop()
+    {
+        timer -= Time.deltaTime;
+        if (abilityState == AbilityState.Windup)
+        {
+            if (controller.IsGrounded) { CancelSpecialAttack(); EndAttack(); return; }
+            if (timer > 0f) return;
+            abilityState = AbilityState.Execute; hammerDiving = true;
+            controller.animator.SetInteger(selectedWeapon.weaponAnim, 2);
+            controller.animator.Play("WeaponExecute", 0, 0f); controller.animator.Update(0f);
+        }
+        if (abilityState == AbilityState.Execute)
+        {
+            dropElapsed += Time.deltaTime;
+            controller.Velocity = Vector2.down * weaponData.hammerDropSpeed;
+            if (dropElapsed > 4f) { CancelSpecialAttack(); EndAttack(); }
+        }
+        else if (abilityState == AbilityState.Recover && timer <= 0f)
+        { CancelSpecialAttack(); EndAttack(); }
+    }
+    private void HandleHammerDropLanding()
+    {
+        if (!isHammerDrop || !hammerDiving) return;
+        // OnLanded에서 IsGrounded는 아직 이전 값이다. 전용 플래그로 한 번만 확정한다.
+        hammerDiving = false;
+        abilityState = AbilityState.Recover; timer = .2f;
+        controller.Velocity = Vector2.zero;
+        var filter = new ContactFilter2D { useTriggers = true };
+        filter.SetLayerMask(1 << LayerMask.NameToLayer("Enemy"));
+        Vector2 center = (Vector2)controller.transform.position + Vector2.down * .15f;
+        int count = controller.Motor.OverlapAttackBox(center, new Vector2(6f, 2.1f), 0f, dropHits, filter.layerMask);
+        dropTargets.Clear();
+        var info = weaponData.hammerDropDamage;
+        info.sourceWeapon = selectedWeapon; info.knockbackOrigin = controller.transform.position; info.knockbackFacing = controller.Facing;
+        for (int i = 0; i < count; i++)
+        {
+            var health = dropHits[i].GetComponentInParent<EnemyHealth>();
+            if (health == null || health.IsDamageBlocked || !dropTargets.Add(health)) continue;
+            Vector2 point = dropHits[i].ClosestPoint(center);
+            if (health.enemyShieldSystem != null) health.enemyShieldSystem.TakeDamage(info, point);
+            else health.TakeDamage(info, point);
+            selectedWeapon.OnHitEnemy?.Invoke(controller, point);
+        }
+        feedbackPlayer.Play(weaponData.hammerDropImpactFeedback, controller.transform);
+        controller.animator.SetInteger(selectedWeapon.weaponAnim, 3);
+        controller.animator.Play("WeaponRecover", 0, 0f); controller.animator.Update(0f);
+    }
+    private void CancelSpecialAttack()
+    {
+        if (isStoringSkill)
+        {
+            isStoringSkill = false;
+            SkillStorageFinished?.Invoke(false); // 시작 때 지불한 게이지는 반환하지 않는다.
+        }
+        if (isHammerDrop) { isHammerDrop = hammerDiving = false; }
+        if (controller.animator != null) controller.animator.WriteDefaultValues();
+        controller.GravityOn = true;
+    }
+    private void ClearNormalHammerPresentation()
+    {
+        if (!IsNormalHammer) return;
+        controller.animator.WriteDefaultValues();
+        foreach (var box in hammerHitBoxes)
+        {
+            if (box == null) continue;
+            box.DisableHitbox();
+            box.gameObject.SetActive(false);
+        }
+        var arc = controller.model.transform.Find("HammerArc");
+        if (arc != null && arc.TryGetComponent<SpriteRenderer>(out var renderer)) renderer.enabled = false;
+    }
     private void EndAttack()
     {
+        ClearNormalHammerPresentation();
+        RestoreExecutionModel();
+        meleeComboIndex = 0;
         controller.PlayerCounterState.EndCounter();
 
         comboQueuedThisStep = false;
         controller.GravityOn = true;
         abilityState = AbilityState.None;
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 0);
+        normalWeaponBuffer.Reset();
+        secondaryWeaponBuffer.Reset();
     }
 }

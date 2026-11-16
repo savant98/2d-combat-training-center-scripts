@@ -2,6 +2,9 @@ using UnityEngine;
 
 public class ZigzagAttackAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => (State == AbilityState.Execute && !isCycleTurning && controller.Velocity.sqrMagnitude > .0001f)
+        || (State == AbilityState.Recover && recoverDropping && controller.Velocity.y < -.01f);
+
     private Transform playerTr;
     private ZigzagAttackDataSO zigzagData;
     private int dashDirection;
@@ -22,6 +25,7 @@ public class ZigzagAttackAbility : AiAbility
     private LaserPreviewLine activePreview;
     private float recoverTargetY;
     private bool recoverSlamTriggered;
+    private bool recoverDropping;
     private void Awake()
     {
         zigzagData = (ZigzagAttackDataSO)data;
@@ -166,6 +170,7 @@ public class ZigzagAttackAbility : AiAbility
     protected override void OnRecoverStart()
     {
         recoverSlamTriggered = false;
+        recoverDropping = false;
 
         float currentX = controller.transform.position.x;
         recoverTargetY = GetGroundY(currentX) + zigzagData.recoverGroundOffset;
@@ -183,6 +188,7 @@ public class ZigzagAttackAbility : AiAbility
         // 이미 목표 높이에 거의 도달했으면 정지
         if (Mathf.Abs(deltaY) <= zigzagData.windupDeadZone)
         {
+            recoverDropping = false;
             controller.Velocity = Vector2.zero;
             return;
         }
@@ -213,6 +219,7 @@ public class ZigzagAttackAbility : AiAbility
         }
 
         // 이후: 수직으로 내려찍기
+        recoverDropping = true;
         controller.Velocity = new Vector2(0f, -zigzagData.recoverDropSpeed);
 
         // 바닥 근처면 마무리
@@ -221,6 +228,7 @@ public class ZigzagAttackAbility : AiAbility
             if (!recoverSlamTriggered)
             {
                 recoverSlamTriggered = true;
+                recoverDropping = false;
                 feedbackPlayer.Play(zigzagData.slamFeedback, controller.transform);
                 ReturnPreview();
 

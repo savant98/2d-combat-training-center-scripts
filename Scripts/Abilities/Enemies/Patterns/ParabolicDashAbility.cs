@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class ParabolicDashAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Execute && controller.Velocity.sqrMagnitude > .0001f;
+
     [SerializeField] private bool targetRoomCenter;
     [SerializeField] private AiAbility followupAbility;
     public bool TargetsRoomCenter => targetRoomCenter;

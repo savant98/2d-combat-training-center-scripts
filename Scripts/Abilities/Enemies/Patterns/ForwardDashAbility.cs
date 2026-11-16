@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class ForwardDashAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Execute && Mathf.Abs(controller.Velocity.x) > .01f;
+
     // ForwardDash Settings
     private float dashDistance = 5f;  // 총 이동 거리
     private float dashDuration = 0.5f; // 대략적인 수행 시간
@@ -29,6 +31,7 @@ public class ForwardDashAbility : AiAbility
     }
     protected override void OnWindupStart()
     {
+        controller.Velocity.x = 0f;
         controller.FacingUpdate(GameManager.Instance.Player.transform.position.x - transform.position.x > 0 ? 1 : -1);
 
         SpawnPreview();
@@ -44,12 +47,15 @@ public class ForwardDashAbility : AiAbility
     protected override void OnExecuteStart()
     {
         ReturnPreview();
+        controller.OnWallHit -= HandleWallHit;
+        controller.OnWallHit += HandleWallHit;
 
         startPos = transform.position;       // 시작 위치
         traveled = 0f;
         directionX = controller.Facing;      // +1 or -1
 
         sparkTimer = 0f;
+        controller.Velocity.x = dashDistance / Mathf.Max(.001f, dashDuration) * speedCurve.Evaluate(0f) * directionX;
     }
     protected override void OnExecute(float t)
     {
@@ -60,7 +66,7 @@ public class ForwardDashAbility : AiAbility
         // 목표 거리 도달하면 종료
         if (traveled >= dashDistance)
         {
-            StopAbility();
+            ForceRecover();
             return;
         }
 
@@ -100,12 +106,25 @@ public class ForwardDashAbility : AiAbility
     }
     protected override void OnRecoverStart()
     {
+        controller.OnWallHit -= HandleWallHit;
         controller.Velocity = Vector2.zero;
     }
 
     protected override void OnStop()
     {
+        controller.OnWallHit -= HandleWallHit;
+        controller.Velocity.x = 0f;
         ReturnPreview();
+    }
+
+    private void HandleWallHit()
+    {
+        if (State == AbilityState.Execute) ForceRecover();
+    }
+
+    private void OnDisable()
+    {
+        if (controller != null) controller.OnWallHit -= HandleWallHit;
     }
 
     private void SpawnPreview()

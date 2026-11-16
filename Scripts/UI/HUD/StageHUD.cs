@@ -219,7 +219,7 @@ public class StageHUD : MonoBehaviour
         if (target != null && target.Health != null && target.Health.maxHP > 0f)
             hp = Mathf.Clamp01(target.Health.currentHP / target.Health.maxHP);
         if (bossShield != null && bossShield.MaximumShield > 0f)
-            shield = Mathf.Clamp01(bossShield.CurrentShield / bossShield.MaximumShield);
+            shield = Mathf.Clamp01(bossShield.CurrentShield / bossShield.InitialMaximumShield);
 
         SetImmediate(hpBar, hp);
         SetImmediate(shieldBar, shield);
@@ -271,7 +271,7 @@ public class StageHUD : MonoBehaviour
 
     public void UpdateBossShield(float normalized)
     {
-        normalized = Mathf.Clamp01(normalized);
+        normalized = Mathf.Clamp01(normalized) * (bossShield != null ? bossShield.CapacityRatio : 1f);
         if (shieldBar != null && !Mathf.Approximately(normalized, shieldBar.fillAmount))
         {
             shieldPulse = 1f;
@@ -388,6 +388,7 @@ public class StageHUD : MonoBehaviour
         shieldScanTime += dt * (scanSpeed + shieldPulse * scanBoost);
         if (shieldMaterial != null && shieldBar != null)
         {
+            shieldMaterial.SetFloat("_Capacity", bossShield != null ? bossShield.CapacityRatio : 1f);
             shieldMaterial.SetFloat(FillID, shieldBar.fillAmount);
             shieldMaterial.SetFloat(TrailID, shieldBar.fillAmount);
             shieldMaterial.SetFloat(ScanTimeID, shieldScanTime);

@@ -15,6 +15,20 @@ public class PlayerWeaponDataSO : PlayerAbilityDataSO
     [Tooltip("스킬 게이지를 Player 몸 옆에 세로로 쌓이는 배터리 4칸으로 보여 주는 표시. 칸이 다 찰 때 'Charge!'와 작은 소리를 낸다")]
     public PlayerSkillBatteryVisual skillBatteryVisual;
 
+    [Header("Skill Memory")]
+    public PlayerSkillMemoryVisual skillMemoryVisual;
+    public AnimationSetSO skillStoreAnimation;
+    public SoundOptions skillStoreSound;
+    public SoundOptions skillStoreCompleteSound;
+    [Min(.01f)] public float skillStoreDuration = .2f;
+
+    [Header("Hammer Drop")]
+    public AnimationSetSO hammerDropAnimation;
+    [Min(.01f)] public float hammerDropWindup = .12f;
+    [Min(1f)] public float hammerDropSpeed = 32f;
+    public WeaponBaseSO.DamageInfo hammerDropDamage;
+    public FeedbackDataSO hammerDropImpactFeedback;
+
     [Header("WeaponSwap")]
     public float swapCoolTime = 0.5f;
     public FeedbackDataSO swapFeedback;

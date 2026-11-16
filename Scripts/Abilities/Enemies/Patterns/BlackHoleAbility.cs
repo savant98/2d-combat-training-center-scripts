@@ -28,6 +28,14 @@ public class BlackHoleAbility : AiAbility
     private float windupElapsed;
     private float cubeTimer;
     private readonly List<int> recentLanes = new();
+    private struct CubeReservation
+    {
+        public AdminFallingCube cube;
+        public uint version;
+        public float x;
+    }
+    private readonly List<CubeReservation> activeCubes = new();
+    private readonly List<int> availableLanes = new();
 
     public RoomFrame LastRoom => room;
     public AdminBlackHole ActiveBlackHole => activeHole;
@@ -181,6 +189,8 @@ public class BlackHoleAbility : AiAbility
         int laneCount = Mathf.Max(1, Mathf.FloorToInt((right - left) / Mathf.Max(0.5f, holeData.cubeLaneWidth)) + 1);
         float step = laneCount > 1 ? (right - left) / (laneCount - 1) : 0f;
         int lane = PickLane(laneCount, left, step);
+        // 빈 줄이 없으면 이번 생성을 생략한다. 호출자는 타이머를 소비해 다음 프레임에 몰지 않는다.
+        if (lane < 0) return;
 
         float x = left + lane * step;
         float y = room.hasCeiling ? room.ceiling - holeData.cubeCeilingOffset : room.center.y + holeData.cubeFallbackHeight;
@@ -188,31 +198,87 @@ public class BlackHoleAbility : AiAbility
         var cube = WorldEntityPool.Instance.Spawn(holeData.cubePrefab, new Vector3(x, y, 0f), Quaternion.identity);
         cube.ConfigureFall(holeData.cubeGravity, holeData.cubeMaxFallSpeed);
         cube.Initialize(controller, holeData.cubeDamageInfo, 0f, 0, holeData.cubeCollideLayer);
+        activeCubes.Add(new CubeReservation { cube = cube, version = cube.SpawnVersion, x = x });
         SpawnedCubeCount++;
     }
 
-    // 맵 전체 줄 가운데서 고르되, 최근 줄은 피하고 일정 확률로 플레이어가 선 줄을 고른다.
+    // 예고 중이거나 떨어지는 모든 큐브를 예약으로 취급한다. 회수·중단 뒤 남은 큐브도 계속 고려한다.
     private int PickLane(int laneCount, float left, float step)
     {
-        int lane = -1;
-        var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
-        if (player != null && step > 0f && Random.value < holeData.cubePlayerTargetChance)
-            lane = Mathf.Clamp(Mathf.RoundToInt((player.transform.position.x - left) / step), 0, laneCount - 1);
-
-        if (lane < 0)
+        for (int i = activeCubes.Count - 1; i >= 0; i--)
         {
-            for (int attempt = 0; attempt < 8; attempt++)
+            var reservation = activeCubes[i];
+            if (reservation.cube == null || !reservation.cube.IsFalling || reservation.cube.SpawnVersion != reservation.version)
+                activeCubes.RemoveAt(i);
+        }
+        availableLanes.Clear();
+        float spacing = Mathf.Max(.5f, step);
+        var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+        for (int lane = 0; lane < laneCount; lane++)
+        {
+            float x = left + lane * step;
+            if (IsSafeCubePosition(x, spacing) && HasEscapeLane(x, laneCount, left, step, player))
+                availableLanes.Add(lane);
+        }
+        if (availableLanes.Count == 0) return -1;
+        int selected = -1;
+        if (player != null && step > 0 && Random.value < holeData.cubePlayerTargetChance)
+        {
+            int target = Mathf.Clamp(Mathf.RoundToInt((player.transform.position.x - left) / step), 0, laneCount - 1);
+            if (availableLanes.Contains(target)) selected = target;
+        }
+        if (selected < 0)
+        {
+            // 최근 줄을 우선 피하되 안전한 후보가 그것뿐이면 다시 쓸 수 있다.
+            int preferred = 0;
+            foreach (int lane in availableLanes) if (!recentLanes.Contains(lane)) preferred++;
+            int pick = Random.Range(0, preferred > 0 ? preferred : availableLanes.Count);
+            foreach (int lane in availableLanes)
             {
-                lane = Random.Range(0, laneCount);
-                if (!recentLanes.Contains(lane) || laneCount <= holeData.cubeRecentLaneMemory)
-                    break;
+                if (preferred > 0 && recentLanes.Contains(lane)) continue;
+                if (pick-- == 0) { selected = lane; break; }
             }
         }
+        recentLanes.Add(selected);
+        while (recentLanes.Count > Mathf.Max(0, holeData.cubeRecentLaneMemory)) recentLanes.RemoveAt(0);
+        return selected;
+    }
 
-        recentLanes.Add(lane);
-        while (recentLanes.Count > holeData.cubeRecentLaneMemory)
-            recentLanes.RemoveAt(0);
-        return lane;
+    private bool IsSafeCubePosition(float x, float spacing)
+    {
+        foreach (var reserved in activeCubes)
+            if (Mathf.Abs(reserved.x - x) < spacing * .5f) return false;
+        // 어느 위치를 중심으로 보아도 양옆 두 줄 간격 안에는 최대 두 개만 둔다.
+        // 플레이어가 다른 줄로 이동해도 세 개가 연속으로 몰린 구간이 생기지 않는다.
+        for (int i = 0; i < activeCubes.Count; i++)
+            for (int j = i + 1; j < activeCubes.Count; j++)
+            {
+                float minimum = Mathf.Min(x, Mathf.Min(activeCubes[i].x, activeCubes[j].x));
+                float maximum = Mathf.Max(x, Mathf.Max(activeCubes[i].x, activeCubes[j].x));
+                if (maximum - minimum <= spacing * 4f + .001f) return false;
+            }
+        return true;
+    }
+
+    private bool HasEscapeLane(float candidate, int laneCount, float left, float step, PlayerController player)
+    {
+        if (player == null) return true;
+        float reach = Mathf.Max(.5f, step) * 2f;
+        float halfPlayer = player.Health != null && player.Health.GetComponent<Collider2D>() != null
+            ? player.Health.GetComponent<Collider2D>().bounds.extents.x : .75f;
+        float clear = .75f + halfPlayer + .1f;
+        for (int lane = 0; lane < laneCount; lane++)
+        {
+            float escape = left + lane * step;
+            if (Mathf.Abs(escape - player.transform.position.x) > reach || Mathf.Abs(escape - candidate) < clear) continue;
+            if (holeData.field.enabled && activeHole != null && escape > activeHole.FieldRect.xMin - halfPlayer - .1f
+                && escape < activeHole.FieldRect.xMax + halfPlayer + .1f) continue;
+            bool blocked = false;
+            foreach (var reserved in activeCubes)
+                if (Mathf.Abs(reserved.x - escape) < clear) { blocked = true; break; }
+            if (!blocked) return true;
+        }
+        return false;
     }
 
     // ===== Room Center =====

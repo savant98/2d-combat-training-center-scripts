@@ -4,6 +4,8 @@ using UnityEngine;
 [DefaultExecutionOrder(-50)]
 public sealed class TrackingSlamAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Execute && CurrentPhase == FlightPhase.Slam && controller.Velocity.y < -.01f;
+
     public enum FlightPhase { None, Rise, Tracking, Slam }
 
     [SerializeField] private Collider2D bodyCollider;

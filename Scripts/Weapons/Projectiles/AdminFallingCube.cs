@@ -45,6 +45,9 @@ public sealed class AdminFallingCube : ProjectileBase
     [Header("Impact")]
     [SerializeField] private FeedbackDataSO impactFeedback;
 
+    public uint SpawnVersion { get; private set; }
+    public bool IsFalling => initialized && !isReturning && !shattered && isActiveAndEnabled;
+    public Transform WarningTransform => warning;
     public bool HasLandingPoint => hasLanding;
     public Vector2 LandingPoint => landingPoint;
     public Vector2 SpawnPosition { get; private set; }
@@ -87,6 +90,8 @@ public sealed class AdminFallingCube : ProjectileBase
         if (warningColumn != null)
             columnScale = warningColumn.localScale;
 
+        // 큐브의 화면 보간 변위를 바닥 경고에 적용하지 않도록 월드 표시로 분리한다.
+        if (warning != null) warning.SetParent(null, true);
         block = new MaterialPropertyBlock();
         int count = warningRenderers != null ? warningRenderers.Length : 0;
         warningBase = new float[count];
@@ -106,6 +111,7 @@ public sealed class AdminFallingCube : ProjectileBase
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
+        SpawnVersion++;
         initialized = shattered = hasLanding = false;
         HitPlayer = false;
         age = 0f;
@@ -213,6 +219,11 @@ public sealed class AdminFallingCube : ProjectileBase
     {
         initialized = false;
         SetWarningVisible(false);
+    }
+
+    private void OnDestroy()
+    {
+        if (warning != null) Destroy(warning.gameObject);
     }
 
     private void Shatter(Vector2 point)

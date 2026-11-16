@@ -28,6 +28,13 @@ public class EnemyController : CharacterController2D
     private AnimationClip[] attackOriginals;
     // ApplyOverrides에 넘길 (원본, 새 Clip) 3쌍. 매번 비우고 다시 채워 할당하지 않는다.
     private readonly List<KeyValuePair<AnimationClip, AnimationClip>> attackOverrides = new(3);
+    [Header("몸통 접촉 피해")]
+    [Tooltip("Swarmer·Bulwark처럼 몸통 접촉 자체가 공격인 적만 켭니다.")]
+    [SerializeField] private bool continuousBodyDamage;
+    public bool ContinuousBodyDamage => continuousBodyDamage;
+    public bool CanDealContactDamage => canTouchDamage && isActiveAndEnabled
+        && (brain == null || !brain.IsPaused) && (enemyHealth == null || enemyHealth.currentHP > 0f);
+    private TouchDamage[] contactSources;
     private bool canTouchDamage = true;
     private EnemyShieldSystem shieldSystem;
     private EnemySpawnController spawnController;
@@ -44,6 +51,7 @@ public class EnemyController : CharacterController2D
         brain = GetComponent<AiBrain>();
         spawnController = GetComponent<EnemySpawnController>();
         teleporter = GetComponent<EnemyTeleporter>();
+        contactSources = GetComponentsInChildren<TouchDamage>(true);
 
         if (overrideAnimator != null)
         {
@@ -65,6 +73,9 @@ public class EnemyController : CharacterController2D
     protected override Vector2 CalculateVelocity()
     {
         Velocity.y += GravityOn ? Gravity * Time.deltaTime : 0;
+        // 착지 콜백이 Recover로 바꾸기 전에 이번 물리 이동의 공격 구간과 피해량을 보존한다.
+        foreach (var source in contactSources)
+            if (source != null) source.CaptureBodyContactStep();
         return Velocity;
     }
     public void ApplyWeaponKnockback(WeaponBaseSO.DamageInfo info)
@@ -143,25 +154,41 @@ public class EnemyController : CharacterController2D
         if (original != null)
             attackOverrides.Add(new KeyValuePair<AnimationClip, AnimationClip>(original, clip));
     }
-    public void RequestTouchDamage(PlayerHealth player, float dmg)
+    public void RequestTouchDamage(PlayerHealth player, float dmg, bool isBodyContact = true)
     {
-        // Break 상태일 경우 접촉 데미지 무효화
-        if (!canTouchDamage)
-            return;
+        dmg = isBodyContact ? ResolveBodyContactDamage(dmg) : ResolveContactDamage(dmg);
+        ApplyContactDamage(player, dmg);
+    }
 
-        dmg = ResolveContactDamage(dmg);
-        if (dmg <= 0f) return;
+    // 같은 물리 이동의 마지막 착지 타격만 보존하며 다음 Recover 틱에는 다시 0으로 수집된다.
+    internal void ApplyBodyContactStep(PlayerHealth player, float capturedDamage)
+        => ApplyContactDamage(player, capturedDamage);
+
+    private void ApplyContactDamage(PlayerHealth player, float dmg)
+    {
+        if (!CanDealContactDamage || player == null || !float.IsFinite(dmg) || dmg <= 0f) return;
         damageInfo.damageType = DamageType.Normal;
         damageInfo.damage = dmg;
-
-        player.TakeDamage(damageInfo, GameManager.Instance.Player.transform.position);
+        player.TakeDamage(damageInfo, transform.position);
     }
-    /// <summary>실행 중 패턴의 접촉 피해 설정을 적용한다. 비활성 설정은 기존 부위별 피해를 유지한다.</summary>
+
+    /// <summary>검·다리 등 별도 무기 판정의 기존 패턴별 피해 설정을 보존한다.</summary>
     public float ResolveContactDamage(float defaultDamage)
     {
         var pattern = brain != null ? brain.current : null;
-        var data = pattern != null && pattern.IsRunning ? pattern.Data : null;
-        return data != null && data.overrideContactDamage ? Mathf.Max(0f, data.contactDamage) : defaultDamage;
+        var settings = pattern != null && pattern.IsRunning ? pattern.Data : null;
+        return settings != null && settings.overrideContactDamage ? Mathf.Max(0f, settings.contactDamage) : defaultDamage;
+    }
+
+    /// <summary>상시 접촉 적 외에는 실제 몸통 공격 구간에서만 별도 피해를 허용한다.</summary>
+    public float ResolveBodyContactDamage(float defaultDamage)
+    {
+        if (!CanDealContactDamage) return 0f;
+        if (continuousBodyDamage) return Mathf.Max(0f, defaultDamage);
+        var pattern = brain != null ? brain.current : null;
+        return pattern != null && pattern.isActiveAndEnabled && pattern.IsRunning
+            && pattern.Data != null && pattern.Data.bodyAttackEnabled && pattern.IsBodyAttackActive
+            ? Mathf.Max(0f, pattern.Data.bodyAttackDamage) : 0f;
     }
 
     public void FacingUpdate(int value)

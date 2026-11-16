@@ -15,12 +15,18 @@ public class StarShot : ProjectileBase
 
     private bool hasCustomDirection;
     private Vector2 customDirection;
+    private bool hasMuzzlePosition;
+    private Vector3 muzzlePosition;
+    public Vector2 SpawnPosition { get; private set; }
+    public float LifeTime => lifeTime;
+    public void SetMuzzlePosition(Vector3 position) { hasMuzzlePosition = true; muzzlePosition = position; }
 
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
 
         hasCustomDirection = false;
+        hasMuzzlePosition = false;
         customDirection = Vector2.zero;
 
         if (spinVisual != null)
@@ -64,7 +70,15 @@ public class StarShot : ProjectileBase
         int count,
         LayerMask collideLayer)
     {
+        if (hasMuzzlePosition)
+        {
+            // 기존 발사 피드백의 위치 보정이 총구에 두 번 더해지지 않게 상쇄한다.
+            Vector3 offset = launchFeedbackData != null ? launchFeedbackData.offset : Vector3.zero;
+            if (owner != null && owner.Facing < 0) offset.x *= -1f;
+            transform.position = muzzlePosition - offset;
+        }
         base.Initialize(owner, damageInfo, speed, count, collideLayer);
+        SpawnPosition = transform.position;
 
         Vector2 dir = hasCustomDirection
             ? customDirection

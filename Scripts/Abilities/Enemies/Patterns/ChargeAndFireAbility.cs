@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class ChargeAndFireAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Execute && executePhase == ExecutePhase.ReverseDash && Mathf.Abs(controller.Velocity.x) > .01f;
+
     [Header("Spark")]
     [SerializeField] private Transform sparkPoint;
     private enum ExecutePhase

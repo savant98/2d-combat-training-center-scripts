@@ -9,6 +9,8 @@ using UnityEngine;
 // 발진부터 정지까지의 거리는 chargeDistance로 맞춘다. 남은 제동 거리까지 더해 목표에 닿으면 속도는 그대로 둔 채 제동으로 넘어간다.
 public class BurstChargeAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Execute && !StoppedByWall && Mathf.Abs(controller.Velocity.x) > .01f;
+
     private BurstChargeDataSO chargeData;
     private LaserPreviewLine activePreview;
     private bool wallHitSubscribed;

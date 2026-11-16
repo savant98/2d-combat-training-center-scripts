@@ -16,8 +16,13 @@ public abstract class EnemyAbilityDataSO : ScriptableObject
     [Tooltip("실행하지 않는 동안 초당 회복하는 점수입니다. 0이면 종료 시 증감만 사용합니다.")]
     [Min(0f)] public float weightRecoveryPerSecond = 0f;
 
-    [Header("패턴 접촉 피해")]
-    [Tooltip("이 패턴이 실행 중일 때 몸통·검·돌진의 접촉 피해를 아래 값으로 덮어씁니다. 끄면 Prefab 기본값을 사용합니다.")]
+    [Header("몸통 공격")]
+    [Tooltip("실제 몸통 공격 구간에서만 피해를 줍니다. 준비·회수와 내부 대기 구간은 패턴 코드에서 제외합니다.")]
+    public bool bodyAttackEnabled;
+    [Min(0f)] public float bodyAttackDamage = 20f;
+
+    [Header("무기 접촉 피해")]
+    [Tooltip("검·다리 등 별도 무기 판정의 피해를 덮어씁니다. 몸통 공격 피해와는 독립적입니다.")]
     public bool overrideContactDamage;
     [Min(0f)] public float contactDamage = 20f;
 

@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class CentralAreaAttackAbility : AiAbility
 {
+    public override bool IsBodyAttackActive => State == AbilityState.Windup && windupPhase == WindupPhase.Dropping && controller.Velocity.y < -.01f;
+
     private enum WindupPhase
     {
         WaitingForTeleport,
