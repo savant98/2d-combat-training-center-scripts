@@ -780,9 +780,16 @@ public sealed partial class EnemyBalanceWindow : EditorWindow
         {
             using (new EditorGUI.DisabledScope(true)) EditorGUILayout.ObjectField(label, asset, typeof(UnityEngine.Object), false);
             if (GUILayout.Button("찾기", GUILayout.Width(45))) EditorGUIUtility.PingObject(asset);
-            if (GUILayout.Button("선택", GUILayout.Width(45))) Selection.activeObject = asset;
+            if (GUILayout.Button("선택", GUILayout.Width(45))) SelectAssetForEditing(asset);
         }
         if (asset != null) EditorGUILayout.SelectableLabel(AssetDatabase.GetAssetPath(asset), EditorStyles.miniLabel, GUILayout.Height(18));
+    }
+
+    private void SelectAssetForEditing(UnityEngine.Object asset)
+    {
+        Selection.activeObject = asset;
+        // Tool에서 연 Inspector의 고유값 변경도 '설정 저장'에서 놓치지 않는다.
+        MarkEdited(asset as ScriptableObject);
     }
 
     private void DrawConnection(EnemyEntry entry, Component component, string field, Type assetType, string label)

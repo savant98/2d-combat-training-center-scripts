@@ -21,6 +21,9 @@ public class FlyingPatrolAbility : FlyingAbility
 
     public float HoldDuration => holdDuration;
 
+    // 순간이동 뒤 현재 위치에서 유지 방향을 다시 정할 때 사용한다.
+    protected void ResetPatrolSide() => soloSide = 0;
+
     protected override void Awake()
     {
         base.Awake();

@@ -57,13 +57,14 @@ public static class EnemyBalanceVisuals
         }
         else if (kind.Contains("mine")) DrawMine(canvas, color);
         else if (kind.Contains("blackhole")) DrawOrbit(canvas, color, true);
+        else if (kind.Contains("trilaser")) DrawTriLaser(canvas, color);
         else if (kind.Contains("cubebomb") || kind.Contains("bomb")) DrawBomb(canvas, color);
         else if (kind.Contains("cubebounce") || kind.Contains("bounce")) DrawBounce(canvas, color);
         else if (kind.Contains("shockwave") || kind.Contains("groundwave") || kind.Contains("centralarea")) DrawWave(canvas, color);
         else if (kind.Contains("leapslam")) DrawLeapSlam(canvas, color);
         else if (kind.Contains("slam") || kind.Contains("downattack")) DrawSlam(canvas, color);
         else if (kind.Contains("laser")) DrawLaser(canvas, color, kind.Contains("rain") || kind.Contains("storm"));
-        else if (kind.Contains("teleport") || kind.Contains("backjump")) DrawTeleport(canvas, color);
+        else if (kind.Contains("teleport") || kind.Contains("backjump") || kind.Contains("reposition")) DrawTeleport(canvas, color);
         else if (kind.Contains("jump") || kind.Contains("parabolic")) DrawJump(canvas, color);
         else if (kind.Contains("melee") || kind.Contains("slash") || kind.Contains("grab")) DrawMelee(canvas, color);
         else if (kind.Contains("patrol") || kind.Contains("hover") || kind.Contains("spin")) DrawOrbit(canvas, color, false);
@@ -207,6 +208,18 @@ public static class EnemyBalanceVisuals
         c.Arc(new Vector2(46, 33), 17, -80, 80, 3f, color);
         Arrow(c, new Vector2(22, 33), new Vector2(44, 33), color, 2.5f);
         c.Line(new Vector2(31, 47), new Vector2(33, 51), 2f, color);
+    }
+
+    private static void DrawTriLaser(IconCanvas c, Color color)
+    {
+        var center = new Vector2(14, 32);
+        for (int i = -1; i <= 1; i++)
+        {
+            float a = i * Mathf.PI / 6f;
+            var direction = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+            c.Line(center + direction * 5f, center + direction * 40f, 2.5f, color);
+        }
+        c.Disc(center, 3f, color);
     }
 
     private static void DrawMelee(IconCanvas c, Color color)
