@@ -24,7 +24,25 @@ public class EnemyUI : MonoBehaviour
     [Tooltip("브레이크 가능 아이콘 둘레의 남은 시간 고리(Filled). 브레이크 가능 시간 동안 1에서 0으로 줄어든다.")]
     [SerializeField] private Image breakTimerFill;
 
+    [Header("Cell Bars")]
+    [Tooltip("보스 체력바와 같은 비스듬한 칸 막대. 연결하면 hpBar Image를 채우는 대신 이 막대로 그린다(연결하지 않은 옛 구조의 Prefab은 예전처럼 동작한다).")]
+    [SerializeField] private EnemyHudBar hpCells;
+    [SerializeField] private EnemyHudBar shieldCells;
+    [Tooltip("보스가 아닌 쉴드 적이 브레이크 동안 받은 피해의 합을 몸 옆에 띄우는 표시(Assets/Prefabs/UI/BreakDamageCounter). 보스는 StageHUD가 띄운다.")]
+    [SerializeField] private CanvasGroup breakDamageCounterPrefab;
+    [Tooltip("그 표시의 크기 배율(보스 표시를 1로 볼 때).")]
+    [SerializeField] private float breakDamageCounterScale = 0.6f;
+
+    // 칸 막대는 값이 바뀐 뒤 이만큼 보였다가(깎인 양이 줄어드는 것까지 보인다) 서서히 사라진다.
+    private const float BarHoldTime = 1.2f;
+    private const float BarFadeTime = 0.3f;
+
     private Tween breakTimerTween;
+    private Tween hideBarsTween;
+    private EnemyController owner;
+    private bool breaking;
+    private BreakDamageCounterView breakCounter;
+    private bool countingBreakDamage;
 
     private Tween hideShieldTween;
     private Tween hideHPTween;
@@ -38,6 +56,7 @@ public class EnemyUI : MonoBehaviour
     {
         GetComponent<Canvas>().worldCamera = Camera.main;
         DisableUnusedRaycaster();
+        owner = GetComponentInParent<EnemyController>();
 
         hpGroup.alpha = 0;
 
@@ -75,6 +94,15 @@ public class EnemyUI : MonoBehaviour
     }
     public void ShowShield(float normalized, bool isBoss)
     {
+        if (shieldCells != null)
+        {
+            shieldCells.Show(normalized);
+            RevealBars();
+            if (isBoss)
+                UIManager.Instance.UpdateBossShield(normalized);
+            return;
+        }
+
         shieldBar.transform.DOKill();
 
         shieldFill.Push(shieldBar.DOFillAmount(normalized, 0.2f));
@@ -103,6 +131,15 @@ public class EnemyUI : MonoBehaviour
     }
     public void ShowHP(float normalized, bool isBoss)
     {
+        if (hpCells != null)
+        {
+            hpCells.Show(normalized);
+            RevealBars();
+            if (isBoss)
+                UIManager.Instance.UpdateBossHP(normalized);
+            return;
+        }
+
         hpBar.transform.DOKill();
         subHpBar.transform.DOKill();
         subHpBarFadeImage.transform.DOKill();
@@ -146,6 +183,15 @@ public class EnemyUI : MonoBehaviour
     {
         knockDownGroup.alpha = 1f;
         breakNowGroup.alpha = 0f;
+
+        // 브레이크 시작: 막대를 계속 보이고, 브레이크 동안 깎은 덩어리를 깎인 양으로 붙잡아 둔다.
+        breaking = true;
+        if (hpCells != null)
+        {
+            hpCells.HoldTrail(true);
+            RevealBars();
+        }
+        BeginBreakCounter();
     }
     public void HideBreakable()
     {
@@ -155,27 +201,129 @@ public class EnemyUI : MonoBehaviour
     public void HideKnockDown()
     {
         knockDownGroup.DOFade(0, 0.3f);
+        EndBreak();
+    }
+
+    // 브레이크 끝: 붙잡아 둔 깎인 양을 줄이고, 합계를 '총 피해'로 바꿔 잠시 보여 준다.
+    private void EndBreak()
+    {
+        if (!breaking)
+            return;
+        breaking = false;
+        if (hpCells != null)
+        {
+            hpCells.HoldTrail(false);
+            RevealBars();
+        }
+        EndBreakCounter();
+    }
+
+    // 칸 막대: 체력·쉴드 어느 쪽이 바뀌어도 두 줄을 함께 보인다(쉴드를 깎는 동안에도 남은 체력이 보인다).
+    // 브레이크 중에는 숨기지 않는다. 숨김 예약은 트윈 하나를 되감아 쓴다(쉴드 재생 중에는 매 프레임 불린다).
+    private void RevealBars()
+    {
+        SetBarAlpha(1f);
+        if (breaking)
+        {
+            hideBarsTween?.Pause();
+            return;
+        }
+        if (hideBarsTween == null)
+            hideBarsTween = DOVirtual.Float(1f, 0f, BarFadeTime, SetBarAlpha).SetDelay(BarHoldTime).SetAutoKill(false).SetLink(gameObject);
+        else
+            hideBarsTween.Restart(true);
+    }
+    private void SetBarAlpha(float alpha)
+    {
+        hpGroup.alpha = alpha;
+        if (shieldCells != null && shieldGroup != null)
+            shieldGroup.alpha = alpha;
+    }
+
+    // 보스가 아닌 쉴드 적: 브레이크 동안 받은 피해의 합을 몸 옆에 띄운다. 그 적이 실제로 잃은 체력만 센다(읽기만 한다).
+    private void BeginBreakCounter()
+    {
+        EndBreakCounter();
+        if (breakDamageCounterPrefab == null || owner == null || owner.Health == null || owner.Health.IsBossEnemy)
+            return;
+        breakCounter = BreakDamageCounterView.Begin(breakDamageCounterPrefab, owner, breakDamageCounterScale);
+        if (breakCounter == null)
+            return;
+        EnemyHealth.DamageApplied += OnDamageApplied;
+        countingBreakDamage = true;
+    }
+    private void EndBreakCounter()
+    {
+        if (countingBreakDamage)
+        {
+            EnemyHealth.DamageApplied -= OnDamageApplied;
+            countingBreakDamage = false;
+        }
+        if (breakCounter != null)
+        {
+            breakCounter.End(owner);
+            breakCounter = null;
+        }
+    }
+    private void OnDamageApplied(EnemyHealth health, WeaponBaseSO.DamageInfo info, float applied)
+    {
+        if (breakCounter == null || owner == null || health != owner.Health)
+            return;
+        breakCounter.Add(owner, applied);
+    }
+    // 처치되거나 풀로 돌아가며 꺼질 때: 세던 합계는 그 자리에서 총 피해로 바뀌어 잠시 남는다.
+    private void OnDisable()
+    {
+        breaking = false;
+        EndBreakCounter();
+    }
+    // 풀에서 다시 나올 때: 칸 막대를 가득 찬 채 숨긴다. 쉴드가 없는 적은 소환 때 ResetEnemyHUD가 불리지 않아,
+    // 그대로 두면 지난번에 처치될 때의 값에서 시작한다.
+    private void OnEnable()
+    {
+        if (hpCells == null)
+            return;
+        hideBarsTween?.Pause();
+        hpCells.ResetTo(1f);
+        if (shieldCells != null)
+            shieldCells.ResetTo(1f);
+        SetBarAlpha(0f);
     }
     public void ResetEnemyHUD()
     {
         RefreshBossName();
         breakTimerTween?.Kill();
         if (breakTimerFill != null) breakTimerFill.fillAmount = 1f;
+        breaking = false;
+        EndBreakCounter();
 
-        hpBar.transform.DOKill();
-        subHpBar.transform.DOKill();
-        subHpBarFadeImage.transform.DOKill();
+        if (hpCells != null)
+        {
+            // 칸 막대: 가득 찬 상태로 숨긴다.
+            hideBarsTween?.Pause();
+            hpCells.ResetTo(1f);
+            if (shieldCells != null)
+                shieldCells.ResetTo(1f);
+            SetBarAlpha(0f);
+        }
+        else
+        {
+            hpBar.transform.DOKill();
+            subHpBar.transform.DOKill();
+            subHpBarFadeImage.transform.DOKill();
 
-        hpBar.fillAmount = 1;
-        subHpBar.fillAmount = 1;
-        subHpBarFadeImage.fillAmount = 1;
+            hpBar.fillAmount = 1;
+            subHpBar.fillAmount = 1;
+            subHpBarFadeImage.fillAmount = 1;
+        }
 
         if (shieldBar == null)
             return;
 
         knockDownGroup.alpha = 0;
         breakNowGroup.alpha = 0;
-        shieldBar.fillAmount = 1;
+        if (shieldCells == null)
+            shieldBar.fillAmount = 1;
 
         if (bossMessageGroup != null)
             ShowBossMessage();

@@ -213,6 +213,29 @@ public class InputManager : MonoBehaviour
 
         return false;
     }
+    // 이동 입력에 아래가 들어 있는지(2026-11-17, 저장 기술의 '아래 + 공격'). 다른 방향이 함께 눌려 있어도 아래가 들어 있으면 true다.
+    // 합친 Move가 아래 세 방향(아래, 왼쪽 아래, 오른쪽 아래 = 수평에서 아래로 22.5도 넘게)에 있거나, 키보드 합성 바인딩의 down 키가 눌려 있으면
+    // (위와 아래를 함께 눌러 Move가 0이어도) 아래로 본다. 입력 설정 에셋은 바꾸지 않는다.
+    public bool MoveDownHeld
+    {
+        get
+        {
+            if (IsDownward(Move)) return true;
+            if (inputActions == null) return false;
+            var action = inputActions.Player.Move;
+            var controls = action.controls;
+            for (int i = 0; i < controls.Count; i++)
+            {
+                int index = action.GetBindingIndexForControl(controls[i]);
+                if (index < 0) continue;
+                var binding = action.bindings[index];
+                if (binding.isPartOfComposite && binding.name == "down" && controls[i].IsPressed()) return true;
+            }
+            return false;
+        }
+    }
+    public static bool IsDownward(Vector2 move) => move.sqrMagnitude > 0.0001f && -move.y >= 0.3827f * move.magnitude;
+
     public static bool Held(Button b) =>
         Instance != null && Instance.buttonDatas.TryGetValue(b, out var buttonData) && buttonData.state == ButtonState.Held;
 

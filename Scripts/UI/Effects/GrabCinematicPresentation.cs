@@ -36,6 +36,7 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
     private bool returning, closeRequested;
     private readonly List<SpriteCopy> sprites = new List<SpriteCopy>();
     private readonly List<LineCopy> lines = new List<LineCopy>();
+    private readonly List<MeshCopy> meshes = new List<MeshCopy>();
     private readonly List<TransformCopy> transforms = new List<TransformCopy>();
     private ActorCopy firstCopy, secondCopy;
     private GrabCinematicOrbitView orbitView;
@@ -93,7 +94,8 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
     public RenderTexture ActorColorTexture => texture;
     public int CoverageExcludedCount { get; private set; }
     public int HiddenOriginalCount => originals.Count;
-    public int ActorRendererCount => sprites.Count + lines.Count;
+    public int ActorRendererCount => sprites.Count + lines.Count + meshes.Count;
+    public int ActorMeshCount => meshes.Count;
     public bool HasActorView => actorCamera != null;
     public float ViewSize => actorCamera != null ? actorCamera.orthographicSize : 0;
     public GrabCinematicOrbitView OrbitView => orbitView;
@@ -300,6 +302,25 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
             originals[original] = original.forceRenderingOff;
             lines.Add(new LineCopy { source = original, copy = ensure(original.transform).gameObject.AddComponent<LineRenderer>(), wasForcedOff = original.forceRenderingOff });
         }
+        // 3D 무기 메시(Player의 칼·검집)도 같은 Mesh·재질을 공유한 복사본을 만든다(2026-11-17). 2D Renderer가 정렬 층으로 Sprite와 섞어 그리므로
+        // 층·순서를 맞춘다. FixedMotionBody의 대리 Renderer(__MotionPresentation_)는 원본을 대신 그리는 것이라 복사하지 않는다.
+        foreach (var original in root.GetComponentsInChildren<MeshRenderer>(true))
+        {
+            if (original.name.StartsWith("__MotionPresentation_", System.StringComparison.Ordinal)) continue;
+            if (!original.TryGetComponent<MeshFilter>(out var filter)) continue;
+            originals[original] = original.forceRenderingOff;
+            var node = ensure(original.transform).gameObject;
+            var copyFilter = node.AddComponent<MeshFilter>();
+            copyFilter.sharedMesh = filter.sharedMesh;
+            var copy = node.AddComponent<MeshRenderer>();
+            copy.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            copy.receiveShadows = false;
+            copy.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+            copy.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+            copy.motionVectorGenerationMode = MotionVectorGenerationMode.ForceNoMotion;
+            copy.enabled = false;                                   // 첫 동기화 전에는 그리지 않는다
+            meshes.Add(new MeshCopy { source = original, sourceFilter = filter, copy = copy, copyFilter = copyFilter, wasForcedOff = original.forceRenderingOff });
+        }
         foreach (var original in root.GetComponentsInChildren<Transform>(true)) ensure(original);
         foreach (var original in root.GetComponentsInChildren<Renderer>(true))
             if (!originals.ContainsKey(original)) originals[original] = original.forceRenderingOff;
@@ -335,7 +356,7 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
         framingOffset=Vector3.zero;
         Vector3 viewReference=Vector3.Lerp(reference,worldCore,worldMix);
         foreach (var pair in transforms) pair.Sync(stageOrigin - viewReference);
-        foreach (var pair in sprites) pair.Sync(); foreach (var pair in lines) pair.Sync();
+        foreach (var pair in sprites) pair.Sync(); foreach (var pair in lines) pair.Sync(); foreach (var pair in meshes) pair.Sync();
         Vector3 sourcePosition = stageOrigin + source.transform.position - reference + Vector3.back * 20;
         Quaternion sourceRotation = source.transform.rotation;
         if (orbitView != null)
@@ -552,6 +573,22 @@ public sealed class GrabCinematicPresentation : MonoBehaviour, IUIInputReceiver
             copy.enabled = source.enabled && source.gameObject.activeInHierarchy && !wasForcedOff;
             copy.sprite = source.sprite; copy.sharedMaterial = source.sharedMaterial; copy.color = source.color;
             copy.flipX = source.flipX; copy.flipY = source.flipY; copy.maskInteraction = SpriteMaskInteraction.None;
+            copy.sortingLayerID = source.sortingLayerID; copy.sortingOrder = source.sortingOrder;
+            source.GetPropertyBlock(properties); copy.SetPropertyBlock(properties);
+        }
+    }
+    // 칼·검집 같은 3D 메시. 복사본은 원본과 같은 Transform 체인(부모의 좌우 뒤집힘 포함)을 따르므로 면 방향도 원본과 같다.
+    private sealed class MeshCopy
+    {
+        public MeshRenderer source, copy; public MeshFilter sourceFilter, copyFilter; public bool wasForcedOff;
+        private readonly MaterialPropertyBlock properties = new MaterialPropertyBlock();
+        private readonly List<Material> materials = new List<Material>();
+        public void Sync()
+        {
+            if (source == null || sourceFilter == null) { copy.enabled = false; return; }
+            copy.enabled = source.enabled && source.gameObject.activeInHierarchy && !wasForcedOff;
+            if (copyFilter.sharedMesh != sourceFilter.sharedMesh) copyFilter.sharedMesh = sourceFilter.sharedMesh;
+            source.GetSharedMaterials(materials); copy.SetSharedMaterials(materials);
             copy.sortingLayerID = source.sortingLayerID; copy.sortingOrder = source.sortingOrder;
             source.GetPropertyBlock(properties); copy.SetPropertyBlock(properties);
         }

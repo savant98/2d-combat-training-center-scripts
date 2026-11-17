@@ -48,6 +48,13 @@ public abstract class WeaponBaseSO : ScriptableObject
     // 준비 단계가 시작될 때 불린다. 실행 코루틴이 시작되기 전에 보여 줄 것(예: 예고선)이 있는 무기가 재정의한다.
     public virtual void OnWindupStarted(CharacterController2D controller) { }
 
+    // 이 기술을 연출하는 모형의 무기 이름(PlayerWeaponAbility의 무기별 모형 표에서 찾는다). null이면 그 세트의 기술용 모형을 쓴다.
+    // 칼을 뽑아 드는 기술처럼, 어느 세트에 넣어도 정해진 무기의 모형으로 연출해야 하는 기술이 재정의한다.
+    public virtual string PresentationWeaponName => null;
+
+    // 회수 Clip이 대기 자세에서 끝나는 기술인지. 그러면 대기로 넘어갈 때 섞지 않는다(PlayerWeaponAbility.EndAttack).
+    public virtual bool RecoverEndsAtIdle => false;
+
     [Serializable]
     public struct DamageInfo
     {

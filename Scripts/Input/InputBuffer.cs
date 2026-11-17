@@ -32,6 +32,8 @@ public class InputBuffer
     {
         return Time.time - lastInputTime <= bufferTime;
     }
+    // 소비하지 않고 유효한 입력이 있는지만 본다(2026-11-17, 저장 기술 선입력: 쓸 수 있을 때까지 남겨 둔다).
+    public bool IsValid => IsBuffered();
 
     public bool Use()
     {

@@ -7,9 +7,9 @@ using UnityEngine.UI;
 
 // 화면 위쪽 보스 체력바(2026-11-15 리메이크, 사용자 요청 "바뀐 디자인에 맞게, playerHUD의 체력을 참고하되 아주 복잡할 필요는 없다").
 // PlayerHUD 체력과 같은 비스듬한 칸 셰이더(UI/PlayerHudHpFill)를 보스용 재질로 쓴다.
-//   체력: 붉은 칸. 깎이면 흰 칸이 잠시 남았다가 따라 줄어든다(_Trail). 갓 깎인 조각은 하얗게 번쩍였다가 가라앉고(_Fresh·_TrailFlash),
-//     깎인 덩어리의 끝은 선으로 닫힌다(_TrailEdge). 피격 번쩍임은 밝은 붉은 주황이라 깎인 양의 흰색을 덮지 않는다
-//     (2026-11-15 사용자 요청 "깎일 때 얼마나 깎이는지 잘 안 보인다 — 노란 게이지와 색이 비슷하고 효과도 적다").
+//   체력: 붉은 칸. 깎이면 노랑~주황 칸이 밝게 남았다가 따라 줄어든다(_Trail). 갓 깎인 조각은 밝은 노랑으로 번쩍였다가 가라앉고(_Fresh·_TrailFlash),
+//     깎인 덩어리의 끝은 선으로 닫힌다(_TrailEdge). 피격 번쩍임은 밝은 붉은 주황이라 깎인 양을 덮지 않는다
+//     (2026-11-15 사용자 요청 "깎일 때 얼마나 깎이는지 잘 안 보인다" → 흰색, 2026-11-17 "하얀색이라 잘 안 보여, 노란색-주황색 계열, 발광도 높여" → 앰버).
 //     브레이크 중에는 깎인 양을 브레이크 시작 직전 체력에 붙잡아 두어 '이번 브레이크에 깎은 덩어리'가 커지며 보이고, 끝나면 잠시 뒤 줄어든다.
 //   쉴드: 체력 위의 얇은 청록 칸.
 //   쉴드가 0이 되면 쉴드 줄 오른쪽 끝에 노란 '브레이크 가능' 아이콘과 남은 시간 막대가, 브레이크 중에는 '브레이크' 표시와 남은 시간이 뜬다.
@@ -42,7 +42,7 @@ public class StageHUD : MonoBehaviour
 
     [Header("Colors")]
     [SerializeField] private Color hpIdleEmission = new Color(1f, 0.26f, 0.12f, 1f);
-    [Tooltip("피격 때 체력 칸 전체의 번쩍임. 깎인 양(흰색)을 덮지 않게 밝은 붉은 주황")]
+    [Tooltip("피격 때 체력 칸 전체의 번쩍임. 깎인 양(노랑~주황)을 덮지 않게 밝은 붉은 주황")]
     [SerializeField] private Color hpDamageEmission = new Color(1f, 0.42f, 0.28f, 1f);
     [SerializeField] private Color shieldIdleEmission = new Color(0.25f, 0.9f, 1f, 1f);
     [SerializeField] private float flashStrength = 1.7f;

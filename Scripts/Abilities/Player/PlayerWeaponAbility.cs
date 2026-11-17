@@ -7,7 +7,7 @@ public class PlayerWeaponAbility : PlayerAbility
     public override bool IsActive => abilityState != AbilityState.None;
     public AbilityState AttackPhase => abilityState;
     public Vector2 PrimaryFireDirection { get; private set; } = Vector2.right;
-    public bool IsStarShotActive => !isStoringSkill && !isHammerDrop && IsActive && selectedWeapon == normalWeapon
+    public bool IsStarShotActive => !isStoringSkill && IsActive && selectedWeapon == normalWeapon
         && normalWeapon is RangedWeaponSO ranged && ranged.projectilePrefab is StarShot;
     private PlayerStarShotAim starAim;
     private bool restoreStorageIdle;
@@ -17,26 +17,43 @@ public class PlayerWeaponAbility : PlayerAbility
     private readonly List<StoredGearSkill> storedSkills = new();
     public IReadOnlyList<StoredGearSkill> StoredSkills => storedSkills;
     public bool IsStoringSkill => isStoringSkill;
-    public bool IsHammerDropActive => isHammerDrop;
     public float SkillStorageProgress => isStoringSkill ? 1f - Mathf.Clamp01(timer / weaponData.skillStoreDuration) : 0f;
     public event System.Action StoredSkillsChanged;
     public event System.Action<StoredGearSkill> SkillStorageStarted;
     public event System.Action<bool> SkillStorageFinished;
     private StoredGearSkill pendingSkill;
-    private bool isStoringSkill, isHammerDrop, hammerDiving;
-    private float dropElapsed;
+    private bool isStoringSkill;
     private int executionSetIndex = -1;
     private bool suppressHeldPrimaryUntilRelease;
     private readonly Dictionary<WeaponBaseSO, System.Action<CharacterController2D, Vector2>> hitHandlers = new();
-    private readonly Collider2D[] dropHits = new Collider2D[32];
-    private readonly HashSet<EnemyHealth> dropTargets = new();
 
     [Header("Melee Hitboxes")]
     [SerializeField] private string hammerWeaponName = "Hammer";
     [SerializeField] private string hammerSkillName = "HammerSkill";
     [SerializeField] private MeleeHitbox[] hammerHitBoxes;
     [SerializeField] private MeleeHitbox[] hammerSkillBoxes;
+    [Tooltip("세트별 기술용 모형(0 = 해머 계열 기술, 1 = 별 계열 기술). 그 세트의 Gear·보조 무기는 이 모형을 움직이는 Clip으로 연출한다.")]
     [SerializeField] private GameObject[] weaponModels;
+    [Tooltip("기본 공격 자리에 넣을 수 있는 무기별 대기 모형. 어느 세트에 넣든 그 무기의 모형이 보인다(표에 없는 무기는 세트의 기술용 모형을 쓴다).")]
+    [SerializeField] private IdleWeaponModel[] idleModels;
+
+    [System.Serializable]
+    private class IdleWeaponModel
+    {
+        public string weaponName;
+        public GameObject model;
+    }
+
+    [Header("Body Core")]
+    [Tooltip("몸 중심의 코어(WeaponModel/Core). 해머의 손잡이 끝 고리가 여기에 물려 있다. WeaponModel의 자식이라 무기와 함께 움직인다.")]
+    [SerializeField] private GameObject bodyCore;
+    [Tooltip("이 모형이 보이는 동안에는 코어를 숨긴다. 그 자리에 자기 코어를 가진 무기(별 총의 소켓과 별 코어)를 넣는다.")]
+    [SerializeField] private GameObject[] coreHiddenBy;
+
+    [Header("Sword")]
+    [Tooltip("칼의 weaponName. 이 무기가 기본 공격이면 아래 판정을 쓴다(콤보 단계 × MeleeWeaponSO.hitsPerStep개, 단계 순서대로).")]
+    [SerializeField] private string swordWeaponName = "Sword";
+    [SerializeField] private MeleeHitbox[] swordHitBoxes;
 
     [Header("Gear UI")]
     [SerializeField] private PlayerGearUI gearUI;
@@ -57,6 +74,19 @@ public class PlayerWeaponAbility : PlayerAbility
 
     private readonly InputBuffer normalWeaponBuffer = new(0f);
     private readonly InputBuffer secondaryWeaponBuffer = new(0f);
+    // 저장 기술 사용 입력(아래 + 공격). 누른 순간 아래가 들어 있고 저장해 둔 기술이 있으면 기본 공격 버퍼 대신 여기에 넣는다(2026-11-17).
+    // 기본 공격 중이면 곧바로 그 공격을 끊고 쓰고, 다른 기술 중이면 남겨 두었다가 그 기술이 끝나는 프레임에 쓴다(회수 중에 누른 것은 끝날 때까지 유지).
+    private readonly InputBuffer storedSkillBuffer = new(0f);
+    // 아래와 공격을 거의 함께 눌렀는데 공격이 한두 프레임 먼저 들어온 경우: 그 공격 키를 누르고 있는 채 이 시간 안에 아래가 들어오면 아래 + 공격으로 본다.
+    private const float SimultaneousInputWindow = 0.1f;
+    private float primaryPressTime = -999f;
+    private bool primaryPressPending;
+    private bool primaryPressDown;
+    // 공격·기술 중에 새로 누른 Gear 키(2026-11-17). 끝났을 때 키를 아직 누르고 있으면 충전을 시작한다.
+    private bool gearPressQueued;
+    private bool gearKeyDown;
+    // 공격마다 하나씩 늘리는 번호. 지난 공격의 코루틴이 다음 공격을 회수로 넘기지 못하게 한다(기술을 끝나는 프레임에 바로 이을 때).
+    private int attackRun;
     private readonly Dictionary<WeaponBaseSO, float> weaponLastUseTimes = new();
 
     private PlayerWeaponDataSO weaponData;
@@ -71,7 +101,20 @@ public class PlayerWeaponAbility : PlayerAbility
     // restartAfterHit: 판정이 켜지기 전에 끊긴 첫 타격(효과 없음)을 다시 시작할지. currentHitboxOpened: 이번 타격의 판정이 한 번이라도 켜졌는지.
     private bool restartAfterHit;
     private bool currentHitboxOpened;
-    private bool IsNormalHammer => !isHammerDrop && !isStoringSkill && selectedWeapon == normalWeapon && selectedWeapon is MeleeWeaponSO && selectedWeapon.weaponName == hammerWeaponName;
+    // 기본 공격 자리의 근접 무기(해머·칼)를 쓰는 중인지. 유지 입력 콤보·판정 정리처럼 두 무기가 함께 쓰는 처리에 쓴다.
+    private bool IsNormalMelee => !isStoringSkill && selectedWeapon == normalWeapon && selectedWeapon is MeleeWeaponSO;
+    // 실행 끝·회수 중의 다음 타격 입력을 남은 시간을 기다리지 않고 잇는 무기인지(MeleeWeaponSO.chainWithoutRecover).
+    private bool ChainsWithoutRecover => IsNormalMelee && ((MeleeWeaponSO)selectedWeapon).chainWithoutRecover;
+    // 기본 근접 공격이 끊기거나 끝날 때 끌 궤적. Initialize에서 한 번 찾아 둔다. 칼은 두 자루라 궤적도 둘이다.
+    private Renderer hammerArc, swordArc, swordArcOff;
+    // 대기 모형이 세트의 기술용 모형과 다른 세트(예: 칼)에서 Gear·보조 무기를 쓰는 동안 기술용 모형으로 바꿔 들었는지(끝나면 되돌린다).
+    private bool skillModelShown;
+    // 해머 모형으로 연출한 기술이 끝나면 Animator가 WeaponRecover → Idle을 이 시간 동안 섞는다(큰 해머가 줄어들며 사라진다).
+    // 그동안 칼 모형을 켜 두면 두 무기가 겹쳐 보이므로 섞임이 끝나는 시각에 켠다. PlayerBase.controller의 전이 시간과 같아야 한다.
+    private const float SkillModelReturnBlend = 0.1f;
+    private float modelReturnTime = -1f;   // 미뤄 둔 대기 모형을 켤 시각(-1 = 없음)
+    private GameObject hammerAttackRig;    // 공격용 해머(WeaponModel/MeleeWeapon). 해머 기술의 Clip이 켠다
+    private SpriteRenderer hammerAttackBlade;   // 그 안의 해머 그림(WeaponModel/MeleeWeapon/Hammer)
 
     //Gear
     private enum GearState
@@ -102,6 +145,7 @@ public class PlayerWeaponAbility : PlayerAbility
         weaponSwapCoolTime = weaponData.swapCoolTime;
 
         normalWeaponBuffer.SetBufferTime(data.inputBufferTime);
+        storedSkillBuffer.SetBufferTime(data.inputBufferTime);
         secondaryWeaponBuffer.SetBufferTime(data.inputBufferTime);
 
         controller.OnNormalWeapon += RegisterNormalAttack;
@@ -141,7 +185,13 @@ public class PlayerWeaponAbility : PlayerAbility
         }
         starAim = gameObject.AddComponent<PlayerStarShotAim>();
         starAim.Initialize(controller, this);
-        controller.OnLanded += HandleHammerDropLanding;
+        hammerArc = FindArc("HammerArc");
+        swordArc = FindArc("SwordArc");
+        swordArcOff = FindArc("SwordArcOff");
+        var attackRig = controller.model.transform.Find("WeaponModel/MeleeWeapon");
+        hammerAttackRig = attackRig != null ? attackRig.gameObject : null;
+        var attackBlade = attackRig != null ? attackRig.Find("Hammer") : null;
+        hammerAttackBlade = attackBlade != null ? attackBlade.GetComponent<SpriteRenderer>() : null;
         ApplyWeaponSet(0, true);
 
         selectedWeapon = normalWeapon;
@@ -158,7 +208,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
     public void ResetSkillGauge()
     {
-        if (isStoringSkill || isHammerDrop || executionSetIndex >= 0) Interrupt();
+        if (isStoringSkill || executionSetIndex >= 0) Interrupt();
         storedSkills.Clear();
         StoredSkillsChanged?.Invoke();
         skillGauge = 0;
@@ -172,11 +222,29 @@ public class PlayerWeaponAbility : PlayerAbility
         UIManager.Instance.UpdateSkillGauge(skillGauge, maxSkillGauge, weaponData.weaponSets[currentSetIndex]);
         if (skillBattery != null) skillBattery.SetGauge(skillGauge, maxSkillGauge, silent);
     }
+    // 이동 입력에 아래가 들어 있는지(대각선 아래, 다른 방향을 함께 누른 것 포함)
+    private bool IsDownHeld() => InputManager.Instance != null ? InputManager.Instance.MoveDownHeld : InputManager.IsDownward(controller.MoveInput);
+
     private void RegisterNormalAttack()
     {
         suppressHeldPrimaryUntilRelease = gearState != GearState.Inactive;
-        if (isStoringSkill || isHammerDrop) { normalWeaponBuffer.Reset(); return; }
-        if (gearState == GearState.Waiting && controller.MoveInput.y >= -.5f)
+        if (isStoringSkill) { normalWeaponBuffer.Reset(); return; }
+        bool down = IsDownHeld();
+        primaryPressPending = false;
+        if (gearState == GearState.Inactive && storedSkills.Count > 0)
+        {
+            if (down)
+            {
+                // 아래 + 공격: 저장 기술. 기본 공격 버퍼에는 넣지 않아 콤보 이어 치기가 이 입력을 가져가지 않는다.
+                suppressHeldPrimaryUntilRelease = true;
+                storedSkillBuffer.RegisterInput();
+                return;
+            }
+            primaryPressTime = Time.time;
+            primaryPressPending = true;
+        }
+        primaryPressDown = down;
+        if (gearState == GearState.Waiting && !down)
         {
             var target = weaponData.weaponSets[currentSetIndex].GetGearWeapon(gearStage);
             if (target == null || !IsWeaponCooldownReady(target)) { normalWeaponBuffer.Reset(); return; }
@@ -186,7 +254,7 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void RegisterSecondaryAttack()
     {
-        if (isStoringSkill || isHammerDrop || secondaryWeapon == null || !IsWeaponCooldownReady(secondaryWeapon))
+        if (isStoringSkill || secondaryWeapon == null || !IsWeaponCooldownReady(secondaryWeapon))
         { secondaryWeaponBuffer.Reset(); return; }
         secondaryWeaponBuffer.RegisterInput();
     }
@@ -203,16 +271,19 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (!CanDo()) { HoldAttackThroughHit(); return; }
         restartAfterHit = false;
+        // 기술 저장과 사용은 모두 '아래 + 공격'이다(아래를 누른 채 공격을 눌러도 되고, 대각선 아래처럼 다른 방향이 함께 눌려도 된다).
+        // Gear 대기 중이면 그 단계의 기술을 저장하고, Gear를 쓰지 않을 때는 저장해 둔 기술을 꺼내 쓴다(누른 순간 아래가 들어 있었으면 storedSkillBuffer).
+        bool down = primaryPressDown || IsDownHeld();
         if (gearState != GearState.Inactive)
         {
             if (normalWeaponBuffer.ConsumeIfValid())
             {
                 suppressHeldPrimaryUntilRelease = true;
-                if (gearState == GearState.Charging && chargingTargetStage == 1 && gearStage == 0)
-                    TryUseStoredSkill();
-                else if (gearState == GearState.Waiting && controller.MoveInput.y < -.5f)
+                // Gear를 충전하는 동안에는 아무 일도 하지 않는다(TryStartGearWeapon은 대기 중에만 쏜다).
+                // 저장하려다 조금 일찍 눌러, 저장해 둔 기술이 대신 나가 버리지 않게 한다.
+                if (down && gearState == GearState.Waiting)
                     TryStoreGearSkill();
-                else TryStartGearWeapon();
+                else if (!down) TryStartGearWeapon();
                 if (IsActive) { secondaryWeaponBuffer.Reset(); return; }
             }
             if (secondaryWeaponBuffer.ConsumeIfValid()) StartSecondaryWeapon();
@@ -220,7 +291,28 @@ public class PlayerWeaponAbility : PlayerAbility
         }
         // 보조무기는 기본 공격 키 유지 중에도 새 입력으로 우선 사용할 수 있다.
         if (secondaryWeaponBuffer.ConsumeIfValid()) { StartSecondaryWeapon(); return; }
-        if (normalWeaponBuffer.ConsumeIfValid() || CanRepeatPrimary) StartNormalWeapon();
+        // 입력이 막힌 연출(해금 연출 등) 중에는 회수 때 붙잡아 둔 아래 + 공격도 버린다.
+        if (!controller.CanReceiveInput) storedSkillBuffer.Reset();
+        if (storedSkillBuffer.ConsumeIfValid())
+        {
+            TryUseStoredSkill();
+            if (IsActive) return;
+            StartNormalWeapon();        // 그사이 저장 목록이 비었으면 평소 공격
+            return;
+        }
+        if (normalWeaponBuffer.ConsumeIfValid())
+        {
+            // 새로 누른 공격만 저장 기술을 꺼낸다. 공격 키를 누르고 있어 이어지는 반복 공격으로는 꺼내지 않는다.
+            if (down && storedSkills.Count > 0)
+            {
+                suppressHeldPrimaryUntilRelease = true;
+                TryUseStoredSkill();
+                if (IsActive) return;
+            }
+            StartNormalWeapon();
+            return;
+        }
+        if (CanRepeatPrimary) StartNormalWeapon();
     }
     // 피격 경직(0.3초) 동안은 행동할 수 없는데 입력 버퍼(0.15초)가 그보다 먼저 만료되어, 피격 직후에 누른 공격은 버려지고
     // 경직 끝 무렵에 누른 공격만 나갔다. 같은 조작에도 1타가 나가거나 안 나가는 원인이었다. 경직 동안 입력을 붙잡아 두고,
@@ -236,9 +328,11 @@ public class PlayerWeaponAbility : PlayerAbility
         if (restartAfterHit)
         {
             restartAfterHit = false;
+            primaryPressDown = false;    // 다시 맡긴 첫 타격은 아래 없이 누른 공격이다
             normalWeaponBuffer.RegisterInput();
         }
         normalWeaponBuffer.Hold();
+        storedSkillBuffer.Hold();
     }
 
     // 끊긴 공격이 아직 아무 효과도 내지 않은 기본 무기의 첫 타격인지. 게이지를 쓰는 무기는 두 번 차감되지 않게 제외한다.
@@ -259,10 +353,106 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (selectedWeapon is not MeleeWeaponSO melee)
             return false;
-        var boxes = melee.weaponName == hammerWeaponName ? hammerHitBoxes : hammerSkillBoxes;
-        if (boxes == null || meleeComboIndex < 0 || meleeComboIndex >= boxes.Length || boxes[meleeComboIndex] == null)
+        var boxes = GetHitBoxes(melee);
+        if (boxes == null || meleeComboIndex < 0)
             return false;
-        return boxes[meleeComboIndex].gameObject.activeInHierarchy;
+        int hits = Mathf.Max(1, melee.hitsPerStep);
+        for (int h = 0; h < hits; h++)
+        {
+            int index = meleeComboIndex * hits + h;
+            if (index < boxes.Length && boxes[index] != null && boxes[index].gameObject.activeInHierarchy)
+                return true;
+        }
+        return false;
+    }
+
+    // 근접 무기가 쓰는 판정 묶음. 기본 공격 자리의 해머는 콤보 단계마다 하나씩, 칼은 단계마다 hitsPerStep개씩, 그 밖의 근접 무기(HammerSkill)는 전용 판정을 쓴다.
+    private MeleeHitbox[] GetHitBoxes(MeleeWeaponSO melee)
+    {
+        if (melee.weaponName == swordWeaponName) return swordHitBoxes;
+        return melee.weaponName == hammerWeaponName ? hammerHitBoxes : hammerSkillBoxes;
+    }
+
+    private Renderer FindArc(string arcName)
+    {
+        var arc = controller.model.transform.Find(arcName);
+        return arc != null ? arc.GetComponent<Renderer>() : null;
+    }
+
+    // 세트의 대기 모형. 그 세트의 기본 공격 자리에 든 무기의 모형을 쓴다(해머·칼·별 총을 어느 세트에 넣어도 된다).
+    // 표에 없는 무기는 그 세트의 기술용 모형을 쓴다.
+    private GameObject GetSetModel(int setIndex)
+    {
+        var normal = weaponData.weaponSets[setIndex].normal;
+        if (normal != null && idleModels != null)
+        {
+            foreach (var entry in idleModels)
+            {
+                if (entry != null && entry.model != null && entry.weaponName == normal.weaponName)
+                    return entry.model;
+            }
+        }
+        return weaponModels[setIndex];
+    }
+
+    // 기술(Gear·보조 무기·저장해 둔 기술)을 연출하는 모형. 무기가 정한 모형이 표에 있으면 그것을(칼로 연출하는 기술은 해머 세트에서도 칼),
+    // 없으면 그 세트의 기술용 모형을 쓴다.
+    private GameObject GetSkillModel(WeaponBaseSO weapon, int setIndex)
+    {
+        string key = weapon != null ? weapon.PresentationWeaponName : null;
+        if (!string.IsNullOrEmpty(key) && idleModels != null)
+        {
+            foreach (var entry in idleModels)
+            {
+                if (entry != null && entry.model != null && entry.weaponName == key)
+                    return entry.model;
+            }
+        }
+        return weaponModels[setIndex];
+    }
+
+    private void ShowModel(GameObject target)
+    {
+        foreach (GameObject weaponModel in weaponModels)
+        {
+            if (weaponModel != null) weaponModel.SetActive(weaponModel == target);
+        }
+        if (idleModels != null)
+        {
+            foreach (var entry in idleModels)
+            {
+                if (entry != null && entry.model != null) entry.model.SetActive(entry.model == target);
+            }
+        }
+        modelReturnTime = -1f;
+        if (bodyCore != null) bodyCore.SetActive(!HidesCore(target));
+    }
+
+    // 그 모형이 코어 자리를 차지하는지(별 총은 소켓에 자기 별 코어를 품고 있다). 아무 모형도 켜지 않은 동안에는 코어가 보인다.
+    private bool HidesCore(GameObject target)
+    {
+        if (target == null || coreHiddenBy == null) return false;
+        foreach (GameObject model in coreHiddenBy)
+        {
+            if (model == target) return true;
+        }
+        return false;
+    }
+
+    // 공격용 해머가 지금 화면에 보이는지(리그가 켜져 있고 해머 그림이 크기를 갖고 그려진다).
+    // 해머를 던져 손에 없는 채 끝나는 기술은 리그가 켜져 있어도 보이는 해머가 없다.
+    private bool IsAttackHammerShown()
+    {
+        if (hammerAttackRig == null || !hammerAttackRig.activeInHierarchy) return false;
+        if (hammerAttackBlade == null) return true;
+        return hammerAttackBlade.enabled && hammerAttackBlade.gameObject.activeInHierarchy
+            && hammerAttackBlade.transform.lossyScale.sqrMagnitude > 0.0025f;
+    }
+
+    // 미뤄 둔 대기 모형이 있으면 지금 켠다(새 동작을 시작하거나 끊길 때는 기다리지 않는다).
+    private void FinishModelReturn()
+    {
+        if (modelReturnTime >= 0f) ShowModel(GetSetModel(currentSetIndex));
     }
 
     private void TryQueueComboInput()
@@ -276,7 +466,7 @@ public class PlayerWeaponAbility : PlayerAbility
         // 허용 구간 전의 짧은 선입력은 버퍼 수명 동안 유지한다.
         if (!IsInComboQueueWindow(melee)) return;
         bool freshInput = normalWeaponBuffer.ConsumeIfValid();
-        if (!freshInput && !(IsNormalHammer && CanRepeatPrimary))
+        if (!freshInput && !(IsNormalMelee && CanRepeatPrimary))
             return;
 
         comboQueuedThisStep = true;
@@ -333,12 +523,6 @@ public class PlayerWeaponAbility : PlayerAbility
             return;
 
         selectedWeapon = normalWeapon;
-        if (normalWeapon is MeleeWeaponSO && normalWeapon.weaponName == hammerWeaponName
-            && !controller.IsGrounded && controller.MoveInput.y < -.5f && weaponData.hammerDropAnimation != null)
-        {
-            StartHammerDrop();
-            return;
-        }
 
         if (selectedWeapon is MeleeWeaponSO melee)
         {
@@ -424,18 +608,26 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     public override void Tick()
     {
+        if (modelReturnTime >= 0f && Time.time >= modelReturnTime - 0.0001f) FinishModelReturn();
         if (isStoringSkill) { TickSkillStorage(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
-        if (isHammerDrop) { TickHammerDrop(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
         RepeatPrimaryInput();
         if (abilityState != AbilityState.None)
         {
+            // 아래 + 공격: 기본 공격 중이면 곧바로 끊고 저장 기술, 다른 기술의 회수 중이면 끝날 때까지 남겨 둔다
+            if (TryCancelIntoStoredSkill())
+            {
+                UpdateWeaponCooldownUI();
+                UpdateGearStageCooldownUI();
+                return;
+            }
+            if (abilityState == AbilityState.Recover && !IsNormalAttackRunning && controller.CanReceiveInput) storedSkillBuffer.Hold();
             if (abilityState == AbilityState.Execute && !currentHitboxOpened && IsCurrentHitboxOpen())
                 currentHitboxOpened = true;
             TryQueueComboInput();
             timer -= Time.deltaTime;
 
-            // 후속 입력이 회수 중 들어와도 남은 회수 시간을 기다리지 않는다.
-            if (IsNormalHammer && abilityState == AbilityState.Recover && CancelAttack())
+            // 빠르게 잇는 무기(칼)는 후속 입력이 회수 중 들어와도 남은 회수 시간을 기다리지 않는다.
+            if (ChainsWithoutRecover && abilityState == AbilityState.Recover && CancelAttack())
                 return;
 
             if (timer > 0)
@@ -452,12 +644,15 @@ public class PlayerWeaponAbility : PlayerAbility
                     break;
 
                 case AbilityState.Execute:
-                    if (IsNormalHammer && CancelAttack())
+                    if (ChainsWithoutRecover && CancelAttack())
                         break;
                     if (selectedWeapon.ShouldEnterRecover())
                         StartRecover();
                     else
+                    {
                         EndAttack();
+                        TryChainStoredSkill();
+                    }
                     break;
 
                 case AbilityState.Recover:
@@ -465,6 +660,7 @@ public class PlayerWeaponAbility : PlayerAbility
                         break;
 
                     EndAttack();
+                    TryChainStoredSkill();
                     break;
             }
 
@@ -473,11 +669,88 @@ public class PlayerWeaponAbility : PlayerAbility
             return;
         }
 
+        StartQueuedGearCharge();
         UpdateGear();
         TryAttack();
 
         UpdateWeaponCooldownUI();
         UpdateGearStageCooldownUI();
+    }
+
+    // 지금 기본 공격(기본 공격 자리의 무기)을 쓰는 중인지. Gear·보조 무기·저장 기술은 아니다.
+    private bool IsNormalAttackRunning => abilityState != AbilityState.None && !isStoringSkill && executionSetIndex < 0 && selectedWeapon == normalWeapon;
+
+    // 아래 + 공격이 들어와 있고 기본 공격 중이면 그 공격을 곧바로 끊고 저장 기술을 시작한다(2026-11-17 사용자 지시 "공격 중에 아래 + 공격을 하면 곧바로").
+    // 공격 키가 아래보다 조금 먼저 들어온 경우(SimultaneousInputWindow 안에 공격 키를 누른 채 아래가 들어옴)도 아래 + 공격으로 본다.
+    private bool TryCancelIntoStoredSkill()
+    {
+        if (!controller.CanReceiveInput) { storedSkillBuffer.Reset(); primaryPressPending = false; return false; }
+        if (primaryPressPending)
+        {
+            if (Time.time - primaryPressTime > SimultaneousInputWindow) primaryPressPending = false;
+            else if (IsDownHeld() && InputManager.Held(Button.Attack))
+            {
+                primaryPressPending = false;
+                suppressHeldPrimaryUntilRelease = true;
+                storedSkillBuffer.RegisterInput();
+            }
+        }
+        if (!IsNormalAttackRunning || !storedSkillBuffer.IsValid || storedSkills.Count == 0 || !controller.CanReceiveInput)
+            return false;
+        storedSkillBuffer.Reset();
+        // 끊는 기본 공격의 모습·판정·남은 연사를 정리한다(selectedWeapon을 바꾸기 전에 해야 기본 근접 공격으로 알아본다)
+        FinishModelReturn();
+        ClearNormalMeleePresentation();
+        StopAllCoroutines();
+        if (starAim != null) starAim.Restore();
+        controller.PlayerCounterState.EndCounter();
+        comboQueuedThisStep = comboQueuedByHold = false;
+        restartAfterHit = false;
+        normalWeaponBuffer.Reset();
+        if (!StartStoredSkillNow())
+        {
+            EndAttack();
+            return true;
+        }
+        return true;
+    }
+
+    // 다른 기술이 끝난 프레임: 그사이 들어와 남아 있는 아래 + 공격이 있으면 같은 프레임에 저장 기술을 이어 쓴다(스킬 공격 뒤 스킬 공격의 선입력).
+    // 이 프레임의 상태 기계는 아직 공격(지난 프레임 값)이라 CanDo로 묻지 않는다. 공격을 이어 가는 것이고, 피격·잡기·대시는 공격을 먼저 끊으므로 여기에 오지 않는다.
+    private void TryChainStoredSkill()
+    {
+        if (!controller.CanReceiveInput) { storedSkillBuffer.Reset(); return; }
+        if (abilityState != AbilityState.None || storedSkills.Count == 0 || !storedSkillBuffer.IsValid)
+            return;
+        storedSkillBuffer.Reset();
+        StartStoredSkillNow();
+    }
+
+    // 저장 목록 맨 앞의 기술을 지금 시작하고, Animator를 그 기술의 준비 Clip 첫 프레임부터 돌린다.
+    // (Any State에서 WeaponWindup으로 가는 전이는 자기 자신으로는 가지 않으므로, 준비 중에 끊고 시작하면 Clip이 처음부터 다시 돌지 않는다)
+    private bool StartStoredSkillNow()
+    {
+        TryUseStoredSkill();
+        if (abilityState != AbilityState.Windup) return false;
+        suppressHeldPrimaryUntilRelease = true;
+        if (controller.animator.isActiveAndEnabled)
+        {
+            controller.animator.Play("WeaponWindup", 0, 0f);
+            controller.animator.Update(0f);
+        }
+        return true;
+    }
+
+    // 공격·기술 중에 새로 누른 Gear 키를 끝난 뒤에 받는다(키를 아직 누르고 있을 때만 충전을 시작한다).
+    private void StartQueuedGearCharge()
+    {
+        if (!gearPressQueued) return;
+        // 공격이 끝난 첫 프레임은 상태 기계가 아직 공격(지난 프레임 값)이다. 그때는 남겨 두고 다음 프레임에 본다.
+        if (manager.StateMachine.CurrentState == PlayerState.Attack) return;
+        gearPressQueued = false;
+        if (!gearKeyDown || gearState != GearState.Inactive || !CanDo()) return;
+        isGearHeld = true;
+        StartChargingGear(1);
     }
 
     #region SwapWeapon
@@ -523,12 +796,8 @@ public class PlayerWeaponAbility : PlayerAbility
 
         CancelGear();
 
-        foreach (GameObject weaponModel in weaponModels)
-        {
-            weaponModel.SetActive(false);
-        }
-
-        weaponModels[currentSetIndex].SetActive(true);
+        skillModelShown = false;
+        ShowModel(GetSetModel(currentSetIndex));
 
         UIManager.Instance.StartWeaponSwap(set, skillGauge, !firstInit);
 
@@ -542,7 +811,7 @@ public class PlayerWeaponAbility : PlayerAbility
                     previousWeapon != null ? previousWeapon.weaponSprite : null,
                     normalWeapon != null ? normalWeapon.weaponSprite : null,
                     set.swapColor,
-                    weaponModels[currentSetIndex]);
+                    GetSetModel(currentSetIndex));
             }
         }
     }
@@ -601,10 +870,15 @@ public class PlayerWeaponAbility : PlayerAbility
     #region Gear
     private void HandleGearPressed()
     {
-        if (!CanDo())
-            return;
-
+        gearKeyDown = true;
+        // 공격·기술 중에 새로 누른 Gear 키는 남겨 두었다가 끝났을 때 키를 아직 누르고 있으면 충전을 시작한다(StartQueuedGearCharge)
         if (abilityState != AbilityState.None)
+        {
+            gearPressQueued = true;
+            return;
+        }
+
+        if (!CanDo())
             return;
 
         if (gearState == GearState.Inactive)
@@ -628,6 +902,8 @@ public class PlayerWeaponAbility : PlayerAbility
     private void HandleGearReleased()
     {
         isGearHeld = false;
+        gearKeyDown = false;
+        gearPressQueued = false;
 
         // 확정 규칙:
         // 충전 중 키를 떼면 어떤 단계든 Gear 전체 취소.
@@ -929,6 +1205,7 @@ public class PlayerWeaponAbility : PlayerAbility
         controller.PlayerCounterState.EndInvulnerability();
         foreach (var box in hammerHitBoxes) if (box != null) box.DisableHitbox();
         foreach (var box in hammerSkillBoxes) if (box != null) box.DisableHitbox();
+        if (swordHitBoxes != null) foreach (var box in swordHitBoxes) if (box != null) box.DisableHitbox();
         grabCleanup?.Invoke(); grabCleanup = null;
         StopAllCoroutines();
         normalWeaponBuffer.Reset(); secondaryWeaponBuffer.Reset();
@@ -936,6 +1213,10 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     public override void Interrupt()
     {
+        FinishModelReturn();
+        storedSkillBuffer.Reset();
+        primaryPressPending = false;
+        gearPressQueued = false;
         if (abilityState == AbilityState.None)
         {
             CancelGear();
@@ -944,9 +1225,9 @@ public class PlayerWeaponAbility : PlayerAbility
 
         // 판정 전에 끊긴 첫 타격인지 먼저 기록한다. 피격으로 끊긴 경우에만 경직 뒤 다시 시작한다(HoldAttackThroughHit).
         bool wasStoring = isStoringSkill;
-        restartAfterHit = !isHammerDrop && !isStoringSkill && IsUnresolvedFirstStrike();
+        restartAfterHit = !isStoringSkill && IsUnresolvedFirstStrike();
         CancelSpecialAttack();
-        ClearNormalHammerPresentation();
+        ClearNormalMeleePresentation();
 
         controller.PlayerCounterState.EndCounter();
 
@@ -960,6 +1241,14 @@ public class PlayerWeaponAbility : PlayerAbility
 
         StopAllCoroutines();
         controller.GravityOn = true;
+        // 돌진하는 기술(SwordDashWeaponSO)은 나아가는 동안 외부 힘을 무시하고 속도를 준다. 그 코루틴이 위에서 멈췄으므로 여기서 되돌린다
+        // (속도를 남겨 두면 끊긴 뒤에도 물리 틱 한 번만큼 더 나아간다. 대시도 끊길 때 속도를 지운다).
+        // 대시·잡기가 켜는 값과는 겹치지 않는다. 둘 다 이 Interrupt가 끝난 뒤에 자기 값을 켜고, 대시 중에는 공격이 진행 중이 아니라 맨 위에서 반환한다.
+        if (controller.IgnoreExternalForces)
+        {
+            controller.IgnoreExternalForces = false;
+            controller.Velocity = Vector2.zero;
+        }
         abilityState = AbilityState.None;
 
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 0);
@@ -968,6 +1257,8 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void StartWindup()
     {
+        FinishModelReturn();
+        attackRun++;
         // 공격 방향 결정
         int inputDir = (int)controller.MoveInput.x;
         if (inputDir != 0)
@@ -977,12 +1268,24 @@ public class PlayerWeaponAbility : PlayerAbility
 
         if (selectedWeapon == normalWeapon)
         {
-            float vertical = Mathf.Abs(controller.MoveInput.y) > .5f ? Mathf.Sign(controller.MoveInput.y) : 0f;
+            // 위를 누르고 쏘면 위 30도. 아래 사격은 없다(아래 + 공격은 기술 저장·사용 입력이다).
+            float vertical = controller.MoveInput.y > .5f ? 1f : 0f;
             PrimaryFireDirection = new Vector2(controller.Facing, vertical * .577350269f).normalized;
         }
         abilityState = AbilityState.Windup;
         comboQueuedThisStep = comboQueuedByHold = false;
         currentHitboxOpened = false;
+
+        // Gear·보조 무기는 기술용 모형을 움직이는 Clip으로 연출한다. 대기 모형과 다르면(칼 세트의 해머 기술, 해머 세트의 칼 기술) 실행 동안 바꿔 든다.
+        if (executionSetIndex < 0 && selectedWeapon != normalWeapon)
+        {
+            GameObject skillModel = GetSkillModel(selectedWeapon, currentSetIndex);
+            if (GetSetModel(currentSetIndex) != skillModel)
+            {
+                ShowModel(skillModel);
+                skillModelShown = true;
+            }
+        }
 
         if (selectedWeapon is MeleeWeaponSO melee)
         {
@@ -1005,9 +1308,9 @@ public class PlayerWeaponAbility : PlayerAbility
         controller.Velocity = Vector2.zero;
 
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 1);
-        if (IsNormalHammer)
+        if (IsNormalMelee)
         {
-            // Execute에서 다음 Windup으로 바로 이어도 새 Clip의 첫 프레임부터 평가한다.
+            // Execute·Recover에서 다음 Windup으로 바로 이어도 새 Clip의 첫 프레임부터 평가한다.
             controller.animator.Play("WeaponWindup", 0, 0f);
             controller.animator.Update(0f);
         }
@@ -1020,35 +1323,41 @@ public class PlayerWeaponAbility : PlayerAbility
         {
             var step = melee.comboSteps[meleeComboIndex];
             timer = step.executeTime;
-            if (melee.weaponName == hammerWeaponName)
+            // 한 단계에서 판정이 여러 번 열리는 무기(이도류 칼)는 그 단계의 판정을 모두 준비한다. 여닫는 시각은 실행 Clip이 정한다.
+            var boxes = GetHitBoxes(melee);
+            int hits = Mathf.Max(1, melee.hitsPerStep);
+            for (int h = 0; h < hits; h++)
             {
-                melee.BindMeleeHitboxes(hammerHitBoxes[meleeComboIndex], controller, meleeComboIndex);
-            }
-            else
-            {
-                melee.BindMeleeHitboxes(hammerSkillBoxes[meleeComboIndex], controller, meleeComboIndex);
+                // 묶음이 단계 × hitsPerStep보다 모자라면(데이터가 어긋난 경우) 없는 판정은 건너뛴다.
+                int index = meleeComboIndex * hits + h;
+                if (boxes != null && index < boxes.Length && boxes[index] != null)
+                    melee.BindMeleeHitboxes(boxes[index], controller, meleeComboIndex);
             }
         }
         else
         {
             timer = selectedWeapon.executeTime;
-            StartCoroutine(selectedWeapon.WeaponUseSequence(controller, ForceRecoverFromWeapon));
+            int run = attackRun;
+            StartCoroutine(selectedWeapon.WeaponUseSequence(controller, () => { if (run == attackRun) ForceRecoverFromWeapon(); }));
         }
 
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 2);
 
-        // 공격 피드백
-        if (selectedWeapon.executeFeedback == null)
+        // 공격 피드백. 근접 무기는 콤보 단계에 따로 정한 것이 있으면 그것을 쓴다(마무리 타의 휘두름 소리 등).
+        FeedbackDataSO executeFeedback = selectedWeapon.executeFeedback;
+        if (selectedWeapon is MeleeWeaponSO comboWeapon && comboWeapon.comboSteps[meleeComboIndex].executeFeedback != null)
+            executeFeedback = comboWeapon.comboSteps[meleeComboIndex].executeFeedback;
+        if (executeFeedback == null)
             return;
 
-        Vector3 offset = selectedWeapon.executeFeedback.offset;
+        Vector3 offset = executeFeedback.offset;
         Quaternion feedbackRotation = Quaternion.identity;
 
         if (controller.Facing < 0)
         {
             offset.x *= -1f;
         }
-        feedbackPlayer.PlayExact(selectedWeapon.executeFeedback, transform.position + offset, feedbackRotation);
+        feedbackPlayer.PlayExact(executeFeedback, transform.position + offset, feedbackRotation);
     }
 
     private void StartRecover()
@@ -1081,6 +1390,7 @@ public class PlayerWeaponAbility : PlayerAbility
         var weapon = weaponData.weaponSets[currentSetIndex].GetGearWeapon(gearStage);
         if (weapon == null || storedSkills.Count >= StoredSkillCapacity || skillGauge < weapon.skillGauge
             || weaponData.skillStoreAnimation == null) return;
+        FinishModelReturn();
         pendingSkill = new StoredGearSkill(weapon, currentSetIndex, gearStage,
             gearUI != null ? gearUI.GetStageColor(gearStage) : Color.cyan);
         skillGauge -= weapon.skillGauge;
@@ -1124,83 +1434,35 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void TryUseStoredSkill()
     {
-        if (storedSkills.Count == 0) return;
+        while (storedSkills.Count > 0 && storedSkills[0].Weapon == null) storedSkills.RemoveAt(0);   // 무기가 사라진 항목이 맨 앞을 막지 않게
+        if (storedSkills.Count == 0) { StoredSkillsChanged?.Invoke(); return; }
         var skill = storedSkills[0];
-        if (skill.Weapon == null) return;
         storedSkills.RemoveAt(0);
         StoredSkillsChanged?.Invoke();
         selectedWeapon = skill.Weapon;
         executionSetIndex = skill.SetIndex;
-        for (int i = 0; i < weaponModels.Length; i++) weaponModels[i].SetActive(i == executionSetIndex);
+        ShowModel(GetSkillModel(selectedWeapon, executionSetIndex));
         BindWeaponEvent(selectedWeapon);
         meleeComboIndex = 0; lastMeleeAttackTime = Time.time;
         CancelGear(PlayerGearVisual.EndReason.Fired);
         StartWindup();
     }
-    private void RestoreExecutionModel()
+    // 동작이 끝나거나 끊긴 뒤 이 세트의 대기 모형으로 되돌린다.
+    // hammerLeaving: 공격용 해머가 보이는 채 끝까지 재생된 경우(해머 1·2타에서 멈춤, 어느 세트의 것이든 HammerSkill·SpinningHammer).
+    // Animator가 회수 → 대기를 섞는 동안 그 해머가 대기 자세로 줄어들며 돌아가므로(대기 Clip에 그 자세가 기록돼 있다),
+    // 섞임이 끝나는 시각까지 대기 모형을 켜지 않는다. 바로 켜면 두 자루가 겹쳐 보인다.
+    private void RestoreExecutionModel(bool hammerLeaving = false)
     {
-        if (executionSetIndex < 0) return;
+        GameObject target = GetSetModel(currentSetIndex);
         executionSetIndex = -1;
-        for (int i = 0; i < weaponModels.Length; i++) weaponModels[i].SetActive(i == currentSetIndex);
-    }
-    private void StartHammerDrop()
-    {
-        normalWeaponBuffer.Reset(); secondaryWeaponBuffer.Reset();
-        CancelGear(); ClearNormalHammerPresentation();
-        MarkWeaponUsed(normalWeapon);
-        isHammerDrop = true; hammerDiving = false; dropElapsed = 0f;
-        abilityState = AbilityState.Windup; timer = weaponData.hammerDropWindup;
-        controller.ApplyWeaponAnimation(weaponData.hammerDropAnimation, selectedWeapon.weaponAnim);
-        controller.GravityOn = false; controller.Velocity = Vector2.zero;
-        controller.animator.SetInteger(selectedWeapon.weaponAnim, 1);
-        controller.animator.Play("WeaponWindup", 0, 0f); controller.animator.Update(0f);
-    }
-    private void TickHammerDrop()
-    {
-        timer -= Time.deltaTime;
-        if (abilityState == AbilityState.Windup)
+        skillModelShown = false;
+        if (hammerLeaving)
         {
-            if (controller.IsGrounded) { CancelSpecialAttack(); EndAttack(); return; }
-            if (timer > 0f) return;
-            abilityState = AbilityState.Execute; hammerDiving = true;
-            controller.animator.SetInteger(selectedWeapon.weaponAnim, 2);
-            controller.animator.Play("WeaponExecute", 0, 0f); controller.animator.Update(0f);
+            ShowModel(null);
+            modelReturnTime = Time.time + SkillModelReturnBlend;
+            return;
         }
-        if (abilityState == AbilityState.Execute)
-        {
-            dropElapsed += Time.deltaTime;
-            controller.Velocity = Vector2.down * weaponData.hammerDropSpeed;
-            if (dropElapsed > 4f) { CancelSpecialAttack(); EndAttack(); }
-        }
-        else if (abilityState == AbilityState.Recover && timer <= 0f)
-        { CancelSpecialAttack(); EndAttack(); }
-    }
-    private void HandleHammerDropLanding()
-    {
-        if (!isHammerDrop || !hammerDiving) return;
-        // OnLanded에서 IsGrounded는 아직 이전 값이다. 전용 플래그로 한 번만 확정한다.
-        hammerDiving = false;
-        abilityState = AbilityState.Recover; timer = .2f;
-        controller.Velocity = Vector2.zero;
-        var filter = new ContactFilter2D { useTriggers = true };
-        filter.SetLayerMask(1 << LayerMask.NameToLayer("Enemy"));
-        Vector2 center = (Vector2)controller.transform.position + Vector2.down * .15f;
-        int count = controller.Motor.OverlapAttackBox(center, new Vector2(6f, 2.1f), 0f, dropHits, filter.layerMask);
-        dropTargets.Clear();
-        var info = weaponData.hammerDropDamage;
-        info.sourceWeapon = selectedWeapon; info.knockbackOrigin = controller.transform.position; info.knockbackFacing = controller.Facing;
-        for (int i = 0; i < count; i++)
-        {
-            var health = dropHits[i].GetComponentInParent<EnemyHealth>();
-            if (health == null || health.IsDamageBlocked || !dropTargets.Add(health)) continue;
-            Vector2 point = dropHits[i].ClosestPoint(center);
-            if (health.enemyShieldSystem != null) health.enemyShieldSystem.TakeDamage(info, point);
-            else health.TakeDamage(info, point);
-            selectedWeapon.OnHitEnemy?.Invoke(controller, point);
-        }
-        feedbackPlayer.Play(weaponData.hammerDropImpactFeedback, controller.transform);
-        controller.animator.SetInteger(selectedWeapon.weaponAnim, 3);
-        controller.animator.Play("WeaponRecover", 0, 0f); controller.animator.Update(0f);
+        ShowModel(target);
     }
     private void CancelSpecialAttack()
     {
@@ -1209,27 +1471,42 @@ public class PlayerWeaponAbility : PlayerAbility
             isStoringSkill = false;
             SkillStorageFinished?.Invoke(false); // 시작 때 지불한 게이지는 반환하지 않는다.
         }
-        if (isHammerDrop) { isHammerDrop = hammerDiving = false; }
         if (controller.animator != null) controller.animator.WriteDefaultValues();
         controller.GravityOn = true;
     }
-    private void ClearNormalHammerPresentation()
+    // 기본 근접 공격(해머·칼)이 끊기거나 끝날 때 자세·판정·궤적을 기본 상태로 되돌린다.
+    private void ClearNormalMeleePresentation()
     {
-        if (!IsNormalHammer) return;
+        if (!IsNormalMelee) return;
+        var melee = (MeleeWeaponSO)selectedWeapon;
         controller.animator.WriteDefaultValues();
-        foreach (var box in hammerHitBoxes)
+        var boxes = GetHitBoxes(melee);
+        if (boxes != null)
         {
-            if (box == null) continue;
-            box.DisableHitbox();
-            box.gameObject.SetActive(false);
+            foreach (var box in boxes)
+            {
+                if (box == null) continue;
+                box.DisableHitbox();
+                box.gameObject.SetActive(false);
+            }
         }
-        var arc = controller.model.transform.Find("HammerArc");
-        if (arc != null && arc.TryGetComponent<SpriteRenderer>(out var renderer)) renderer.enabled = false;
+        if (melee.weaponName == swordWeaponName)
+        {
+            if (swordArc != null) swordArc.enabled = false;
+            if (swordArcOff != null) swordArcOff.enabled = false;
+        }
+        else if (hammerArc != null) hammerArc.enabled = false;
     }
     private void EndAttack()
     {
-        ClearNormalHammerPresentation();
-        RestoreExecutionModel();
+        // 끝난 동작이 남긴 모습을 먼저 본다(아래 정리가 기본값을 다시 쓰기 전에).
+        // endsAtIdle: 회수 Clip이 대기 자세에서 끝난 단계(해머 3타, 칼, 칼로 연출하는 기술). hammerShown: 공격용 해머가 아직 보인다.
+        bool endsAtIdle = IsNormalMelee
+            ? ((MeleeWeaponSO)selectedWeapon).comboSteps[meleeComboIndex].recoverEndsAtIdle
+            : selectedWeapon.RecoverEndsAtIdle;
+        bool hammerShown = IsAttackHammerShown();
+        ClearNormalMeleePresentation();
+        RestoreExecutionModel(!endsAtIdle && hammerShown);
         meleeComboIndex = 0;
         controller.PlayerCounterState.EndCounter();
 
@@ -1237,6 +1514,13 @@ public class PlayerWeaponAbility : PlayerAbility
         controller.GravityOn = true;
         abilityState = AbilityState.None;
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 0);
+        // 대기 자세에서 끝난 단계는 섞지 않고 바로 대기로 넘긴다. 섞으면 0.1초 동안 WeaponModel이 대기 각도로 돌아가면서
+        // 이미 제자리에 온 무기가 다시 움직였다가 돌아온다(해머는 일어섰다 눕고, 칼은 사라진 주검이 다시 나타난다).
+        if (endsAtIdle && controller.animator.isActiveAndEnabled)
+        {
+            controller.animator.Play("Idle", 0, 0f);
+            controller.animator.Update(0f);
+        }
         normalWeaponBuffer.Reset();
         secondaryWeaponBuffer.Reset();
     }

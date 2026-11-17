@@ -22,13 +22,6 @@ public class PlayerWeaponDataSO : PlayerAbilityDataSO
     public SoundOptions skillStoreCompleteSound;
     [Min(.01f)] public float skillStoreDuration = .2f;
 
-    [Header("Hammer Drop")]
-    public AnimationSetSO hammerDropAnimation;
-    [Min(.01f)] public float hammerDropWindup = .12f;
-    [Min(1f)] public float hammerDropSpeed = 32f;
-    public WeaponBaseSO.DamageInfo hammerDropDamage;
-    public FeedbackDataSO hammerDropImpactFeedback;
-
     [Header("WeaponSwap")]
     public float swapCoolTime = 0.5f;
     public FeedbackDataSO swapFeedback;

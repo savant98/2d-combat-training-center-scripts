@@ -38,9 +38,9 @@ public class DashAbility : PlayerAbility
     }
     protected override bool CanDo()
     {
-        // 저장과 공중 내려찍기는 기존 공격의 회수 단계 제한과 별도로 취소할 수 있다.
+        // 기술 저장은 기존 공격의 회수 단계 제한과 별도로 취소할 수 있다.
         if (manager.StateMachine.CurrentState == PlayerState.Attack && manager.AttackAbility != null
-            && (manager.AttackAbility.IsStoringSkill || manager.AttackAbility.IsHammerDropActive))
+            && manager.AttackAbility.IsStoringSkill)
             return true;
         return base.CanDo();
     }
