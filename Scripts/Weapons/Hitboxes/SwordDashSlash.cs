@@ -6,13 +6,16 @@ using UnityEngine;
 // 사용자 지시 "이동한 거리 사이의 공간에 다단히트(4타, 히트 판정은 한 번으로 그냥 연출로 4번 맞는 것) 데미지가 들어가",
 //   "지나간 궤적을 확실히 보여 주고(이펙트가 0.5초는 남아 있어야 함), 칼자국 효과가 여러 방향(아주 약간의 텀을 두고 순차적으로)으로 추가로 나오도록".
 //   2차: "데미지 틱 들어가는 속도를 빠르게, 이펙트도 더 빠르게 나타나게 해(1.5배)" — 타격 간격 0.1초 → 1/15초, 칼자국도 같은 비율로 빨라진다.
+//   3차(2026-11-18): Sephiria '도'의 '특수 공격: 일섬'을 참고한 업그레이드 — 도착한 뒤 바로 베지 않고 납도(cutDelay) 뒤 '베는 순간'에
+//   지나간 길의 적이 한꺼번에 베인다. 그 직전에 납도 소리(칼집에 칼이 들어가는 찰칵)를 내고, 마지막 타격은 마무리 적중 Feedback을 쓴다.
 // - 돌진이 시작될 때 꺼낸다(풀). 돌진하는 동안 궤적이 Player를 따라 자란다. Player의 위치를 읽기만 하고 옮기지 않는다.
 // - 돌진이 끝나면(Finish) 시작점부터 끝점까지의 상자를 물리 틱 두 번 동안만 켜서 그 안의 적을 한 번 모은다. 그 뒤로는 판정하지 않는다.
-//   모인 적은 그 자리에서 첫 타격을 받고, 그때부터 hitInterval 간격으로 hitCount번까지 맞는다(나중에 길로 들어온 적은 맞지 않는다).
+//   모인 적은 베는 순간(돌진이 끝나고 cutDelay 뒤)에 첫 타격을 받고, 그때부터 hitInterval 간격으로 hitCount번까지 맞는다(나중에 길로 들어온 적은 맞지 않는다).
 //   피해·쉴드·넉백·게이지·적중 Feedback은 근접 판정(MeleeHitbox)과 같은 길을 쓴다.
 // - Player의 공격이 도중에 끊겨(피격·잡기) Finish를 받지 못하면, 그때까지 지나온 길로 스스로 마무리한다.
 // - 모양은 Player/SwordDashSlash 셰이더가 사각형 하나에 그리고, 이 스크립트는 값만 MaterialPropertyBlock으로 넘긴다.
 //   궤적의 머리는 화면에 보이는 Player(FixedMotionBody의 보간 자세)를 따라간다. 시간은 게임 시간(Time.time)이라 히트스톱 동안 멈춘다.
+//   셰이더의 _Age는 '베는 순간부터의 시간'(음수 = 돌진·납도 중)이고, _CutClock은 베는 순간의 _Clock이다.
 [DefaultExecutionOrder(110)]   // FixedMotionPresentation(99)이 이 프레임의 보간 자세를 계산한 뒤에 읽는다
 public class SwordDashSlash : WorldEntityBase
 {
@@ -22,6 +25,7 @@ public class SwordDashSlash : WorldEntityBase
     private static readonly int AgeId = Shader.PropertyToID("_Age");
     private static readonly int ClockId = Shader.PropertyToID("_Clock");
     private static readonly int MarkGapId = Shader.PropertyToID("_MarkGap");
+    private static readonly int CutClockId = Shader.PropertyToID("_CutClock");
 
     [Header("Trail")]
     [SerializeField] private SpriteRenderer trail;
@@ -29,8 +33,14 @@ public class SwordDashSlash : WorldEntityBase
     [SerializeField, Min(0f)] private float padBack = 2f;
     [SerializeField, Min(0f)] private float padFront = 2.5f;
     [SerializeField, Min(0.1f)] private float halfHeight = 2.4f;
-    [Tooltip("돌진이 끝난 뒤 사라질 때까지(초). 셰이더의 궤적이 사라지는 시각과 마지막 칼자국이 사라지는 시각보다 길어야 한다.")]
-    [SerializeField, Min(0.1f)] private float lifeAfterDash = 0.95f;
+    [Tooltip("돌진이 끝난 뒤 사라질 때까지(초). 납도 시간(cutDelay) + 셰이더의 궤적이 사라지는 시각·마지막 칼자국이 사라지는 시각보다 길어야 한다.")]
+    [SerializeField, Min(0.1f)] private float lifeAfterDash = 1.1f;
+
+    [Header("Cut")]
+    [Tooltip("도착한 뒤 베는 순간까지(초) — 칼을 집어넣는 납도 시간. 이 동안 번개만 지지직거리고, 베는 순간 직선이 번쩍이며 첫 타격이 들어간다. 판정 상자를 켜 두는 시간(물리 틱 두 번)보다 길어야 한다.")]
+    [SerializeField, Min(0.03f)] private float cutDelay = 0.12f;
+    [Tooltip("납도 소리(칼집에 칼이 들어가는 찰칵)를 베는 순간보다 이만큼 먼저 낸다(초).")]
+    [SerializeField, Min(0f)] private float sheatheLead = 0.03f;
 
     [Header("Hit")]
     [Tooltip("모인 적이 맞는 횟수와 간격(초). 판정은 한 번만 하고 같은 적들이 이 횟수만큼 맞는다.")]
@@ -57,7 +67,7 @@ public class SwordDashSlash : WorldEntityBase
     private readonly HashSet<HealthBase> seen = new();
     private MaterialPropertyBlock block;
     private BoxCollider2D box;
-    private FeedbackDataSO hitFeedback;
+    private FeedbackDataSO hitFeedback, finalHitFeedback, sheatheFeedback;
     private Action<CharacterController2D, Vector2> onHitEnemy;
     private Vector4 rect;
     private int facing = 1;
@@ -66,7 +76,7 @@ public class SwordDashSlash : WorldEntityBase
     private float finishTime;              // 돌진이 끝난 시각
     private float firstHitTime = -1f;      // 첫 타격을 준 시각(-1 = 아직 모인 적이 없다). 뒤의 타격은 여기서부터 hitInterval 간격이다
     private int hitsGiven, collectTicks, lastTrackFrame;
-    private bool running, finished;
+    private bool running, finished, sheathed;
 
     public bool IsRunning => running && !isReturning;
     public bool IsFinished => finished;
@@ -74,6 +84,10 @@ public class SwordDashSlash : WorldEntityBase
     public float Length => length;                 // 지나온 길의 길이(칸). 돌진이 끝나면 고정된다
     public float Head => head;                     // 궤적이 그려진 곳까지의 거리(칸)
     public float Age => finished ? Time.time - finishTime : -1f;   // 돌진이 끝난 뒤 흐른 시간(초)
+    public float CutDelay => cutDelay;                             // 도착 → 베는 순간(초)
+    public float SheatheLead => sheatheLead;
+    public bool Sheathed => sheathed;                              // 납도 소리를 냈는지
+    public float FirstHitTime => firstHitTime;
     public int HitsGiven => hitsGiven;             // 지금까지 준 타격 수(모을 때의 첫 타격 포함)
     public int TargetCount => targets.Count;
     public int HitCount => hitCount;
@@ -97,9 +111,9 @@ public class SwordDashSlash : WorldEntityBase
         base.OnSpawnedFromPool();
         targets.Clear();
         seen.Clear();
-        hitFeedback = null;
+        hitFeedback = finalHitFeedback = sheatheFeedback = null;
         onHitEnemy = null;
-        running = finished = false;
+        running = finished = sheathed = false;
         length = head = dashAge = 0f;
         firstHitTime = -1f;
         hitsGiven = collectTicks = 0;
@@ -107,9 +121,12 @@ public class SwordDashSlash : WorldEntityBase
         if (trail != null) trail.enabled = false;
     }
 
-    public void SetHit(FeedbackDataSO hitFeedback, Action<CharacterController2D, Vector2> onHitEnemy)
+    // hitFeedback = 마지막이 아닌 타격, finalHitFeedback = 마지막(hitCount번째) 타격(없으면 hitFeedback), sheatheFeedback = 베기 직전의 납도 소리
+    public void SetHit(FeedbackDataSO hitFeedback, FeedbackDataSO finalHitFeedback, FeedbackDataSO sheatheFeedback, Action<CharacterController2D, Vector2> onHitEnemy)
     {
         this.hitFeedback = hitFeedback;
+        this.finalHitFeedback = finalHitFeedback != null ? finalHitFeedback : hitFeedback;
+        this.sheatheFeedback = sheatheFeedback;
         this.onHitEnemy = onHitEnemy;
     }
 
@@ -119,7 +136,7 @@ public class SwordDashSlash : WorldEntityBase
         this.facing = facing >= 0 ? 1 : -1;
         this.plannedLength = Mathf.Max(0.1f, plannedLength);
         running = true;
-        finished = false;
+        finished = sheathed = false;
         length = head = dashAge = 0f;
         firstHitTime = -1f;
         hitsGiven = 0;
@@ -147,7 +164,7 @@ public class SwordDashSlash : WorldEntityBase
         Advance(ownerPosition);
     }
 
-    // 돌진이 끝난 순간. 지나온 길의 상자를 잠깐 켜서 그 안의 적을 한 번 모은다.
+    // 돌진이 끝난 순간(도착). 지나온 길의 상자를 잠깐 켜서 그 안의 적을 한 번 모은다. 베는 것은 납도(cutDelay) 뒤다.
     public void Finish(Vector3 ownerPosition)
     {
         if (!running || finished) return;
@@ -182,14 +199,7 @@ public class SwordDashSlash : WorldEntityBase
     {
         if (!finished || box == null || !box.enabled) return;
         if (other.GetComponentInParent<HealthBase>() is not EnemyHealth enemy || !seen.Add(enemy)) return;
-        var target = new Target { health = enemy, body = other };
-        targets.Add(target);
-        Strike(target);   // 첫 타격은 모인 순간에 준다
-        if (firstHitTime < 0f)
-        {
-            firstHitTime = Time.time;   // 물리 틱의 시각
-            hitsGiven = 1;
-        }
+        targets.Add(new Target { health = enemy, body = other });   // 모으기만 한다. 첫 타격은 베는 순간에 준다
     }
 
     private void LateUpdate()
@@ -205,10 +215,20 @@ public class SwordDashSlash : WorldEntityBase
         }
         else
         {
-            // n번째 타격(첫 타격 = 1)은 첫 타격으로부터 (n - 1) × hitInterval 뒤에 준다. 모인 적이 없으면 타격도 없다.
-            while (firstHitTime >= 0f && hitsGiven < hitCount && Time.time >= firstHitTime + hitsGiven * hitInterval)
+            // 납도: 베는 순간보다 sheatheLead 먼저 칼집에 칼이 들어가는 소리를 한 번 낸다(모인 적이 없어도).
+            float cutTime = finishTime + cutDelay;
+            if (!sheathed && Time.time >= cutTime - sheatheLead)
             {
-                for (int i = 0; i < targets.Count; i++) Strike(targets[i]);
+                sheathed = true;
+                if (sheatheFeedback != null && FeedbackPlayer.Instance != null)
+                    FeedbackPlayer.Instance.Play(sheatheFeedback, owner != null ? owner.transform.position : transform.position + Vector3.right * (facing * length));
+            }
+            // n번째 타격(첫 타격 = 1)은 베는 순간으로부터 (n - 1) × hitInterval 뒤에 준다. 마지막 타격은 마무리 Feedback을 쓴다. 모인 적이 없으면 타격도 없다.
+            while (targets.Count > 0 && hitsGiven < hitCount && Time.time >= cutTime + hitsGiven * hitInterval)
+            {
+                if (firstHitTime < 0f) firstHitTime = cutTime;
+                var feedback = hitsGiven == hitCount - 1 ? finalHitFeedback : hitFeedback;
+                for (int i = 0; i < targets.Count; i++) Strike(targets[i], feedback);
                 hitsGiven++;
             }
             if (Age >= lifeAfterDash)
@@ -222,7 +242,7 @@ public class SwordDashSlash : WorldEntityBase
         Apply();
     }
 
-    private void Strike(Target target)
+    private void Strike(Target target, FeedbackDataSO feedback)
     {
         EnemyHealth enemy = target.health;
         if (enemy == null || !enemy.isActiveAndEnabled || enemy.currentHP <= 0f) return;   // 그사이 쓰러졌다
@@ -230,7 +250,7 @@ public class SwordDashSlash : WorldEntityBase
         if (enemy.enemyShieldSystem == null) enemy.TakeDamage(damageInfo, point);
         else enemy.enemyShieldSystem.TakeDamage(damageInfo, point);
         onHitEnemy?.Invoke(owner, point);
-        if (hitFeedback != null) FeedbackPlayer.Instance.Play(hitFeedback, point);
+        if (feedback != null) FeedbackPlayer.Instance.Play(feedback, point);
     }
 
     // 맞은 자리: 적의 몸 가운데를 지나온 길의 상자 안으로 당긴 점(큰 적도 길 위에서 이펙트가 난다)
@@ -264,8 +284,9 @@ public class SwordDashSlash : WorldEntityBase
         block.SetVector(RectId, rect);
         block.SetFloat(SpanId, finished ? Mathf.Max(length, 0.01f) : plannedLength);
         block.SetFloat(HeadId, head);
-        block.SetFloat(AgeId, Age);
+        block.SetFloat(AgeId, finished ? Age - cutDelay : -1f);                             // 베는 순간부터의 시간(음수 = 돌진·납도 중)
         block.SetFloat(ClockId, Time.time - beginTime);
+        block.SetFloat(CutClockId, finished ? finishTime - beginTime + cutDelay : 0f);      // 베는 순간의 _Clock
         block.SetFloat(MarkGapId, MarkGap);
         trail.SetPropertyBlock(block);
     }
