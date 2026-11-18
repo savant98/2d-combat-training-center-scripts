@@ -90,6 +90,16 @@ public class PlayerWeaponAbility : PlayerAbility
     private readonly Dictionary<WeaponBaseSO, float> weaponLastUseTimes = new();
 
     private PlayerWeaponDataSO weaponData;
+    // Initialize가 만든 실행용 사본(에셋을 직접 고치지 않는다). OnDestroy에서 지운다.
+    private PlayerWeaponDataSO runtimeWeaponData;
+    // 자리(weaponSets 번호)마다 장착한 무장. 무장을 정하지 않은 자리는 null이고 무기 칸을 그대로 쓴다.
+    private PlayerArmamentSO[] equippedArmaments = new PlayerArmamentSO[0];
+
+    // 기본 공격 자리를 잠시 다른 무기로 바꾼 상태(Rifle Gear 3단계 '머신건 장착', 2026-11-18). 그 자리를 든 동안만 기본 공격이 바뀌고 시간이 지나면 돌아온다.
+    private WeaponBaseSO primaryOverride;
+    private int primaryOverrideSet = -1;
+    private float primaryOverrideEnd = -1f;
+    private float primaryOverrideDuration;
 
     private int meleeComboIndex = 0;
     private float comboQueueWindow = 0f;
@@ -140,7 +150,7 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         base.Initialize(manager);
 
-        weaponData = (PlayerWeaponDataSO)data;
+        weaponData = CreateRuntimeData((PlayerWeaponDataSO)data);
         maxSkillGauge = weaponData.maxSkillGauge;
         weaponSwapCoolTime = weaponData.swapCoolTime;
 
@@ -155,6 +165,8 @@ public class PlayerWeaponAbility : PlayerAbility
         // 다음 단계에서 PlayerController에 추가할 이벤트
         controller.OnGearPressed += HandleGearPressed;
         controller.OnGearReleased += HandleGearReleased;
+        // 쓰러지면 기본 공격 자리 바꾸기(머신건 장착)도 끝난다. 패배 뒤 Lobby로 돌아갈 때 장착 표시만 회수되고 장착이 남지 않게 한다.
+        if (controller.Health != null) controller.Health.OnPlayerDeath += HandlePlayerDeath;
 
         if (weaponData.gearVisual != null)
         {
@@ -192,6 +204,7 @@ public class PlayerWeaponAbility : PlayerAbility
         hammerAttackRig = attackRig != null ? attackRig.gameObject : null;
         var attackBlade = attackRig != null ? attackRig.Find("Hammer") : null;
         hammerAttackBlade = attackBlade != null ? attackBlade.GetComponent<SpriteRenderer>() : null;
+        LoadEquippedArmaments();
         ApplyWeaponSet(0, true);
 
         selectedWeapon = normalWeapon;
@@ -209,6 +222,7 @@ public class PlayerWeaponAbility : PlayerAbility
     public void ResetSkillGauge()
     {
         if (isStoringSkill || executionSetIndex >= 0) Interrupt();
+        EndPrimaryOverride();
         storedSkills.Clear();
         StoredSkillsChanged?.Invoke();
         skillGauge = 0;
@@ -512,6 +526,7 @@ public class PlayerWeaponAbility : PlayerAbility
     private void StartNormalWeapon()
     {
         normalWeaponBuffer.Reset();
+        if (normalWeapon == null) return;   // 기본 무기가 없는 자리(데이터 누락)는 공격하지 않는다
 
         if (skillGauge < normalWeapon.skillGauge)
         {
@@ -609,6 +624,7 @@ public class PlayerWeaponAbility : PlayerAbility
     public override void Tick()
     {
         if (modelReturnTime >= 0f && Time.time >= modelReturnTime - 0.0001f) FinishModelReturn();
+        if (primaryOverride != null && Time.time >= primaryOverrideEnd) EndPrimaryOverride();
         if (isStoringSkill) { TickSkillStorage(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
         RepeatPrimaryInput();
         if (abilityState != AbilityState.None)
@@ -779,7 +795,7 @@ public class PlayerWeaponAbility : PlayerAbility
         currentSetIndex = setIndex;
 
         var set = weaponData.weaponSets[currentSetIndex];
-        normalWeapon = set.normal;
+        normalWeapon = ResolveNormalWeapon(currentSetIndex);
         secondaryWeapon = set.secondary;
 
         BindWeaponEvents();
@@ -820,6 +836,7 @@ public class PlayerWeaponAbility : PlayerAbility
         var set = weaponData.weaponSets[currentSetIndex];
 
         BindWeaponEvent(set.normal);
+        BindWeaponEvent(normalWeapon);
         BindWeaponEvent(set.gearStage1);
         BindWeaponEvent(set.gearStage2);
         BindWeaponEvent(set.gearStage3);
@@ -843,7 +860,11 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         foreach (var pair in hitHandlers) if (pair.Key != null) pair.Key.OnHitEnemy -= pair.Value;
         hitHandlers.Clear();
+        if (runtimeWeaponData != null) Destroy(runtimeWeaponData);
+        runtimeWeaponData = null;
+        if (controller != null && controller.Health != null) controller.Health.OnPlayerDeath -= HandlePlayerDeath;
     }
+    private void HandlePlayerDeath() => EndPrimaryOverride();
     #endregion
 
     #region OnWeaponHit
@@ -1226,6 +1247,9 @@ public class PlayerWeaponAbility : PlayerAbility
         // 판정 전에 끊긴 첫 타격인지 먼저 기록한다. 피격으로 끊긴 경우에만 경직 뒤 다시 시작한다(HoldAttackThroughHit).
         bool wasStoring = isStoringSkill;
         restartAfterHit = !isStoringSkill && IsUnresolvedFirstStrike();
+        // 아직 효과가 없던 첫 타격을 경직 뒤 다시 시작한다면, 시작할 때 남긴 쿨다운 기록도 지운다(쿨다운이 있는 기본 무기 - 레일건 - 가 다시 시작을 막지 않게).
+        // 시작할 때 쿨다운을 통과했으므로 그 전 기록은 이미 지난 값이라 지워도 쿨다운 판정은 같다.
+        if (restartAfterHit) weaponLastUseTimes.Remove(selectedWeapon);
         CancelSpecialAttack();
         ClearNormalMeleePresentation();
 
@@ -1254,6 +1278,7 @@ public class PlayerWeaponAbility : PlayerAbility
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 0);
         RestoreExecutionModel();
         if (wasStoring) RestoreStorageAnimation();
+        RefreshNormalWeapon();
     }
     private void StartWindup()
     {
@@ -1523,5 +1548,144 @@ public class PlayerWeaponAbility : PlayerAbility
         }
         normalWeaponBuffer.Reset();
         secondaryWeaponBuffer.Reset();
+        RefreshNormalWeapon();
     }
+
+    #region Armament
+    // 무장(PlayerArmamentSO) = 기본 무기 + Gear 1~3단계 무기 묶음. 자리(weaponSets[n], 0 = 근접, 1 = 원거리)마다 같은 분류의 무장을 하나씩 장착한다.
+    // 보조 무기와 교체 색은 자리에 남는다. 장착 상태는 세이브(DataManager.equippedArmaments)에 남고 Initialize에서 다시 적용한다.
+    // 업그레이드 메뉴는 아래 읽기 전용 값과 ArmamentChanged를 보고 그리고, 교체는 TryEquipArmament로 요청한다.
+
+    public int CurrentSetIndex => currentSetIndex;
+    /// <summary>지금 실행 중인 기술의 자리(저장해 둔 기술이면 저장한 자리, 아니면 지금 든 자리).</summary>
+    public int ExecutingSetIndex => executionSetIndex >= 0 ? executionSetIndex : currentSetIndex;
+    public int WeaponSetCount => weaponData != null && weaponData.weaponSets != null ? weaponData.weaponSets.Length : 0;
+    public WeaponSet GetWeaponSet(int setIndex) => setIndex >= 0 && setIndex < WeaponSetCount ? weaponData.weaponSets[setIndex] : null;
+    public IReadOnlyList<PlayerArmamentSO> Armaments => weaponData != null && weaponData.armaments != null
+        ? weaponData.armaments : System.Array.Empty<PlayerArmamentSO>();
+    public PlayerArmamentSO GetEquippedArmament(int setIndex) =>
+        equippedArmaments != null && setIndex >= 0 && setIndex < equippedArmaments.Length ? equippedArmaments[setIndex] : null;
+    /// <summary>자리의 무장이 바뀌었다(자리 번호).</summary>
+    public event System.Action<int> ArmamentChanged;
+
+    /// <summary>그 자리에 이 무장을 장착할 수 있는가. 분류가 같아야 하고, 공격·기술 저장 중에는 바꾸지 않는다.</summary>
+    public bool CanEquipArmament(int setIndex, PlayerArmamentSO armament)
+    {
+        WeaponSet set = GetWeaponSet(setIndex);
+        return set != null && armament != null && armament.category == set.armamentCategory && armament.normal != null
+            && !IsActive && !isStoringSkill;
+    }
+
+    /// <summary>그 자리에 무장을 장착하고 세이브에 남긴다. 지금 든 자리면 모형·HUD를 바로 맞춘다(교체 연출 없이).</summary>
+    public bool TryEquipArmament(int setIndex, PlayerArmamentSO armament)
+    {
+        if (!CanEquipArmament(setIndex, armament)) return false;
+        if (GetEquippedArmament(setIndex) == armament) return true;
+        EndPrimaryOverride(setIndex);   // 그 자리의 머신건 장착은 풀린다
+        WriteArmament(weaponData.weaponSets[setIndex], armament);
+        equippedArmaments[setIndex] = armament;
+        if (DataManager.Instance != null) DataManager.Instance.SetEquippedArmament(setIndex, armament.armamentId);
+        if (setIndex == currentSetIndex) ApplyWeaponSet(setIndex, true);
+        ArmamentChanged?.Invoke(setIndex);
+        return true;
+    }
+
+    // 에셋(Player_Weapon_Data)을 직접 고치지 않도록 실행용 사본을 만든다. 무장을 바꾸면 이 사본의 자리만 바뀐다.
+    // 무기 SO는 사본을 만들지 않고 공유한다(쿨다운·적중 보상·훈련 통계가 무기 SO를 키로 쓴다).
+    private PlayerWeaponDataSO CreateRuntimeData(PlayerWeaponDataSO source)
+    {
+        if (source == null) return null;
+        runtimeWeaponData = Instantiate(source);
+        runtimeWeaponData.name = source.name;
+        runtimeWeaponData.hideFlags = HideFlags.DontSave;
+        return runtimeWeaponData;
+    }
+
+    // 세이브에 남은 장착 무장을 자리마다 적용한다. 기록이 없거나 분류가 다르면 그 자리의 기본 무장을 쓴다.
+    private void LoadEquippedArmaments()
+    {
+        int count = WeaponSetCount;
+        equippedArmaments = new PlayerArmamentSO[count];
+        DataManager save = DataManager.Instance;
+        for (int i = 0; i < count; i++)
+        {
+            WeaponSet set = weaponData.weaponSets[i];
+            if (set == null) continue;
+            PlayerArmamentSO armament = weaponData.FindArmament(save != null ? save.GetEquippedArmament(i) : null);
+            if (armament == null || armament.category != set.armamentCategory || armament.normal == null) armament = set.defaultArmament;
+            if (armament == null) continue;   // 무장을 정하지 않은 자리는 무기 칸을 그대로 쓴다
+            WriteArmament(set, armament);
+            equippedArmaments[i] = armament;
+        }
+    }
+
+    private static void WriteArmament(WeaponSet set, PlayerArmamentSO armament)
+    {
+        set.normal = armament.normal;
+        set.gearStage1 = armament.gearStage1;
+        set.gearStage2 = armament.gearStage2;
+        set.gearStage3 = armament.gearStage3;
+    }
+    #endregion
+
+    #region Primary Override
+    // 기본 공격 자리를 잠시 다른 무기로 바꾼다(Rifle Gear 3단계 '머신건 장착'). 그 자리(setIndex)를 든 동안만 바뀌고, 시간이 지나면 원래 무기로 돌아온다.
+    // 대기 모형은 원래 무기의 것을 그대로 쓴다(GetSetModel은 자리의 기본 무기를 본다).
+
+    public WeaponBaseSO PrimaryOverrideWeapon => primaryOverride;
+    public int PrimaryOverrideSetIndex => primaryOverride != null ? primaryOverrideSet : -1;
+    public float PrimaryOverrideDuration => primaryOverride != null ? primaryOverrideDuration : 0f;
+    public float PrimaryOverrideRemaining => primaryOverride != null ? Mathf.Max(0f, primaryOverrideEnd - Time.time) : 0f;
+    /// <summary>기본 공격 자리 바꾸기가 시작·끝났다(자리 번호).</summary>
+    public event System.Action<int> PrimaryOverrideChanged;
+
+    /// <summary>
+    /// 기본 공격 자리를 duration초 동안 weapon으로 바꾼다. setIndex를 주지 않으면 지금 실행 중인 기술의 자리(저장해 둔 기술이면 저장한 자리)다.
+    /// 기본 공격 중에 바뀌면 그 공격이 끝난 뒤부터 적용한다.
+    /// </summary>
+    public void BeginPrimaryOverride(WeaponBaseSO weapon, float duration, int setIndex = -1)
+    {
+        if (weapon == null || duration <= 0f) return;
+        if (setIndex < 0) setIndex = executionSetIndex >= 0 ? executionSetIndex : currentSetIndex;
+        if (setIndex < 0 || setIndex >= WeaponSetCount) return;
+        primaryOverride = weapon;
+        primaryOverrideSet = setIndex;
+        primaryOverrideDuration = duration;
+        primaryOverrideEnd = Time.time + duration;
+        BindWeaponEvent(weapon);
+        RefreshNormalWeapon();
+        PrimaryOverrideChanged?.Invoke(setIndex);
+    }
+
+    /// <summary>기본 공격 자리 바꾸기를 끝낸다. setIndex를 주면 그 자리의 것일 때만 끝낸다.</summary>
+    public void EndPrimaryOverride(int setIndex = -1)
+    {
+        if (primaryOverride == null || (setIndex >= 0 && setIndex != primaryOverrideSet)) return;
+        int set = primaryOverrideSet;
+        primaryOverride = null;
+        primaryOverrideSet = -1;
+        primaryOverrideEnd = -1f;
+        RefreshNormalWeapon();
+        PrimaryOverrideChanged?.Invoke(set);
+    }
+
+    private WeaponBaseSO ResolveNormalWeapon(int setIndex)
+    {
+        if (primaryOverride != null && primaryOverrideSet == setIndex) return primaryOverride;
+        return weaponData.weaponSets[setIndex].normal;
+    }
+
+    // 지금 자리의 기본 공격 무기를 다시 정한다. 기본 공격 중이면 그 공격이 끝날 때(EndAttack·Interrupt) 바꾼다.
+    // 기본 공격 중에 바꾸면 selectedWeapon과 normalWeapon이 어긋나 연사·조준(IsStarShotActive)이 그 자리에서 끊긴다.
+    private void RefreshNormalWeapon()
+    {
+        if (weaponData == null || (abilityState != AbilityState.None && selectedWeapon == normalWeapon)) return;
+        WeaponBaseSO target = ResolveNormalWeapon(currentSetIndex);
+        if (normalWeapon == target) return;
+        if (selectedWeapon == normalWeapon) selectedWeapon = target;
+        normalWeapon = target;
+        BindWeaponEvent(normalWeapon);
+        meleeComboIndex = 0;
+    }
+    #endregion
 }

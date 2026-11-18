@@ -8,6 +8,21 @@ public class PlayerWeaponDataSO : PlayerAbilityDataSO
     [Header("Weapons")]
     public WeaponSet[] weaponSets = new WeaponSet[2];
 
+    [Header("Armaments")]
+    [Tooltip("업그레이드 메뉴에서 장착할 수 있는 무장 전체(기본 무기 + Gear 1~3단계). 같은 분류의 무장끼리만 바꿔 낀다.")]
+    public PlayerArmamentSO[] armaments = new PlayerArmamentSO[0];
+
+    // 무장 목록에서 armamentId로 찾는다. 없으면 null.
+    public PlayerArmamentSO FindArmament(string armamentId)
+    {
+        if (string.IsNullOrEmpty(armamentId) || armaments == null) return null;
+        foreach (var armament in armaments)
+        {
+            if (armament != null && armament.armamentId == armamentId) return armament;
+        }
+        return null;
+    }
+
     [Header("SkillGauge")]
     public float maxSkillGauge;
 
@@ -63,6 +78,14 @@ public class GearStagePresentation
 [Serializable]
 public class WeaponSet
 {
+    [Header("Armament Slot")]
+    [Tooltip("이 자리에 장착하는 무장의 분류(근접·원거리). 다른 분류의 무장은 장착하지 않는다.")]
+    public ArmamentCategory armamentCategory;
+    [Tooltip("세이브에 장착 기록이 없을 때 쓰는 무장. 비어 있으면 아래 무기 칸을 그대로 쓴다.")]
+    public PlayerArmamentSO defaultArmament;
+
+    [Header("Armament Weapons")]
+    [Tooltip("기본 무기와 Gear 무기 칸은 실행할 때 장착한 무장의 값으로 채워진다(PlayerWeaponAbility의 실행용 사본).")]
     public WeaponBaseSO normal;
 
     [Header("Gear Weapons")]
@@ -70,6 +93,8 @@ public class WeaponSet
     public WeaponBaseSO gearStage2;
     public WeaponBaseSO gearStage3;
 
+    [Header("Slot Weapon")]
+    [Tooltip("보조 무기는 무장과 무관하게 이 자리에 남는다.")]
     public WeaponBaseSO secondary;
 
     [Header("Swap Presentation")]

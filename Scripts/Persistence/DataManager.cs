@@ -41,6 +41,10 @@ public class SaveData
 
     // 이미 끝난 게임 이벤트(시설 해금 등)의 이름. GameEventManager가 읽고 쓴다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
     public List<string> completedEvents = new List<string>();
+
+    // 무장 자리(Player_Weapon_Data의 weaponSets 번호, 0 = 근접, 1 = 원거리)마다 장착한 무장의 armamentId(2026-11-18).
+    // 비어 있거나 모르는 값이면 그 자리의 기본 무장을 쓴다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
+    public List<string> equippedArmaments = new List<string>();
 }
 
 /// <summary>
@@ -539,6 +543,27 @@ public class DataManager : MonoBehaviour
         SaveGame();
     }
 
+    /// <summary>무장 자리(weaponSets 번호)에 장착한 무장의 armamentId. 기록이 없으면 빈 문자열이다(그 자리의 기본 무장을 쓴다).</summary>
+    public string GetEquippedArmament(int setIndex)
+    {
+        var list = CurrentSaveData != null ? CurrentSaveData.equippedArmaments : null;
+        if (list == null || setIndex < 0 || setIndex >= list.Count) return "";
+        return list[setIndex] ?? "";
+    }
+
+    /// <summary>무장 자리에 장착한 무장을 남기고 저장한다. 같은 값이면 저장하지 않는다. 슬롯을 고르기 전에는 남기지 않는다.</summary>
+    public void SetEquippedArmament(int setIndex, string armamentId)
+    {
+        if (!HasSelectedSlot || setIndex < 0) return;
+        armamentId ??= "";
+        CurrentSaveData.equippedArmaments ??= new List<string>();
+        var list = CurrentSaveData.equippedArmaments;
+        while (list.Count <= setIndex) list.Add("");
+        if (list[setIndex] == armamentId) return;
+        list[setIndex] = armamentId;
+        SaveGame();
+    }
+
     private void ReleaseSlot()
     {
         CurrentSlot = -1;
@@ -576,6 +601,7 @@ public class DataManager : MonoBehaviour
             data.weaponRecords ??= new List<WeaponSaveData>();
             data.trainingRoomRecords ??= new List<TrainingRoomSaveData>();
             data.completedEvents ??= new List<string>();
+            data.equippedArmaments ??= new List<string>();
             data.lastPlayedUtc ??= "";
             return data;
         }
@@ -596,6 +622,7 @@ public class DataManager : MonoBehaviour
         CurrentSaveData ??= new SaveData();
         CurrentSaveData.weaponRecords ??= new List<WeaponSaveData>();
         CurrentSaveData.trainingRoomRecords ??= new List<TrainingRoomSaveData>();
+        CurrentSaveData.equippedArmaments ??= new List<string>();
         weaponCache.Clear();
         foreach (var data in CurrentSaveData.weaponRecords)
         {

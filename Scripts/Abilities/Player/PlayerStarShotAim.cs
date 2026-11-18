@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 // Animator의 반동 뒤 총신을 조준하고 같은 총구에서 탄과 섬광을 함께 내보낸다.
+// 머신건(MachineGunWeaponSO, 2026-11-18 2차): 총신은 조준 방향에 둔 채 탄 방향만 흩뜨리고(탄착군), 섬광은 무기의 청록 섬광(muzzleFlash)을 쓴다.
 [DefaultExecutionOrder(120)]
 public sealed class PlayerStarShotAim : MonoBehaviour
 {
@@ -19,6 +20,7 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     private Vector3 tip, muzzleRestPosition;
     private Quaternion gunRestRotation, muzzleRestRotation;
     private bool aimed;
+    private float scatterStreakStart, lastScatterShot = float.NegativeInfinity;   // 머신건 연사를 이어 온 시간(흩어짐이 커지는 정도)
     public Transform Muzzle => muzzle;
     public Vector2 BarrelDirection => gun != null ? ((Vector2)gun.TransformVector(Vector3.right)).normalized : Vector2.right;
 
@@ -55,14 +57,27 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         foreach (var shot in pending)
         {
             Apply(shot.direction);
-            var projectile = WorldEntityPool.Instance.Spawn(shot.weapon.projectilePrefab, muzzle.position, muzzle.rotation);
+            var machineGun = shot.weapon as MachineGunWeaponSO;
+            Vector2 fire = shot.direction;
+            Quaternion rotation = muzzle.rotation;
+            if (machineGun != null)
+            {
+                // 총신(위에서 Apply)은 조준 방향 그대로, 탄만 흩뜨린다. 탄은 날아가는 방향으로 눕혀 길쭉한 탄두가 진행 방향을 향하게 한다.
+                if (Time.time - lastScatterShot > machineGun.spreadResetGap) scatterStreakStart = Time.time;
+                lastScatterShot = Time.time;
+                fire = machineGun.Scatter(shot.direction, Time.time - scatterStreakStart);
+                rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(fire.y, fire.x) * Mathf.Rad2Deg);
+            }
+            var projectile = WorldEntityPool.Instance.Spawn(shot.weapon.projectilePrefab, muzzle.position, rotation);
             if (projectile is not StarShot star) continue;
-            star.SetFireDirection(shot.direction);
+            star.SetFireDirection(fire);
             star.SetMuzzlePosition(muzzle.position);
             star.Initialize(owner, shot.damage, shot.weapon.projectileSpeed, shot.weapon.count, shot.weapon.platformLayer);
             var weapon = shot.weapon;
             star.OnHitEnemy += (player, point) => weapon.OnHitEnemy?.Invoke(player, point);
-            if (receiver != null) receiver.PlayAnimationFeedback("StarGunMuzzle");
+            if (machineGun != null && machineGun.muzzleFlash != null && FeedbackPlayer.Instance != null)
+                FeedbackPlayer.Instance.Play(machineGun.muzzleFlash, muzzle);   // StarGunMuzzle 키와 같은 재생(총구 자리·회전 + 보정)
+            else if (receiver != null) receiver.PlayAnimationFeedback("StarGunMuzzle");
         }
         pending.Clear();
     }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 
@@ -13,6 +14,9 @@ using UnityEngine;
 ///   사용자 요청: "기계가 조립되는 식으로 만들어줘 … 그렇다면, 접근불가상태일떄의 모습도 달라지겠지". 조립 과정은 LobbyStationUnlock이 재생한다.
 ///   자세는 Play 중에만 적용한다(Edit Mode에서 바꾸면 MainScene에 Prefab 재정의가 생긴다).
 /// - 잠긴 입구의 실제 상호작용은 푯말 흔들림·시설 안내 팝업·기존 실패 Feedback으로 알린다.
+/// - 작업 동작(2026-11-18): 메뉴 안에서 설비가 일하는 순간(구매·장착, menus 아래의 ILobbyStationActivity.Performed)에 Animator의 Trigger 'Upgrade'를 건다
+///   (업그레이드 장치만 그 파라미터가 있다: 메뉴 층 Opened → Upgrading → Opened). 사용자 요청: "업그레이드 장치의 업그레이드 시 Animation도 추가해줘".
+///   작업 도중 메뉴가 닫혀 닫는 동작으로 넘어가면, 닫는 동작이 쓰지 않는 부품(받침 콘솔·렌즈·타워)을 작업 Clip의 끝 자세(쉬는 자세)로 한 번 되돌린다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class LobbyStation : MonoBehaviour
@@ -27,6 +31,10 @@ public sealed class LobbyStation : MonoBehaviour
     [Header("조립 자세")]
     [SerializeField, Tooltip("조립 Clip(0초 = 분해·수납된 방전 자세, 끝 = 조립 완료 자세). 비우면 방전 중에도 형상이 그대로다(훈련 메뉴 장치). tools/Unity/LobbyStationAssembly.cs가 만든다")]
     private AnimationClip assembleClip;
+
+    [Header("작업 동작")]
+    [SerializeField, Tooltip("메뉴 안에서 설비가 일할 때(구매·장착) Animator의 Upgrading 상태가 재생하는 Clip(0초·끝 = 열린 자세). 작업 도중 메뉴가 닫히면 이 Clip의 끝 자세를 한 번 적용해, 닫는 동작이 쓰지 않는 부품(받침 콘솔·렌즈·타워)이 어긋난 채 남지 않게 한다. 비우면 되돌리지 않는다. tools/Unity/LobbyStationAssembly.cs가 연결한다")]
+    private AnimationClip activityClip;
 
     [Header("방전될 때 꺼지는 빛")]
     [SerializeField, Tooltip("전원이 있을 때만 빛나는 부품(기능부·표시선)")] private Renderer[] litRenderers;
@@ -49,6 +57,13 @@ public sealed class LobbyStation : MonoBehaviour
     private UpgradePurchaseDialog unavailableDialog;
 
     private static readonly int OpenId = Animator.StringToHash("Open");
+    // 작업 동작(업그레이드 장치의 메뉴 층 Opened → Upgrading → Opened). 파라미터가 없는 설비(훈련 메뉴·자율훈련장)는 아무것도 하지 않는다.
+    private static readonly int UpgradeId = Animator.StringToHash("Upgrade");
+    private static readonly int UpgradingStateId = Animator.StringToHash("Upgrading");
+    private const int MenuLayer = 1;
+    private readonly List<ILobbyStationActivity> activities = new();
+    private RuntimeAnimatorController upgradeCheckedFor;
+    private bool hasUpgrade, inActivity, activitySettlePending;
     private bool registered, menuOpen, applied, appliedPowered;
     private float shake;
     private Quaternion barrierRotation;
@@ -87,11 +102,17 @@ public sealed class LobbyStation : MonoBehaviour
             barrierCached = true;
             barrierRotation = barrier.transform.localRotation;
         }
+        SubscribeActivities();
+        // 꺼지는 동안 작업 동작이 끊겼으면 켜질 때 쉬는 자세로 되돌린다(꺼진 개체에는 Clip 자세 적용을 장담할 수 없다).
+        // Apply보다 먼저 둔다: 방전이면 Apply가 조립 Clip의 방전 자세로 다시 덮는다.
+        if (activitySettlePending) SettleActivity();
         Apply();
     }
 
     private void OnDisable()
     {
+        UnsubscribeActivities();
+        if (inActivity) { inActivity = false; activitySettlePending = true; }
         Unregister();
         if (unavailableDialog != null) unavailableDialog.Close();
         if (unavailablePopupInstance != null) Destroy(unavailablePopupInstance);
@@ -111,7 +132,10 @@ public sealed class LobbyStation : MonoBehaviour
             // 방전되면 접힌 자세에서 멈춘다(공회전도 멈춘다). 돌던 중에 꺼진 경우에만 자세를 되돌리면 된다(저장된 자세가 접힌 자세다).
             if (!powered && animator.enabled && animator.isInitialized)
             {
+                // 작업 동작 도중에 꺼지면 닫는 동작이 쓰지 않는 부품(콘솔·렌즈·타워)을 먼저 쉬는 자세로 돌린다(메뉴 층 부품은 아래 Closed가 다시 쓴다).
+                if (inActivity) SettleActivity();
                 animator.SetBool(OpenId, false);
+                if (HasUpgradeParameter()) animator.ResetTrigger(UpgradeId);
                 animator.Play("Closed", 1, 0f);
                 animator.Update(0f);
             }
@@ -196,14 +220,16 @@ public sealed class LobbyStation : MonoBehaviour
     {
         if (powered != appliedPowered) Apply();     // Inspector에서 전원을 바꿨을 때
 
-        bool open = false;
-        if (powered && menus != null)
-            for (int i = 0; i < menus.Length && !open; i++)
-                open = menus[i] != null && menus[i] is IUIInputReceiver receiver && receiver.IsActive;
+        bool open = MenusOpen();
         if (open != menuOpen)
         {
             menuOpen = open;
-            if (animator != null && animator.isActiveAndEnabled) animator.SetBool(OpenId, open);
+            if (animator != null && animator.isActiveAndEnabled)
+            {
+                animator.SetBool(OpenId, open);
+                // 여는 동작(Opening) 중에 받아 아직 쓰지 않은 작업 신호가 다음에 열 때 재생되지 않게 지운다.
+                if (!open && HasUpgradeParameter()) animator.ResetTrigger(UpgradeId);
+            }
             if (followers != null)
                 foreach (var follower in followers)
                     if (follower != null && follower.isActiveAndEnabled) follower.SetBool(OpenId, open);
@@ -216,5 +242,82 @@ public sealed class LobbyStation : MonoBehaviour
             float angle = Mathf.Sin((1f - shake) * Mathf.PI * 5f) * shakeAngle * shake * shake;
             barrier.transform.localRotation = barrierRotation * Quaternion.Euler(0f, 0f, angle);
         }
+    }
+
+    // Animator가 이번 프레임을 평가한 뒤에 본다: 작업 상태(Upgrading)를 막 벗어났으면(끝까지 돌았거나 메뉴가 닫혀 Closing으로 넘어감) 쉬는 자세로 맞춘다.
+    private void LateUpdate()
+    {
+        if (activityClip == null || animator == null || !animator.isActiveAndEnabled || !animator.isInitialized || animator.layerCount <= MenuLayer) return;
+        bool now = animator.GetCurrentAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId
+            || (animator.IsInTransition(MenuLayer) && animator.GetNextAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId);
+        if (inActivity && !now) SettleActivity();
+        inActivity = now;
+    }
+
+    private bool MenusOpen()
+    {
+        if (!powered || menus == null) return false;
+        for (int i = 0; i < menus.Length; i++)
+            if (menus[i] != null && menus[i] is IUIInputReceiver receiver && receiver.IsActive) return true;
+        return false;
+    }
+
+    // ---- 작업 동작 ----
+
+    // 메뉴(목록·상세 등) 아래에서 작업 신호를 내는 화면을 모두 찾아 한 번씩만 구독한다.
+    private void SubscribeActivities()
+    {
+        UnsubscribeActivities();
+        if (menus == null) return;
+        foreach (var menu in menus)
+        {
+            if (menu == null) continue;
+            foreach (var activity in menu.GetComponentsInChildren<ILobbyStationActivity>(true))
+            {
+                if (activity == null || activities.Contains(activity)) continue;
+                activities.Add(activity);
+                activity.Performed += HandleActivityPerformed;
+            }
+        }
+    }
+
+    private void UnsubscribeActivities()
+    {
+        foreach (var activity in activities)
+            if (activity is UnityEngine.Object unityObject ? unityObject != null : activity != null) activity.Performed -= HandleActivityPerformed;
+        activities.Clear();
+    }
+
+    // 메뉴가 구매·장착 연출을 시작했다: 전원이 있고 이 설비의 메뉴가 열려 있으며 Animator에 'Upgrade'가 있을 때만 작업 동작을 건다.
+    private void HandleActivityPerformed()
+    {
+        if (!powered || !isActiveAndEnabled || animator == null || !animator.isActiveAndEnabled || !MenusOpen() || !HasUpgradeParameter()) return;
+        animator.SetTrigger(UpgradeId);
+    }
+
+    private bool HasUpgradeParameter()
+    {
+        if (animator == null || !animator.isInitialized) return false;
+        var controller = animator.runtimeAnimatorController;
+        if (controller != upgradeCheckedFor)
+        {
+            upgradeCheckedFor = controller;
+            hasUpgrade = false;
+            if (controller != null)
+                foreach (var parameter in animator.parameters)
+                    if (parameter.nameHash == UpgradeId && parameter.type == AnimatorControllerParameterType.Trigger) { hasUpgrade = true; break; }
+        }
+        return hasUpgrade;
+    }
+
+    // 작업 Clip의 끝 자세(메뉴 층이 쓰는 부품은 열린 자세, 받침 콘솔·렌즈·타워는 쉬는 자세)를 한 번 적용한다.
+    // 메뉴 층이 쓰는 부품은 Animator가 다음 평가에서 다시 쓰므로(닫는 동작은 열린 자세에서 시작한다) 실제로 남는 것은 콘솔·렌즈·타워의 쉬는 자세다.
+    private void SettleActivity()
+    {
+        inActivity = false;
+        if (activityClip == null || !Application.isPlaying) { activitySettlePending = false; return; }
+        if (!gameObject.activeInHierarchy) { activitySettlePending = true; return; }
+        activitySettlePending = false;
+        activityClip.SampleAnimation(gameObject, activityClip.length);
     }
 }
