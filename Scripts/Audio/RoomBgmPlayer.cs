@@ -23,11 +23,15 @@ public sealed class RoomBgmPlayer : MonoBehaviour
     private RoomManager subscribedManager;
     private WaveManager subscribedWaves;
     private EnemyController currentBoss;
+    private EnemyController dedicatedBoss;
+    private int waveIndex;
+    private AudioClip lastRoomClip;
 
-    public AudioClip Clip => bgmClip;
-    public float Volume => volume;
+    public AudioClip Clip { get { ResolveMusic(out var clip, out _, out _); return clip; } }
+    public float Volume { get { ResolveMusic(out _, out var value, out _); return value; } }
     public AudioClip BossClip => bossBgmClip;
-    public bool HasMusic => enabled && bgmClip != null;
+    public WaveDataSO WaveData => subscribedWaves != null ? subscribedWaves.Data : null;
+    public bool HasMusic => enabled && Clip != null;
     // 공용 보스 BGM으로 맞서는 보스가 아직 남아 있는지 알려 준다.
     public bool IsBossMusicActive => bossBgmClip != null && currentBoss != null && currentBoss.gameObject.activeInHierarchy;
 
@@ -47,11 +51,16 @@ public sealed class RoomBgmPlayer : MonoBehaviour
     {
         // RoomManager가 이 컴포넌트보다 늦게 준비되는 경우와 이미 이 방에 있는 경우를 함께 처리한다.
         Subscribe();
-        if (HasMusic && IsCurrentRoom) Play();
+        if (IsCurrentRoom) Play();
     }
 
     private void Update()
     {
+        if (dedicatedBoss != null && !dedicatedBoss.gameObject.activeInHierarchy)
+        {
+            dedicatedBoss = null;
+            if (IsCurrentRoom) Play();
+        }
         // 보스가 쓰러져 풀로 돌아가거나 정리되면 방 BGM으로 돌아온다.
         if (currentBoss == null || currentBoss.gameObject.activeInHierarchy) return;
         currentBoss = null;
@@ -66,6 +75,7 @@ public sealed class RoomBgmPlayer : MonoBehaviour
         {
             subscribedWaves.EnemySpawned -= HandleEnemySpawned;
             subscribedWaves.WavesReset -= HandleWavesReset;
+            subscribedWaves.WaveStarted -= HandleWaveStarted;
         }
         subscribedWaves = null;
     }
@@ -79,10 +89,13 @@ public sealed class RoomBgmPlayer : MonoBehaviour
             {
                 subscribedWaves.EnemySpawned -= HandleEnemySpawned;
                 subscribedWaves.WavesReset -= HandleWavesReset;
+                subscribedWaves.WaveStarted -= HandleWaveStarted;
             }
             waves.EnemySpawned += HandleEnemySpawned;
             waves.WavesReset += HandleWavesReset;
+            waves.WaveStarted += HandleWaveStarted;
             subscribedWaves = waves;
+            waveIndex = 0;
         }
 
         var manager = RoomManager.Instance;
@@ -94,22 +107,27 @@ public sealed class RoomBgmPlayer : MonoBehaviour
 
     private void HandleRoomChanged(RoomType _)
     {
-        if (!HasMusic && bossBgmClip == null) return;
-        if (IsCurrentRoom) { if (HasMusic || IsBossMusicActive) Play(); return; }
+        Subscribe();
+        if (!enabled) return;
+        // 명시적인 무음도 방에 들어오는 순간 적용해야 한다(직전에 이 컴포넌트가 재생한 곡이 없어도 적용).
+        if (IsCurrentRoom) { Play(); return; }
+        if (!HasMusic && bossBgmClip == null && lastRoomClip == null) return;
         var current = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
         var next = current != null ? current.GetComponentInChildren<RoomBgmPlayer>(true) : null;
         if (next != null && next.HasMusic) return;
         var sound = SoundManager.Instance;
         if (sound == null) return;
-        if (bgmClip != null) sound.FadeOutBGM(bgmClip, fadeDuration);
+        if (lastRoomClip != null) sound.FadeOutBGM(lastRoomClip, fadeDuration);
+        else if (bgmClip != null) sound.FadeOutBGM(bgmClip, fadeDuration);
         if (bossBgmClip != null) sound.FadeOutBGM(bossBgmClip, fadeDuration);
     }
 
     // WaveManager가 보스 표시를 정한 직후에 알린다. 전용 BGM이 있는 보스는 자기 곡을 재생하므로 건너뛴다.
     private void HandleEnemySpawned(EnemyController enemy)
     {
-        if (!enabled || bossBgmClip == null || enemy == null || enemy.Health == null || !enemy.Health.IsBossEnemy) return;
-        if (enemy.TryGetComponent<EnemySpawnController>(out var spawn) && spawn.HasDedicatedBossMusic) return;
+        if (!enabled || enemy == null || enemy.Health == null || !enemy.Health.IsBossEnemy) return;
+        if (enemy.TryGetComponent<EnemySpawnController>(out var spawn) && spawn.HasDedicatedBossMusic) { dedicatedBoss = enemy; return; }
+        if (bossBgmClip == null) return;
         currentBoss = enemy;
         if (IsCurrentRoom) Play();
     }
@@ -117,26 +135,57 @@ public sealed class RoomBgmPlayer : MonoBehaviour
     // 웨이브를 처음부터 시작하거나 강제로 정리하면 보스전도 끝난 것으로 보고 방 BGM으로 돌아온다.
     private void HandleWavesReset()
     {
-        bool wasBoss = currentBoss != null;
         currentBoss = null;
-        if (wasBoss && IsCurrentRoom) Play();
+        dedicatedBoss = null;
+        waveIndex = 0;
+        if (IsCurrentRoom) Play();
+    }
+
+    private void HandleWaveStarted(Wave wave)
+    {
+        waveIndex = WaveData != null && WaveData.waves != null ? System.Array.IndexOf(WaveData.waves, wave) : 0;
+        if (IsCurrentRoom) Play();
+    }
+
+    // Tool에서 값을 적용할 때도 동일한 방·보스 우선권을 지킨다.
+    public void RefreshWaveMusic()
+    {
+        Subscribe();
+        if (IsCurrentRoom) Play();
+    }
+    private void ResolveMusic(out AudioClip clip, out float targetVolume, out float fade)
+    {
+        clip = bgmClip; targetVolume = volume; fade = fadeDuration;
+        var data = WaveData;
+        if (data != null && data.TryGetBgm(waveIndex, out var selected, out var selectedVolume, out var selectedFade))
+        { clip = selected; targetVolume = selectedVolume; fade = selectedFade; }
     }
 
     private void Play()
     {
         var sound = SoundManager.Instance;
-        if (sound == null) return;
+        if (!enabled || sound == null || dedicatedBoss != null && dedicatedBoss.gameObject.activeInHierarchy) return;
         bool boss = IsBossMusicActive;
-        var clip = boss ? bossBgmClip : bgmClip;
-        float target = boss ? bossVolume : volume;
+        ResolveMusic(out var roomClip, out var roomVolume, out var roomFade);
+        var clip = boss ? bossBgmClip : roomClip;
+        float target = boss ? bossVolume : roomVolume;
+        float fade = boss ? fadeDuration : roomFade;
         if (clip == null)
         {
+            // 직접 지정한 무음은 이전 방 음악까지 끈다. 원본 Room 음악이 비어 있는 경우의 Title 이어 듣기는 보존한다.
+            if (WaveData != null && WaveData.TryGetBgm(waveIndex, out _, out _, out _))
+            {
+                sound.FadeOutBGM(sound.CurrentBgmClip, fade);
+                return;
+            }
             // 방 BGM 없이 보스 BGM만 둔 방은 보스전이 끝나면 보스 곡을 줄여 멈춘다.
-            if (bossBgmClip != null) sound.FadeOutBGM(bossBgmClip, fadeDuration);
+            if (lastRoomClip != null) sound.FadeOutBGM(lastRoomClip, fade);
+            if (bossBgmClip != null) sound.FadeOutBGM(bossBgmClip, fade);
             return;
         }
+        if (!boss) lastRoomClip = clip;
         if (sound.CurrentBgmClip == clip && sound.IsBgmPlaying && !sound.IsBgmDistant
             && Mathf.Abs(sound.CurrentBgmVolume - target) < .001f) return;
-        sound.ChangeBGM(clip, fadeDuration, target, true);
+        sound.ChangeBGM(clip, fade, target, true);
     }
 }

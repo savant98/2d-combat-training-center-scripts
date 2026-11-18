@@ -12,11 +12,49 @@ public class WaveDataSO : ScriptableObject
     [Tooltip("실내 치수 연출(TrainingRoomPresentation)을 가진 커스텀 Room에서 저장된 실내 크기에 카메라를 맞춥니다. 그 밖의 Room은 커스텀이어도 셀 연결 공간을 이 설정 없이 자동 적용합니다.")]
     public bool adaptCameraToRoom;
     public GameObject backgroundPrefab;
+    [Tooltip("선택한 배경을 현재 방의 연결 공간에 맞춰 중심 정렬합니다. 원본 비율을 유지하며 빈 부분 없이 덮습니다.")]
+    public bool fitBackgroundToRoom;
+    [Tooltip("통창 유리와 반사를 표시합니다. 프레임과 케이블은 이 설정과 관계없이 유지합니다.")]
+    public bool showObservationGlass = true;
+    [Tooltip("끄면 Room 콘텐츠에 원래 연결된 음악을 사용합니다. 켜고 Clip을 비우면 무음입니다.")]
+    public bool overrideBgm;
+    public AudioClip bgmClip;
+    [Range(0f, 1f)] public float bgmVolume = .38f;
+    [Min(0f)] public float bgmFadeDuration = .8f;
     [Tooltip("모든 Wave를 클리어한 뒤 나타나는 Lobby 복귀 포탈의 위치를 Tool에서 지정합니다.")]
     public bool overrideClearPortalPosition;
     public Vector2 clearPortalPosition;
     public WaveCellMap cellMap = new WaveCellMap();
     public Wave[] waves;
+
+    public GameObject BackgroundAt(int index)
+    {
+        var wave = WaveAt(index);
+        return wave != null && wave.overrideBackground ? wave.backgroundPrefab : backgroundPrefab;
+    }
+    public bool FitBackgroundAt(int index)
+    {
+        var wave = WaveAt(index);
+        return wave != null && wave.overrideBackground ? wave.fitBackgroundToRoom : fitBackgroundToRoom;
+    }
+    public bool ShowObservationGlassAt(int index)
+    {
+        var wave = WaveAt(index);
+        return wave != null && wave.overrideBackground ? wave.showObservationGlass : showObservationGlass;
+    }
+    // false면 Room 원본 음악을 사용한다. true와 null Clip의 조합은 명시적인 무음이다.
+    public bool TryGetBgm(int index, out AudioClip clip, out float volume, out float fade)
+    {
+        var wave = WaveAt(index);
+        bool useWave = wave != null && wave.overrideBgm;
+        clip = useWave ? wave.bgmClip : bgmClip;
+        float selectedVolume = useWave ? wave.bgmVolume : bgmVolume;
+        float selectedFade = useWave ? wave.bgmFadeDuration : bgmFadeDuration;
+        volume = float.IsFinite(selectedVolume) ? Mathf.Clamp01(selectedVolume) : .38f;
+        fade = float.IsFinite(selectedFade) ? Mathf.Max(0f, selectedFade) : .8f;
+        return useWave || overrideBgm;
+    }
+    private Wave WaveAt(int index) => waves != null && index >= 0 && index < waves.Length ? waves[index] : null;
 }
 
 public enum WaveClearType
@@ -30,6 +68,17 @@ public enum WaveClearType
 [System.Serializable]
 public class Wave
 {
+    public TutorialLesson tutorial = new TutorialLesson();
+    [Tooltip("이 Wave만 별도 배경을 사용합니다. 끄면 WaveData 기본 배경을 사용하며, 켜고 Prefab을 비우면 Room 원본 배경입니다.")]
+    public bool overrideBackground;
+    public GameObject backgroundPrefab;
+    public bool fitBackgroundToRoom = true;
+    public bool showObservationGlass = true;
+    [Tooltip("이 Wave만 별도 음악을 사용합니다. 켜고 Clip을 비우면 무음입니다. 보스 음악은 우선합니다.")]
+    public bool overrideBgm;
+    public AudioClip bgmClip;
+    [Range(0f, 1f)] public float bgmVolume = .38f;
+    [Min(0f)] public float bgmFadeDuration = .8f;
     public float startDelay;
     public bool overridePlayerStart;
     public Vector2 playerStart;

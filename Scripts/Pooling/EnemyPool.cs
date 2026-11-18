@@ -11,6 +11,9 @@ public class EnemyPool : MonoBehaviour
     private readonly HashSet<EnemyController> activeEnemies = new();
     private readonly Dictionary<EnemyController, Coroutine> spawnRoutines = new();
 
+    // 등장의 앞뒤 대기와 모델 공개가 끝났는지 UI가 읽기 전용으로 확인합니다.
+    public bool IsSpawning(EnemyController enemy) => enemy != null && spawnRoutines.ContainsKey(enemy);
+
     private void Awake()
     {
         Instance = this;

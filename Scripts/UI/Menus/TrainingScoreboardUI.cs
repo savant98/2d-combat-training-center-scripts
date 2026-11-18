@@ -31,6 +31,7 @@ public class TrainingScoreboardUI : MonoBehaviour
 
     private TrainingRunTracker tracker;
     private bool scoreBoardOn;
+    private bool hideRunInformation;
     private Grade lastGrade;
     private int hitLimit = -1;
     private float timeLimit = -1f;
@@ -43,7 +44,7 @@ public class TrainingScoreboardUI : MonoBehaviour
     private const float BossWarningDuration = 3f;      // 보스 등장 경고(WarningLineEffect) 길이, 게임 시간
     private float bossWarningUntil = -1f;
 
-    public bool IsRunActive => scoreBoardOn && tracker != null && tracker.IsRunActive;
+    public bool IsRunActive => scoreBoardOn && !hideRunInformation && tracker != null && tracker.IsRunActive;
     public TrainingGradeAlertUI GradeAlert => gradeAlert;
     public WaveTransitionPanelUI WaveTransition => waveTransition;
     public TrainingLimitWarningUI LimitWarning => limitWarning;
@@ -67,6 +68,19 @@ public class TrainingScoreboardUI : MonoBehaviour
         scoreBoardOn = true;
 
         var training = tracker.TrainingDefinition;
+        // 튜토리얼은 실습 안내에 집중하도록 실시간 성적·제한 알림만 숨깁니다. 저장 ID는 기존 Intro를 유지합니다.
+        // Show 때마다 다시 판정하므로 다음 일반 훈련에서는 기존 상황판이 자동으로 돌아옵니다.
+        hideRunInformation = training != null && training.trainingId == "Intro";
+        if (hideRunInformation)
+        {
+            if (limitWarning != null) limitWarning.Stop();
+            if (gradeAlert != null) gradeAlert.Stop();
+            if (waveTransition != null) waveTransition.Stop();
+            bootTime = bossWarningUntil = -1f;
+            scoreBoardCanvasGroup.DOKill();
+            scoreBoardCanvasGroup.alpha = 0f;
+            return;
+        }
         TrainingBoardStyle.GetPassLimits(training, out hitLimit, out timeLimit);
         ReadWave();
         cornerView.Configure(training);
@@ -90,7 +104,7 @@ public class TrainingScoreboardUI : MonoBehaviour
         if (waveTransition != null && tracker != null && tracker.LastFailReason != TrainingFailReason.None)
             waveTransition.Stop();
         // 성적이 미흡이 되어 판이 끝났으면(자동 사망) 그 순간을 등급 하락 알림으로 알려 왜 패배했는지 보이게 한다.
-        if (gradeAlert != null && tracker != null && lastGrade > Grade.Poor
+        if (!hideRunInformation && gradeAlert != null && tracker != null && lastGrade > Grade.Poor
             && (tracker.LastFailReason == TrainingFailReason.HitLimit || tracker.LastFailReason == TrainingFailReason.TimeLimit))
         {
             gradeAlert.Play(lastGrade, Grade.Poor);
@@ -112,7 +126,7 @@ public class TrainingScoreboardUI : MonoBehaviour
     }
 
     // 코너판이 화면에 보이는지(켜져 있고 루트 알파가 남아 있다)
-    private bool IsBoardVisible => scoreBoardOn && scoreBoardCanvasGroup != null && scoreBoardCanvasGroup.alpha > 0.001f;
+    private bool IsBoardVisible => scoreBoardOn && !hideRunInformation && scoreBoardCanvasGroup != null && scoreBoardCanvasGroup.alpha > 0.001f;
 
     // 보스 등장 경고(UIManager.ShowWarningLine)가 시작될 때 부른다. 경고 글자판이 한도 경고와 같은 자리라 그동안 한도 경고를 흐리게 한다.
     public void NotifyBossWarning()

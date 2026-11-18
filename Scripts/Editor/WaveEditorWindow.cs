@@ -964,11 +964,25 @@ public sealed class WaveEditorWindow : EditorWindow
             if (clearType.enumValueIndex == (int)WaveClearType.ReachGoal) EditorGUILayout.HelpBox("목표지점 팔레트의 WaveGoal을 이 Wave에 배치하세요. 생성된 목표 중 한 곳에 도달하면 클리어됩니다. 키 설정은 필요하지 않습니다.", MessageType.Info);
             if (Current.clearType == WaveClearType.SurviveForTime) Property(wave, "surviveTime", "생존 시간 (초)");
             if (Current.clearType == WaveClearType.CustomTrigger) Property(wave, "customTriggerKey", "목표 도달 / 완료 키");
+            GUILayout.Space(8);
+            var tutorial = wave.FindPropertyRelative("tutorial");
+            Property(tutorial, "enabled", "튜토리얼 안내 사용");
+            if (tutorial.FindPropertyRelative("enabled").boolValue)
+            {
+                Property(tutorial, "title", "설명 제목");
+                Property(tutorial, "description", "설명 / 실습 안내");
+                Property(tutorial, "focusEnabled", "포커스 설명 사용");
+                Property(tutorial, "action", "실습 행동");
+                Property(tutorial, "requiredDistance", "이동 실습 거리");
+                var steps = tutorial.FindPropertyRelative("steps");
+                if (steps != null) EditorGUILayout.PropertyField(steps, new GUIContent("포커스 설명 단계"), true);
+                EditorGUILayout.HelpBox("포커스를 끄면 게임을 멈추지 않고 짧은 안내와 실습을 시작합니다. 설명 단계가 비어 있으면 위 제목·설명 한 개를 사용합니다. 단계마다 Player·목표·HUD 또는 격자 영역을 포커스할 수 있습니다. GridArea/Platform의 중심은 생성 기준점 대비 좌표이고 크기는 월드 단위입니다. 설명을 확인하고 실습을 마쳐야 WaveGoal로 완료됩니다.", MessageType.Info);
+            }
             Property(wave, "clearDelay", "클리어 후 대기 (초)");
             Property(wave, "startDelay", "첫 생성 대기 (초)");
             Property(wave, "custom", "커스텀 연출 사용");
             if (Current.custom) Property(wave, "customDescription", "커스텀 규칙 설명");
-            showRoom = EditorGUILayout.Foldout(showRoom, "Room / 배경 / 초기 지형", true);
+            showRoom = EditorGUILayout.Foldout(showRoom, "Room / 배경 / BGM / 초기 지형", true);
             if (showRoom)
             {
                 EditorGUILayout.PropertyField(serialized.FindProperty("roomTemplate"), new GUIContent("Room 콘텐츠 (카메라·진행 포함)"));
@@ -982,11 +996,45 @@ public sealed class WaveEditorWindow : EditorWindow
                         : "이 커스텀 Room은 코스 카메라·마무리 연출을 유지하면서, 일반 Platform으로 둘러싸인 연결 공간에 카메라·배경·통창을 자동으로 맞춥니다. 위 설정은 실내 치수 연출을 가진 Room(관리자 평가)에서만 쓰입니다.", MessageType.None);
                 }
                 else EditorGUILayout.HelpBox("일반 Room은 일반 Platform으로 둘러싸인 연결 공간에 카메라·배경·통창을 자동으로 맞춥니다. OneWayPlatform은 경계를 막지 않습니다. 외부로 열렸거나 공간을 계산할 수 없으면 저장된 실내 범위를 사용합니다.", MessageType.None);
+                GUILayout.Space(6);
+                GUILayout.Label("모든 Wave의 기본 배경", EditorStyles.boldLabel);
                 int backgroundIndex = backgrounds.IndexOf(pendingBackground) + 1;
                 int nextBackground = EditorGUILayout.Popup("배경 선택", backgroundIndex, new[] { "원본 배경 유지" }.Concat(backgrounds.Select(p => p.name)).ToArray());
                 if (nextBackground != backgroundIndex) pendingBackground = nextBackground == 0 ? null : backgrounds[nextBackground - 1];
                 pendingBackground = (GameObject)EditorGUILayout.ObjectField("배경 Prefab", pendingBackground, typeof(GameObject), false);
+                EditorGUILayout.PropertyField(serialized.FindProperty("fitBackgroundToRoom"), new GUIContent("기본 배경을 현재 방에 맞춤"));
+                EditorGUILayout.PropertyField(serialized.FindProperty("showObservationGlass"), new GUIContent("기본 통창 유리·반사 표시"));
                 if (GUILayout.Button("선택한 배경 적용")) ApplySelectedBackground();
+                GUILayout.Space(6);
+                GUILayout.Label("현재 Wave의 배경", EditorStyles.boldLabel);
+                Property(wave, "overrideBackground", "이 Wave의 배경 직접 지정");
+                if (wave.FindPropertyRelative("overrideBackground").boolValue)
+                {
+                    Property(wave, "backgroundPrefab", "Wave 배경 Prefab");
+                    Property(wave, "fitBackgroundToRoom", "Wave 배경을 현재 방에 맞춤");
+                    Property(wave, "showObservationGlass", "Wave 통창 유리·반사 표시");
+                }
+                EditorGUILayout.HelpBox("직접 지정을 끄면 기본 배경을 사용합니다. 켜고 Prefab을 비우면 Room 원본 배경입니다. 방 맞춤은 원본 비율을 유지하며 현재 연결 공간을 덮습니다.", MessageType.None);
+                if (GUILayout.Button("현재 Wave 배경 적용")) ApplySelectedWaveBackground();
+                GUILayout.Space(6);
+                GUILayout.Label("모든 Wave의 기본 BGM", EditorStyles.boldLabel);
+                EditorGUILayout.PropertyField(serialized.FindProperty("overrideBgm"), new GUIContent("기본 BGM 직접 지정"));
+                if (serialized.FindProperty("overrideBgm").boolValue)
+                {
+                    EditorGUILayout.PropertyField(serialized.FindProperty("bgmClip"), new GUIContent("기본 BGM Clip"));
+                    EditorGUILayout.PropertyField(serialized.FindProperty("bgmVolume"), new GUIContent("기본 BGM 음량"));
+                    EditorGUILayout.PropertyField(serialized.FindProperty("bgmFadeDuration"), new GUIContent("기본 BGM 전환 시간"));
+                }
+                GUILayout.Label("현재 Wave의 BGM", EditorStyles.boldLabel);
+                Property(wave, "overrideBgm", "이 Wave의 BGM 직접 지정");
+                if (wave.FindPropertyRelative("overrideBgm").boolValue)
+                {
+                    Property(wave, "bgmClip", "Wave BGM Clip");
+                    Property(wave, "bgmVolume", "Wave BGM 음량");
+                    Property(wave, "bgmFadeDuration", "Wave BGM 전환 시간");
+                }
+                EditorGUILayout.HelpBox("Wave 직접 지정 → 기본 BGM → Room 원본 음악 순으로 사용합니다. 직접 지정한 Clip을 비우면 무음입니다. 보스 음악은 우선하며 보스전 종료 후 현재 Wave 음악으로 돌아옵니다.", MessageType.None);
+                if (GUILayout.Button("BGM 설정 적용")) ApplySelectedBgm();
                 EditorGUILayout.PropertyField(serialized.FindProperty("training"), new GUIContent("훈련 기록 / 보상"));
                 EditorGUILayout.PropertyField(serialized.FindProperty("playerStart"), new GUIContent("미지정 Wave의 기본 시작 좌표"));
                 if (data.cellMap.enabled) RoomProperties(serialized.FindProperty("room"));
@@ -1118,6 +1166,26 @@ public sealed class WaveEditorWindow : EditorWindow
         serialized?.ApplyModifiedProperties(); Mutate(() => data.backgroundPrefab = pendingBackground);
         foreach (var terrain in UnityEngine.Object.FindObjectsByType<WaveCellTerrain>(FindObjectsInactive.Include, FindObjectsSortMode.None)) if (terrain.Data == data) terrain.ApplyBackground();
         if(EditorUtility.IsPersistent(data)) AssetDatabase.SaveAssetIfDirty(data);
+    }
+    private void ApplySelectedWaveBackground()
+    {
+        serialized?.ApplyModifiedProperties();
+        if (Current == null) return;
+        if (Current.overrideBackground && Current.backgroundPrefab != null && !WaveRoomBackground.IsBackground(Current.backgroundPrefab))
+        {
+            EditorUtility.DisplayDialog("배경 확인", "카메라·Collider·Room·WaveManager가 없는 배경 Prefab을 선택하세요.", "확인");
+            return;
+        }
+        foreach (var terrain in UnityEngine.Object.FindObjectsByType<WaveCellTerrain>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            if (terrain.Data == data) terrain.ApplyBackground();
+        if (EditorUtility.IsPersistent(data)) AssetDatabase.SaveAssetIfDirty(data);
+    }
+    private void ApplySelectedBgm()
+    {
+        serialized?.ApplyModifiedProperties();
+        foreach (var player in UnityEngine.Object.FindObjectsByType<RoomBgmPlayer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            if (player.WaveData == data) player.RefreshWaveMusic();
+        if (EditorUtility.IsPersistent(data)) AssetDatabase.SaveAssetIfDirty(data);
     }
     private static void RoomProperties(SerializedProperty room)
     {

@@ -234,7 +234,14 @@ public sealed class WaveCellTerrain : MonoBehaviour
         ResetMap();
     }
 
-    public void ApplyBackground() => GetComponent<WaveRoomBackground>()?.Apply(data.backgroundPrefab);
+    public void ApplyBackground() => ApplyBackground(waves != null ? waves.currentWaveIndex : 0);
+    private void ApplyBackground(int index)
+    {
+        var background = GetComponent<WaveRoomBackground>();
+        if (background == null) return;
+        background.ApplyWave(index);
+        background.SetRoomBounds(backdropBounds ?? ConnectedBounds ?? WaveRoomState.LayoutAt(data, index).bounds);
+    }
     private WaveCellStyle Style(WaveMapCell cell) => data.cellMap.styles[Mathf.Clamp(cell.style, 0, data.cellMap.styles.Length - 1)];
     // 스타일에 같은 종류의 전용 Prefab이 있으면 그것을, 없으면 맵 기본 Prefab을 쓴다.
     private WaveTerrainCellView Source(WaveMapCell cell)
@@ -841,7 +848,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         CancelCameraSettlement(true);
         roomSpaceReset = true;
         StopAllCoroutines(); ClearPanels(); ClearGround(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); eventAdded.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
-        ApplyBackground();
+        ApplyBackground(0);
         roomSolids = null;
         ConnectedBounds = null;
         backdropBounds = null;
@@ -869,6 +876,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     public IEnumerator Prepare(int index)
     {
         roomSpaceReset = false;
+        ApplyBackground(index);
         // EndEvents가 외곽선·충돌·연결 공간까지 다시 맞춘다.
         EndEvents();
         var next = InitialFor(WaveCellState.Initial(data, index));
@@ -1118,6 +1126,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (backdropBounds.HasValue && backdropBounds.Value == union) return;
         backdropBounds = union;
         automaticBackdrop.Resize(union);
+        GetComponent<WaveRoomBackground>()?.SetRoomBounds(union);
     }
     private static Rect Union(Rect a, Rect b) => Rect.MinMaxRect(Mathf.Min(a.xMin, b.xMin), Mathf.Min(a.yMin, b.yMin), Mathf.Max(a.xMax, b.xMax), Mathf.Max(a.yMax, b.yMax));
     private void RefreshRoomSpace(bool resetting = false, bool immediateCamera = false)
@@ -1167,6 +1176,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (backdropBounds.HasValue && backdropBounds.Value == backdrop) return;
         backdropBounds = backdrop;
         automaticBackdrop.Resize(backdrop);
+        GetComponent<WaveRoomBackground>()?.SetRoomBounds(backdrop);
     }
     private void SetCameraBounds(Rect bounds, bool immediate = false)
     {

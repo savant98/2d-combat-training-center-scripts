@@ -37,6 +37,7 @@ public class WaveManager : MonoBehaviour
     public event Action<int> WaveIntroStarted;
     public event Action WaveEnded;
     private readonly List<GameObject> looseObjects = new();
+    private readonly HashSet<EnemyController> currentWaveEnemies = new();
     private readonly HashSet<TutorialGoal> activeGoals = new();
     public void Configure(WaveDataSO data, Transform root, TrainingDefinitionSO training)
     {
@@ -239,6 +240,7 @@ public class WaveManager : MonoBehaviour
         isSpawnActive = true;
         activeEnemies.Clear();
         foreach (var prepared in preparedCourses) InitializeSpawn(prepared.Value.gameObject, prepared.Key);
+        TutorialWaveGuide.Begin(this, wave.tutorial);
         WaveStarted?.Invoke(wave);
 
         // 1. 오브젝트 생성 루틴 시작(크레인으로 옮긴 Wave면 0초 항목을 모두 놓은 직후에 남겨 둔 상자를 푼다)
@@ -286,6 +288,8 @@ public class WaveManager : MonoBehaviour
                 {
                     EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, spawnPos);
                     enemyInstance.Health.IsBossEnemy = info.isBossEnemy;
+                    if (!info.keepAfterWave) currentWaveEnemies.Add(enemyInstance);
+                    else currentWaveEnemies.Remove(enemyInstance);
                     EnemySpawned?.Invoke(enemyInstance);
 
                     if (info.isBossEnemy)
@@ -434,6 +438,7 @@ public class WaveManager : MonoBehaviour
         && currentWave.clearType == WaveClearType.ReachGoal && activeGoals.Contains(goal);
 
     public bool CanReachGoal(TutorialGoal goal) => IsGoalActive(goal)
+        && TutorialWaveGuide.CanComplete(this)
         && (GameManager.Instance == null || GameManager.Instance.Player == null || !GameManager.Instance.Player.Health.IsDead);
 
     public void HandleGoalReached(TutorialGoal goal)
@@ -493,6 +498,9 @@ public class WaveManager : MonoBehaviour
     private void ClearCurrentWaveEntities()
     {
         activeGoals.Clear();
+        foreach (var enemy in currentWaveEnemies)
+            if (enemy != null && enemy.gameObject.activeInHierarchy) EnemyPool.Instance.Despawn(enemy);
+        currentWaveEnemies.Clear();
         foreach (var entity in currentWaveEntities)
         {
             if (entity != null && entity.gameObject.activeInHierarchy)
