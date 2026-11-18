@@ -236,11 +236,12 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity
             PlayFeedbackAt(feedback, at);
             float wait = feedback != null && FeedbackPlayer.Instance != null ? feedback.lifeTime : 0f;
             if (wait > 0f) yield return new WaitForSecondsRealtime(wait);
-            PlayFeedbackAt(completeFeedback, at);
-
             // 연출 대기 중 가격·상태·재화가 바뀌었으면 다시 확인하게 하고 기존 거래는 수행하지 않는다.
             if (!ValidateConfirmedPurchase(nodeType, weaponId, quotedPrice, out warning)) yield break;
-            Commit(nodeType);
+            if (!Commit(nodeType))
+            { warning = "재화가 부족합니다"; yield break; }
+            // 실제 차감과 구매 기록이 끝난 뒤에만 성공 Feedback을 한 번 재생한다.
+            PlayFeedbackAt(completeFeedback, at);
             Refresh();
             if (host != null) host.RefreshGold();
             FocusSilently(DefaultIndex());
@@ -257,13 +258,14 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity
 
     // 거래: 재화를 먼저 쓰고, 성공하면 기록을 남긴다(각각 저장된다).
     // (옛 강화 격자 WeaponUpgradeSlot.TryUnlockWeapon / TryUpgradeWeapon과 같은 순서)
-    private void Commit(int nodeType)
+    private bool Commit(int nodeType)
     {
         var data = DataManager.Instance;
         string id = weapon.weaponName;
-        if (!data.TrySpendGold(Node(nodeType).upgradeCost)) return;
+        if (!data.TrySpendGold(Node(nodeType).upgradeCost)) return false;
         if (nodeType == UnlockNode) data.SetWeaponUnlockState(id, true);
         else data.SetWeaponNodeUpgradeState(id, nodeType == RightNode, true);
+        return true;
     }
 
     private void ShowPurchaseWarning(string message, int nodeType)

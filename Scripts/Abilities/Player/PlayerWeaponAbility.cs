@@ -100,6 +100,7 @@ public class PlayerWeaponAbility : PlayerAbility
     private int primaryOverrideSet = -1;
     private float primaryOverrideEnd = -1f;
     private float primaryOverrideDuration;
+    private FeedbackDataSO primaryOverrideExpirationFeedback;
 
     private int meleeComboIndex = 0;
     private float comboQueueWindow = 0f;
@@ -624,7 +625,7 @@ public class PlayerWeaponAbility : PlayerAbility
     public override void Tick()
     {
         if (modelReturnTime >= 0f && Time.time >= modelReturnTime - 0.0001f) FinishModelReturn();
-        if (primaryOverride != null && Time.time >= primaryOverrideEnd) EndPrimaryOverride();
+        TickPrimaryOverride();
         if (isStoringSkill) { TickSkillStorage(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
         RepeatPrimaryInput();
         if (abilityState != AbilityState.None)
@@ -1642,8 +1643,9 @@ public class PlayerWeaponAbility : PlayerAbility
     /// <summary>
     /// 기본 공격 자리를 duration초 동안 weapon으로 바꾼다. setIndex를 주지 않으면 지금 실행 중인 기술의 자리(저장해 둔 기술이면 저장한 자리)다.
     /// 기본 공격 중에 바뀌면 그 공격이 끝난 뒤부터 적용한다.
+    /// expirationFeedback은 시간이 다해 돌아갈 때만 한 번 재생한다. 수동 해제·무장 교체·사망에서는 재생하지 않는다.
     /// </summary>
-    public void BeginPrimaryOverride(WeaponBaseSO weapon, float duration, int setIndex = -1)
+    public void BeginPrimaryOverride(WeaponBaseSO weapon, float duration, int setIndex = -1, FeedbackDataSO expirationFeedback = null)
     {
         if (weapon == null || duration <= 0f) return;
         if (setIndex < 0) setIndex = executionSetIndex >= 0 ? executionSetIndex : currentSetIndex;
@@ -1652,9 +1654,19 @@ public class PlayerWeaponAbility : PlayerAbility
         primaryOverrideSet = setIndex;
         primaryOverrideDuration = duration;
         primaryOverrideEnd = Time.time + duration;
+        primaryOverrideExpirationFeedback = expirationFeedback;
         BindWeaponEvent(weapon);
         RefreshNormalWeapon();
         PrimaryOverrideChanged?.Invoke(setIndex);
+    }
+
+    // 표시는 다른 자리를 들거나 총이 숨을 때도 꺼진다. 종료음은 표시 대신 실제 장착 시간의 만료에서만 낸다.
+    private void TickPrimaryOverride()
+    {
+        if (primaryOverride == null || Time.time < primaryOverrideEnd) return;
+        FeedbackDataSO expiredFeedback = primaryOverrideExpirationFeedback;
+        EndPrimaryOverride();   // 먼저 상태를 지워 다음 Tick과 종료 이벤트에서 중복 재생하지 않게 한다.
+        if (expiredFeedback != null && feedbackPlayer != null) feedbackPlayer.Play(expiredFeedback, transform);
     }
 
     /// <summary>기본 공격 자리 바꾸기를 끝낸다. setIndex를 주면 그 자리의 것일 때만 끝낸다.</summary>
@@ -1665,6 +1677,7 @@ public class PlayerWeaponAbility : PlayerAbility
         primaryOverride = null;
         primaryOverrideSet = -1;
         primaryOverrideEnd = -1f;
+        primaryOverrideExpirationFeedback = null;
         RefreshNormalWeapon();
         PrimaryOverrideChanged?.Invoke(set);
     }

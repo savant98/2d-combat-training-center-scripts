@@ -34,6 +34,7 @@ public class OptionMenu : SelectableMenuUI
     [SerializeField] private UnityEngine.UI.Image[] dialogFocus;
 
     [SerializeField] private UnityEngine.UI.ScrollRect displayScroll;
+    [SerializeField] private AudioCreditsPanel audioCredits;
     private OptionSettings saved, draft;
     private string originalBindings;
     private readonly List<Vector2Int> resolutions = new();
@@ -134,6 +135,7 @@ public class OptionMenu : SelectableMenuUI
 
     private void OnDisable()
     {
+        if (audioCredits != null) audioCredits.Close();
         TitleMenu.OnOptionSelected -= OpenMenu;
         PauseMenuController.OnOptionSelected -= OpenMenu;
         if (IsActive) CloseMenu(false, true);
@@ -393,10 +395,23 @@ public class OptionMenu : SelectableMenuUI
             case NavigationStage.Footer:
                 if (selection == 0) RequestReset();
                 else if (selection == 1) CancelOrClose();
-                else Apply();
+                else if (selection == 2) Apply();
+                else if (selection == 3) OpenAudioCredits();
                 break;
         }
         inputReadyAt = Time.unscaledTime + .12f;
+    }
+
+    // 출처를 읽는 동안 설정 초안과 선택 위치를 유지하고 입력만 자식 패널로 넘긴다.
+    public void OpenAudioCredits()
+    {
+        if (!CanUsePointer() || audioCredits == null) return;
+        FinishEditing(false);
+        navigationStage = NavigationStage.Footer;
+        selection = 3;
+        WithoutMoveFeedback(RefreshFocus);
+        audioCredits.ConfigureFeedback(confirmFeedback, cancelFeedback);
+        audioCredits.Open();
     }
 
     private void BeginEditing()
@@ -777,6 +792,7 @@ public class OptionMenu : SelectableMenuUI
     private void CloseMenu(bool keep, bool immediate = false)
     {
         if (!IsActive) return;
+        if (audioCredits != null) audioCredits.Close();
         if (IsRebinding) { rebind.Cancel(); if (IsRebinding) FinishRebind(originalBindings, ""); }
         if (!keep)
         {

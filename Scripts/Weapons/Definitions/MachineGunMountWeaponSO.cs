@@ -21,6 +21,8 @@ public class MachineGunMountWeaponSO : WeaponBaseSO
     [Min(0.1f)] public float mountDuration = 6f;
     [Tooltip("총에 붙는 회전 총열과 남은 시간 막대(풀 개체)")]
     public MachineGunMountVisual visualPrefab;
+    [Tooltip("장착 시간이 다해 기본 공격으로 돌아갈 때 한 번만 재생한다. 자리 전환·표시 숨김·수동 해제에서는 재생하지 않는다.")]
+    public FeedbackDataSO mountEndFeedback;
 
     // 지금 보이는 표시. 발동마다 다시 확인하므로 Play 세션을 넘어 남아 있어도 영향이 없다.
     [NonSerialized] private MachineGunMountVisual activeVisual;
@@ -38,7 +40,7 @@ public class MachineGunMountWeaponSO : WeaponBaseSO
         int target = FindMountSet(ability);
         if (target < 0)
             yield break;
-        ability.BeginPrimaryOverride(machineGun, mountDuration, target);
+        ability.BeginPrimaryOverride(machineGun, mountDuration, target, mountEndFeedback);
         int setIndex = ability.PrimaryOverrideSetIndex;
         if (setIndex < 0 || ability.PrimaryOverrideWeapon != machineGun)
             yield break;

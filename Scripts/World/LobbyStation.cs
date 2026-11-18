@@ -35,6 +35,8 @@ public sealed class LobbyStation : MonoBehaviour
     [Header("작업 동작")]
     [SerializeField, Tooltip("메뉴 안에서 설비가 일할 때(구매·장착) Animator의 Upgrading 상태가 재생하는 Clip(0초·끝 = 열린 자세). 작업 도중 메뉴가 닫히면 이 Clip의 끝 자세를 한 번 적용해, 닫는 동작이 쓰지 않는 부품(받침 콘솔·렌즈·타워)이 어긋난 채 남지 않게 한다. 비우면 되돌리지 않는다. tools/Unity/LobbyStationAssembly.cs가 연결한다")]
     private AnimationClip activityClip;
+    [SerializeField, Tooltip("Upgrading Clip의 시작 이벤트(PlayActivitySound)에서 한 번 재생하는 작업음. 메뉴 닫힘·방전·비활성화·작업 종료 때 멈춘다")]
+    private SoundOptions activitySound;
 
     [Header("방전될 때 꺼지는 빛")]
     [SerializeField, Tooltip("전원이 있을 때만 빛나는 부품(기능부·표시선)")] private Renderer[] litRenderers;
@@ -64,6 +66,8 @@ public sealed class LobbyStation : MonoBehaviour
     private readonly List<ILobbyStationActivity> activities = new();
     private RuntimeAnimatorController upgradeCheckedFor;
     private bool hasUpgrade, inActivity, activitySettlePending;
+    private SoundHandle activitySoundHandle;
+    private bool activitySoundStarted;
     private bool registered, menuOpen, applied, appliedPowered;
     private float shake;
     private Quaternion barrierRotation;
@@ -111,6 +115,7 @@ public sealed class LobbyStation : MonoBehaviour
 
     private void OnDisable()
     {
+        StopActivitySound();
         UnsubscribeActivities();
         if (inActivity) { inActivity = false; activitySettlePending = true; }
         Unregister();
@@ -126,6 +131,7 @@ public sealed class LobbyStation : MonoBehaviour
     {
         applied = true;
         appliedPowered = powered;
+        if (!powered) StopActivitySound();
         if (powered && unavailableDialog != null && unavailableDialog.IsActive) unavailableDialog.Close();
         if (animator != null)
         {
@@ -224,6 +230,7 @@ public sealed class LobbyStation : MonoBehaviour
         if (open != menuOpen)
         {
             menuOpen = open;
+            if (!open) StopActivitySound();
             if (animator != null && animator.isActiveAndEnabled)
             {
                 animator.SetBool(OpenId, open);
@@ -247,10 +254,16 @@ public sealed class LobbyStation : MonoBehaviour
     // Animator가 이번 프레임을 평가한 뒤에 본다: 작업 상태(Upgrading)를 막 벗어났으면(끝까지 돌았거나 메뉴가 닫혀 Closing으로 넘어감) 쉬는 자세로 맞춘다.
     private void LateUpdate()
     {
-        if (activityClip == null || animator == null || !animator.isActiveAndEnabled || !animator.isInitialized || animator.layerCount <= MenuLayer) return;
+        UpdateActivitySound();
+        if (activityClip == null || animator == null || !animator.isActiveAndEnabled || !animator.isInitialized || animator.layerCount <= MenuLayer)
+        {
+            StopActivitySound();
+            return;
+        }
         bool now = animator.GetCurrentAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId
             || (animator.IsInTransition(MenuLayer) && animator.GetNextAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId);
         if (inActivity && !now) SettleActivity();
+        if (!now) StopActivitySound();
         inActivity = now;
     }
 
@@ -263,6 +276,40 @@ public sealed class LobbyStation : MonoBehaviour
     }
 
     // ---- 작업 동작 ----
+
+    /// <summary>Upgrading Clip의 시작 AnimationEvent에서 부른다. Opening 중 대기하는 구매 신호에서는 소리를 먼저 내지 않는다.</summary>
+    public void PlayActivitySound()
+    {
+        if (activitySoundStarted || !powered || !isActiveAndEnabled || !MenusOpen()
+            || animator == null || !animator.isActiveAndEnabled || !animator.isInitialized || animator.layerCount <= MenuLayer
+            || activitySound == null || activitySound.clip == null || SoundManager.Instance == null) return;
+        bool upgrading = animator.GetCurrentAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId
+            || (animator.IsInTransition(MenuLayer) && animator.GetNextAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId);
+        if (!upgrading) return;
+
+        activitySoundStarted = true;
+        // 기존 SoundHandle 경로로 재생하되 반복을 끈다. 끝나기 전 중단해도 풀의 소스를 정확히 반환할 수 있다.
+        activitySoundHandle = SoundManager.Instance.PlayLoop(activitySound, transform.position, transform);
+        if (activitySoundHandle != null && activitySoundHandle.IsValid) activitySoundHandle.GetSource().loop = false;
+    }
+
+    private void UpdateActivitySound()
+    {
+        if (activitySoundHandle == null) return;
+        if (!activitySoundHandle.IsValid) { activitySoundHandle = null; return; }
+        if (!activitySoundHandle.GetSource().isPlaying)
+        {
+            activitySoundHandle.Stop();
+            activitySoundHandle = null;
+        }
+    }
+
+    private void StopActivitySound()
+    {
+        if (activitySoundHandle != null && activitySoundHandle.IsValid) activitySoundHandle.Stop();
+        activitySoundHandle = null;
+        activitySoundStarted = false;
+    }
 
     // 메뉴(목록·상세 등) 아래에서 작업 신호를 내는 화면을 모두 찾아 한 번씩만 구독한다.
     private void SubscribeActivities()
@@ -314,6 +361,7 @@ public sealed class LobbyStation : MonoBehaviour
     // 메뉴 층이 쓰는 부품은 Animator가 다음 평가에서 다시 쓰므로(닫는 동작은 열린 자세에서 시작한다) 실제로 남는 것은 콘솔·렌즈·타워의 쉬는 자세다.
     private void SettleActivity()
     {
+        StopActivitySound();
         inActivity = false;
         if (activityClip == null || !Application.isPlaying) { activitySettlePending = false; return; }
         if (!gameObject.activeInHierarchy) { activitySettlePending = true; return; }
