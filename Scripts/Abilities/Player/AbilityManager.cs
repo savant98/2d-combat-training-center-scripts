@@ -38,12 +38,14 @@ public class AbilityManager : MonoBehaviour
         Grab = GetComponent<PlayerGrabController>();
         if (Grab == null) Grab = gameObject.AddComponent<PlayerGrabController>();
     }
-    public void InterruptAllAbilities()
+    public void InterruptAllAbilities() => InterruptAbilitiesExcept(null);
+
+    internal void InterruptAbilitiesExcept(PlayerAbility retainedAbility)
     {
         if (Grab != null) Grab.Abort();
         foreach (var ability in abilities)
         {
-            ability.Interrupt();
+            if (ability != retainedAbility) ability.Interrupt();
         }
     }
     private void Start()

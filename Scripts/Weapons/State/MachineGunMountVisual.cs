@@ -24,6 +24,8 @@ public class MachineGunMountVisual : WorldEntityBase
     private static readonly int ClockId = Shader.PropertyToID("_Clock");
 
     private const string GunPath = "WeaponModel/StarModel";
+    private const float BatteryFadeTime = 0.08f;
+    private const float BatteryRetryInterval = 0.25f;
 
     [Header("Parts")]
     [Tooltip("총 축에 맞춰 붙는 부품 묶음(회전 총열·고정 고리). 비우면 자식 'Mount'")]
@@ -90,6 +92,10 @@ public class MachineGunMountVisual : WorldEntityBase
     [Tooltip("연사 세기(heat)가 0과 1 사이를 오가는 시간(초)")]
     [SerializeField, Min(0.01f)] private float heatTime = 0.15f;
 
+    [Header("Audio")]
+    [Tooltip("장착한 머신건을 들고 있는 동안 낮게 반복할 배터리 소리")]
+    [SerializeField] private SoundOptions batterySound = new();
+
     private PlayerController player;
     private PlayerWeaponAbility ability;
     private PlayerHealth health;
@@ -100,6 +106,8 @@ public class MachineGunMountVisual : WorldEntityBase
     private bool running, ending, subscribed;
     private float appear, flash, age, spinPhase, spinRate, side = 1f;
     private float auraAppear, heat, pulseTimer, auraQuad = 6.2f, auraAlpha, auraSize, risingRate;
+    private SoundHandle batteryLoop;
+    private float batteryGain, batteryRetryAt;
 
     // 검증·디버그가 읽기만 하는 값
     public bool IsShown => running && appear > 0.01f;
@@ -143,6 +151,8 @@ public class MachineGunMountVisual : WorldEntityBase
     {
         base.OnSpawnedFromPool();
         Unsubscribe();
+        StopBatterySound();
+        batteryRetryAt = 0f;
         player = null; ability = null; health = null; weapon = null; gun = null;
         setIndex = -1;
         running = ending = false;
@@ -223,6 +233,7 @@ public class MachineGunMountVisual : WorldEntityBase
         float dt = Time.deltaTime;
         bool dead = health != null && health.IsDead;
         bool holding = !ending && !dead && ability.CurrentSetIndex == setIndex;   // 장착한 자리를 들고 있다(오라)
+        UpdateBatterySound(holding);
         bool shown = holding && gun != null && gun.gameObject.activeInHierarchy;  // 총 모형도 보인다(총열·막대)
         appear = Mathf.MoveTowards(appear, shown ? 1f : 0f, dt / appearTime);
         auraAppear = Mathf.MoveTowards(auraAppear, holding ? 1f : 0f, dt / appearTime);
@@ -248,6 +259,30 @@ public class MachineGunMountVisual : WorldEntityBase
             blink = 0.55f + 0.45f * (0.5f + 0.5f * Mathf.Cos(age * warnBlinkRate * Mathf.PI * 2f));
         ApplyTimer(fraction, appear * blink);
         UpdateAura(dt, auraFiring, blink);
+    }
+
+    private void UpdateBatterySound(bool holding)
+    {
+        bool wanted = holding && Time.timeScale > 0f && batterySound?.clip != null;
+        if (wanted && batteryLoop?.IsValid != true && Time.unscaledTime >= batteryRetryAt)
+        {
+            // 전환 중 SFX가 잠시 막히거나 풀이 가득 차면 짧게 기다린 뒤 다시 시도한다.
+            batteryRetryAt = Time.unscaledTime + BatteryRetryInterval;
+            batteryLoop = SoundManager.Instance?.PlayLoop(batterySound, player.transform.position, player.transform);
+            batteryGain = 0f;
+        }
+        if (batteryLoop?.IsValid != true) return;
+
+        batteryGain = Mathf.MoveTowards(batteryGain, wanted ? 1f : 0f, Time.unscaledDeltaTime / BatteryFadeTime);
+        batteryLoop.GetSource().volume = batteryGain * batterySound.volume;
+        if (!wanted && batteryGain <= 0f) StopBatterySound();
+    }
+
+    private void StopBatterySound()
+    {
+        batteryLoop?.Stop();
+        batteryLoop = null;
+        batteryGain = 0f;
     }
 
     // 오라: 나타남(auraAppear)·연사 세기(heat)·끝 무렵 깜빡임(blink)으로 빛의 크기·알파와 빛줄기 개수를 정하고, 연사 중에는 고리를 낸다.
@@ -372,6 +407,7 @@ public class MachineGunMountVisual : WorldEntityBase
     protected override void ReturnToPool()
     {
         Unsubscribe();
+        StopBatterySound();
         running = false;
         base.ReturnToPool();
     }
@@ -379,5 +415,6 @@ public class MachineGunMountVisual : WorldEntityBase
     private void OnDisable()
     {
         Unsubscribe();
+        StopBatterySound();
     }
 }

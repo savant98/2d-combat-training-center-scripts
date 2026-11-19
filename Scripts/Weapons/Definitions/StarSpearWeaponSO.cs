@@ -11,6 +11,8 @@ using UnityEngine;
 [UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "StarCannonWeaponSO")]
 public class StarSpearWeaponSO : WeaponBaseSO
 {
+    public override string PresentationWeaponName => "Railgun";
+
     [Header("Spawn")]
     public LayerMask platformLayer;
     public StarSpearVolley volleyPrefab;

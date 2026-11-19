@@ -67,7 +67,7 @@ public class SwordDashSlash : WorldEntityBase
     private readonly HashSet<HealthBase> seen = new();
     private MaterialPropertyBlock block;
     private BoxCollider2D box;
-    private FeedbackDataSO hitFeedback, finalHitFeedback, sheatheFeedback;
+    private FeedbackDataSO hitFeedback, finalHitFeedback, sheatheFeedback, cutFeedback;
     private Action<CharacterController2D, Vector2> onHitEnemy;
     private Vector4 rect;
     private int facing = 1;
@@ -76,7 +76,7 @@ public class SwordDashSlash : WorldEntityBase
     private float finishTime;              // 돌진이 끝난 시각
     private float firstHitTime = -1f;      // 첫 타격을 준 시각(-1 = 아직 모인 적이 없다). 뒤의 타격은 여기서부터 hitInterval 간격이다
     private int hitsGiven, collectTicks, lastTrackFrame;
-    private bool running, finished, sheathed;
+    private bool running, finished, sheathed, cutPlayed;
 
     public bool IsRunning => running && !isReturning;
     public bool IsFinished => finished;
@@ -111,9 +111,9 @@ public class SwordDashSlash : WorldEntityBase
         base.OnSpawnedFromPool();
         targets.Clear();
         seen.Clear();
-        hitFeedback = finalHitFeedback = sheatheFeedback = null;
+        hitFeedback = finalHitFeedback = sheatheFeedback = cutFeedback = null;
         onHitEnemy = null;
-        running = finished = sheathed = false;
+        running = finished = sheathed = cutPlayed = false;
         length = head = dashAge = 0f;
         firstHitTime = -1f;
         hitsGiven = collectTicks = 0;
@@ -122,11 +122,13 @@ public class SwordDashSlash : WorldEntityBase
     }
 
     // hitFeedback = 마지막이 아닌 타격, finalHitFeedback = 마지막(hitCount번째) 타격(없으면 hitFeedback), sheatheFeedback = 베기 직전의 납도 소리
-    public void SetHit(FeedbackDataSO hitFeedback, FeedbackDataSO finalHitFeedback, FeedbackDataSO sheatheFeedback, Action<CharacterController2D, Vector2> onHitEnemy)
+    public void SetHit(FeedbackDataSO hitFeedback, FeedbackDataSO finalHitFeedback, FeedbackDataSO sheatheFeedback,
+        FeedbackDataSO cutFeedback, Action<CharacterController2D, Vector2> onHitEnemy)
     {
         this.hitFeedback = hitFeedback;
         this.finalHitFeedback = finalHitFeedback != null ? finalHitFeedback : hitFeedback;
         this.sheatheFeedback = sheatheFeedback;
+        this.cutFeedback = cutFeedback;
         this.onHitEnemy = onHitEnemy;
     }
 
@@ -136,7 +138,7 @@ public class SwordDashSlash : WorldEntityBase
         this.facing = facing >= 0 ? 1 : -1;
         this.plannedLength = Mathf.Max(0.1f, plannedLength);
         running = true;
-        finished = sheathed = false;
+        finished = sheathed = cutPlayed = false;
         length = head = dashAge = 0f;
         firstHitTime = -1f;
         hitsGiven = 0;
@@ -222,6 +224,13 @@ public class SwordDashSlash : WorldEntityBase
                 sheathed = true;
                 if (sheatheFeedback != null && FeedbackPlayer.Instance != null)
                     FeedbackPlayer.Instance.Play(sheatheFeedback, owner != null ? owner.transform.position : transform.position + Vector3.right * (facing * length));
+            }
+            // 첫 참격음은 히트 대상 유무와 무관하게 판정과 같은 프레임에 한 번 난다.
+            if (!cutPlayed && Time.time >= cutTime)
+            {
+                cutPlayed = true;
+                if (cutFeedback != null && FeedbackPlayer.Instance != null)
+                    FeedbackPlayer.Instance.Play(cutFeedback, owner != null ? owner.transform.position : transform.position);
             }
             // n번째 타격(첫 타격 = 1)은 베는 순간으로부터 (n - 1) × hitInterval 뒤에 준다. 마지막 타격은 마무리 Feedback을 쓴다. 모인 적이 없으면 타격도 없다.
             while (targets.Count > 0 && hitsGiven < hitCount && Time.time >= cutTime + hitsGiven * hitInterval)

@@ -37,6 +37,9 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity
     [SerializeField, Min(0f)] private float returnDelay = .45f;
 
     private readonly List<PlayerArmamentSO> shown = new List<PlayerArmamentSO>();
+    private readonly List<WeaponBaseSO> secondaryShown = new();
+    private bool secondaryMode;
+    private int ShownCount => secondaryMode ? secondaryShown.Count : shown.Count;
     private ArmamentOverviewPage host;
     private PlayerWeaponAbility ability;
     private int setIndex;
@@ -83,6 +86,7 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity
     public bool OpenFor(ArmamentOverviewPage owner, PlayerWeaponAbility weaponAbility, int slot, int focusBack)
     {
         if (cards.Length == 0 || weaponAbility == null || weaponAbility.GetWeaponSet(slot) == null || UIManager.Instance == null) return false;
+        secondaryMode = false;
         ArmamentCategory category = CategoryOf(weaponAbility, slot);
         shown.Clear();
         foreach (var armament in weaponAbility.Armaments)
@@ -111,6 +115,20 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity
     }
 
     /// <summary>입력 스택에서 내리고 숨긴다. 진행 중인 장착 연출과 입력 차단도 정리한다.</summary>
+    public bool OpenSecondaryFor(ArmamentOverviewPage owner, PlayerWeaponAbility weaponAbility, int slot, int focusBack)
+    {
+        if (weaponAbility == null || cards.Length == 0 || UIManager.Instance == null) return false;
+        secondaryMode = true; secondaryShown.Clear();
+        foreach (var candidate in weaponAbility.SecondaryWeapons)
+            if (candidate != null && !secondaryShown.Contains(candidate)) secondaryShown.Add(candidate);
+        if (secondaryShown.Count == 0 || secondaryShown.Count > cards.Length) return false;
+        host = owner; ability = weaponAbility; setIndex = slot; returnIndex = focusBack;
+        if (titleText != null) titleText.text = "보조 무기 교체";
+        if (captionText != null) captionText.text = "무장 종류와 관계없이 이 자리의 보조 무기를 선택합니다.";
+        RefreshCards(); LayoutCards(); ShowPage(); Open(); FocusSilently(0);
+        return true;
+    }
+
     public void ClosePage(bool instant)
     {
         StopEquipSequence();
@@ -120,10 +138,21 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity
         ability = null;
     }
 
-    protected override bool IsNavigable(int index) => index < shown.Count && base.IsNavigable(index);
+    protected override bool IsNavigable(int index) => index < ShownCount && base.IsNavigable(index);
 
     private void RefreshCards()
     {
+        if (secondaryMode)
+        {
+            var current = ability.GetWeaponSet(setIndex).secondary;
+            for (int i = 0; i < cards.Length; i++)
+            {
+                cards[i].gameObject.SetActive(i < secondaryShown.Count);
+                if (i < secondaryShown.Count) cards[i].BindSecondary(secondaryShown[i], current == secondaryShown[i]);
+            }
+            if (equippedText != null) equippedText.text = "현재 보조 무기  " + (current != null ? current.DisplayName : "없음");
+            return;
+        }
         var equipped = ability != null ? ability.GetEquippedArmament(setIndex) : null;
         for (int i = 0; i < cards.Length; i++)
         {
@@ -137,7 +166,7 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity
 
     private void LayoutCards()
     {
-        int count = shown.Count;
+        int count = ShownCount;
         int perRow = Mathf.Max(1, columnsPerRow);
         int rows = Mathf.CeilToInt(count / (float)perRow);
         float pitchY = cardSize.y + cardGap.y;
@@ -156,7 +185,13 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity
 
     private void HandleSelected(int index)
     {
-        if (!CanReceiveInput || ability == null || index < 0 || index >= shown.Count) return;
+        if (!CanReceiveInput || ability == null || index < 0 || index >= ShownCount) return;
+        if (secondaryMode)
+        {
+            if (!ability.TryEquipSecondaryWeapon(setIndex, secondaryShown[index])) { Warn("공격 중에는 보조 무기를 바꿀 수 없습니다.", index); return; }
+            equipRoutine = StartCoroutine(EquipSequence(index));
+            return;
+        }
         PlayerArmamentSO armament = shown[index];
         if (ability.GetEquippedArmament(setIndex) == armament) { ReturnToOverview(); return; }
         if (armament.normal == null) { Warn("아직 준비 중인 무장입니다.", index); return; }

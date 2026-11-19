@@ -18,9 +18,11 @@ public class MachineGunMountWeaponSO : WeaponBaseSO
     [Tooltip("장착하는 동안 기본 공격 자리에 들어갈 연사 무기(MachineGun.asset, StarShot 계열 탄을 쓰는 RangedWeaponSO)")]
     public WeaponBaseSO machineGun;
     [Tooltip("기본 공격이 머신건으로 바뀌어 있는 시간(초)")]
-    [Min(0.1f)] public float mountDuration = 6f;
+    [Min(0.1f)] public float mountDuration = 12f;
     [Tooltip("총에 붙는 회전 총열과 남은 시간 막대(풀 개체)")]
     public MachineGunMountVisual visualPrefab;
+    [Tooltip("머신건이 처음 장착되는 순간 철컥 소리와 함께 재생하는 점화음")]
+    public SoundOptions ignitionSound = new();
     [Tooltip("장착 시간이 다해 기본 공격으로 돌아갈 때 한 번만 재생한다. 자리 전환·표시 숨김·수동 해제에서는 재생하지 않는다.")]
     public FeedbackDataSO mountEndFeedback;
 
@@ -40,10 +42,16 @@ public class MachineGunMountWeaponSO : WeaponBaseSO
         int target = FindMountSet(ability);
         if (target < 0)
             yield break;
+
+        bool continuingMount = ability.PrimaryOverrideWeapon == machineGun
+            && ability.PrimaryOverrideSetIndex == target && ability.PrimaryOverrideRemaining > 0f;
         ability.BeginPrimaryOverride(machineGun, mountDuration, target, mountEndFeedback);
         int setIndex = ability.PrimaryOverrideSetIndex;
         if (setIndex < 0 || ability.PrimaryOverrideWeapon != machineGun)
             yield break;
+
+        if (!continuingMount)
+            SoundManager.Instance?.PlaySound(ignitionSound, controller.transform.position);
 
         // 같은 장착이 이어지는 중이면(남은 시간은 위에서 새로 정해졌다) 표시를 새로 꺼내지 않는다.
         if (activeVisual != null && activeVisual.IsRunningFor(player, machineGun, setIndex))

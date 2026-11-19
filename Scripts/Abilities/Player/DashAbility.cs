@@ -38,9 +38,9 @@ public class DashAbility : PlayerAbility
     }
     protected override bool CanDo()
     {
-        // 기술 저장은 기존 공격의 회수 단계 제한과 별도로 취소할 수 있다.
-        if (manager.StateMachine.CurrentState == PlayerState.Attack && manager.AttackAbility != null
-            && manager.AttackAbility.IsStoringSkill)
+        var attack = manager.AttackAbility;
+        if (manager.StateMachine.CurrentState == PlayerState.Attack && attack != null
+            && (attack.IsStoringSkill || attack.IsMachineGunAttacking))
             return true;
         return base.CanDo();
     }
@@ -57,7 +57,8 @@ public class DashAbility : PlayerAbility
             return;
 
         lastDashTime = Time.time;
-        manager.InterruptAllAbilities();
+        var attack = manager.AttackAbility;
+        manager.InterruptAbilitiesExcept(attack != null && attack.IsMachineGunAttacking ? attack : null);
         StartDash();
     }
     
@@ -89,14 +90,10 @@ public class DashAbility : PlayerAbility
     }
     private void StartDash()
     {
-        // 대쉬 방향 결정
-        int inputDir = (int)controller.MoveInput.x;
-        if (inputDir != 0)
-        {
-            controller.FacingUpdate(inputDir);
-        }
-
-        dashDirection = controller.Facing;
+        // 기관총 연사 중에도 대시의 진행 방향은 이동 입력에서 정한다.
+        float input = controller.MoveInput.x;
+        dashDirection = Mathf.Abs(input) > .1f ? (input > 0f ? 1 : -1) : controller.Facing;
+        if (!controller.LockFacing) controller.FacingUpdate(dashDirection);
         isDashing = true;
         timer = dashDuration;
 
@@ -106,7 +103,8 @@ public class DashAbility : PlayerAbility
 
         // 피드백
         controller.animator.SetBool("Dash", true);
-        dashVisual.Begin(controller.Facing, dashDuration);
+        controller.Velocity = new Vector2(dashDirection * dashForce, 0f);
+        dashVisual.Begin(dashDirection, dashDuration);
         feedbackPlayer.Play(dashFeedback, dashVisual.transform);
     }
     public void ClearPendingInput() => buffer.Reset();

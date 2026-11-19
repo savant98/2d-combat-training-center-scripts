@@ -37,6 +37,10 @@ public class JumpAbility : PlayerAbility
         controller.OnLanded += ResetJumpCount;
         controller.OnFalled += BeginFall;
     }
+    protected override bool CanDo() => base.CanDo()
+        || (manager.StateMachine.CurrentState == PlayerState.Attack && manager.AttackAbility != null
+            && manager.AttackAbility.IsMachineGunAttacking);
+
     private void TryJump()
     {
         if (!CanDo())

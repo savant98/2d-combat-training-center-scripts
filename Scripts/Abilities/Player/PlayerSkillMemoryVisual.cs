@@ -1,3 +1,4 @@
+using TMPro;
 using UnityEngine;
 
 // 무기 로직의 읽기 전용 목록과 이벤트를 구독하는 기술 기억 표시.
@@ -9,6 +10,7 @@ public sealed class PlayerSkillMemoryVisual : MonoBehaviour
     [SerializeField] private SpriteRenderer spotlightFrame, spotlightRing, spotlightIcon;
     [SerializeField] private Transform[] slots;
     [SerializeField] private SpriteRenderer[] slotFrames, slotRings, slotIcons;
+    [SerializeField] private TextMeshPro[] slotCooldownTexts;
     [SerializeField] private ParticleSystem motes;
     [SerializeField] private SpriteRenderer fabricationFrame, fabricationLink;
     [SerializeField] private ParticleSystem weldSparks;
@@ -92,6 +94,22 @@ public sealed class PlayerSkillMemoryVisual : MonoBehaviour
             Paint(slotFrames[i], tint, occupied ? .8f : .25f);
             Paint(slotRings[i], tint, occupied ? (i == 0 ? 1.5f : .7f) : .15f);
         }
+        RefreshCooldowns();
+    }
+
+    private void RefreshCooldowns()
+    {
+        if (slotCooldownTexts == null) return;
+        for (int i = 0; i < slotCooldownTexts.Length && i < slotIcons.Length; i++)
+        {
+            var label = slotCooldownTexts[i];
+            if (label == null) continue;
+            float remaining = slotIcons[i].enabled ? ability.GetStoredSkillCooldownRemaining(i) : 0f;
+            bool coolingDown = remaining > 0f;
+            if (label.gameObject.activeSelf != coolingDown) label.gameObject.SetActive(coolingDown);
+            slotIcons[i].color = coolingDown ? new Color(.26f, .32f, .42f) : Color.white;
+            if (coolingDown) label.SetText("{0}", Mathf.CeilToInt(remaining));
+        }
     }
     private void LateUpdate()
     {
@@ -125,6 +143,7 @@ public sealed class PlayerSkillMemoryVisual : MonoBehaviour
             ApplyFabrication(1, 1 - p, cancelled ? 0 : 1 - p);
             if (p >= 1f) { finishing = false; spotlight.gameObject.SetActive(false); if (fabricationLink != null) fabricationLink.enabled = false; RefreshSlots(); }
         }
+        RefreshCooldowns();
         // 이미 저장한 아이콘은 항상 FIFO 순서대로 고정된 슬롯에 남는다.
         for (int i = 0; i < VisibleSlotCount; i++)
             slotRings[i].transform.localRotation = Quaternion.Euler(0, 0, Time.time * (i == 0 ? 35f : 15f));

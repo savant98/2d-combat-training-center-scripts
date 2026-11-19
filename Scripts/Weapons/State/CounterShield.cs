@@ -128,6 +128,8 @@ public class CounterShield : WorldEntityBase
         }
 
         transform.position = owner.transform.position;
+        if (IsGuarding && counter != null && counter.CounterRange != null && counter.CounterRange.enabled)
+            radius = Mathf.Max(counter.CounterRange.bounds.extents.x, counter.CounterRange.bounds.extents.y);
         float dt = Time.deltaTime;
         phaseAge += dt;
         spin += spinSpeed * dt;

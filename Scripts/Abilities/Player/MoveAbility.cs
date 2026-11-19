@@ -36,12 +36,16 @@ public class MoveAbility : PlayerAbility
     }
     private void Move(float x)
     {
-        if (!CanDo())
+        if (manager.DashAbility.IsActive) return;
+
+        bool firingMachineGun = manager.StateMachine.CurrentState == PlayerState.Attack
+            && manager.AttackAbility.IsMachineGunAttacking;
+        if (!CanDo() && !firingMachineGun)
         {
             controller.Velocity.x = 0;
             return;
         }
 
-        controller.Velocity.x = x * moveSpeed;
+        controller.Velocity.x = x * moveSpeed * (firingMachineGun ? .5f : 1f);
     }
 }

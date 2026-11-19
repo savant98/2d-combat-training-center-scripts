@@ -13,8 +13,8 @@ using UnityEngine;
 //   후보 Collider의 ClosestPoint로 부채꼴과의 거리를 재서 여유 안에 드는 대상만 맞힌다(InFan). 대상(HealthBase)마다 한 번만 맞는다.
 // - 피해·쉴드·무적·소환 잠금·적중 보상(OnHitEnemy, 게이지) 처리는 RailgunWeaponSO와 같다. 넉백 출처는 쏜 순간의 Player 위치·방향이다
 //   (옛 산탄 탄과 같은 값. 꼭짓점을 출처로 삼으면 총구에 겹친 적이 Player 쪽으로 끌려온다).
-// - 보이는 것: 부채꼴 폭발(explosionFeedback)은 꼭짓점에서 보는 방향으로 돌려 재생한다(실행 피드백은 회전 없이 재생되므로 무기가 직접 PlayExact).
-//   총구 섬광·발사음은 실행 피드백(executeFeedback, HandCannonBlastFeedback)이 낸다. 맞은 대상마다 hitFeedback을 맞은 자리에서 재생한다.
+// - 화면의 전방 화염은 꼭짓점에서 보는 방향으로 즉시 내보내고 같은 프레임에 피해를 적용한다.
+//   총구 섬광·발사음은 실행 피드백이 낸다. 연결된 적중 피드백은 맞은 자리에서 재생한다.
 [CreateAssetMenu(menuName = "Weapon/Hand Cannon")]
 public class HandCannonWeaponSO : WeaponBaseSO
 {
@@ -33,7 +33,7 @@ public class HandCannonWeaponSO : WeaponBaseSO
     public FeedbackDataSO explosionFeedback;
     [Tooltip("맞은 대상마다 맞은 자리에서 재생")]
     public FeedbackDataSO hitFeedback;
-    [Tooltip("부채꼴 폭발 모양(HandCannonFan). 무기가 최대 3벌만 만들어 다시 쓴다 — 피드백 풀은 처음 쓸 때 20벌(입자계 약 1,100개)을 한 프레임에 만들어 첫 발사가 끊겼다(2026-11-18 독립 검토). 소리·흔들림은 explosionFeedback이 낸다")]
+    [Tooltip("전방 화염과 연기(HandCannonFan). 최대 3벌을 재사용하며 BlastPlume은 무기가 직접 발사 프레임에 내보낸다")]
     public GameObject fanEffect;
     private const int MaxFanInstances = 3;
     [NonSerialized] private List<GameObject> fanInstances;
@@ -71,18 +71,34 @@ public class HandCannonWeaponSO : WeaponBaseSO
 
         LastApex = apex;
         LastFacing = facing;
+        var rotation = Quaternion.Euler(0f, 0f, facing < 0 ? 180f : 0f);
+        PlayBlast(apex, rotation);
         LastHitCount = ApplyDamage(controller, apex, axis);
 
-        var rotation = Quaternion.Euler(0f, 0f, facing < 0 ? 180f : 0f);
         if (explosionFeedback != null && FeedbackPlayer.Instance != null)
             FeedbackPlayer.Instance.PlayExact(explosionFeedback, apex, rotation);
+    }
+
+    private void PlayBlast(Vector2 apex, Quaternion rotation)
+    {
         var fan = TakeFan();
-        if (fan != null)
+        if (fan == null) return;
+
+        fan.SetActive(false);
+        fan.transform.SetPositionAndRotation(apex, rotation);
+        var plume = fan.transform.Find("BlastPlume")?.GetComponent<ParticleSystem>();
+        if (plume != null)
         {
-            fan.SetActive(false);   // 다시 켜면 입자가 처음부터 재생된다(playOnAwake, 피드백 풀과 같은 방식)
-            fan.transform.SetPositionAndRotation(apex, rotation);
-            fan.SetActive(true);
+            var automaticEmission = plume.emission;
+            automaticEmission.enabled = false;
         }
+        fan.SetActive(true);
+
+        if (plume == null) return;
+        // 다음 입자 갱신을 기다리지 않고, 피해가 들어갈 때 이미 화염 한 장이 있다.
+        plume.Stop(false, ParticleSystemStopBehavior.StopEmittingAndClear);
+        plume.Play(false);
+        plume.Emit(1);
     }
 
     // 준비가 시작될 때 부채꼴 모양을 미리 한 벌 만들어 둔다(발사 프레임에 만들지 않게).

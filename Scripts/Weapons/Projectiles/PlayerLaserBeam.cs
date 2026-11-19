@@ -115,6 +115,7 @@ public class PlayerLaserBeam : WorldEntityBase
     private Vector2 origin;
     private Vector2 direction = Vector2.right;
     private float forwardOffset;
+    private Transform barrelMuzzle;
     private float blockedDistance;
     private float halfWidth, judgeHalfWidth;
     private float flash;
@@ -190,7 +191,8 @@ public class PlayerLaserBeam : WorldEntityBase
         this.onHitEnemy = onHitEnemy;
         player = owner as PlayerController;
         direction = Vector2.right * (owner != null && owner.Facing < 0 ? -1f : 1f);
-        forwardOffset = weapon.spawnOffset.x;
+        var railgun = player != null ? player.model.transform.Find(RailgunWeaponSO.ModelPath) : null;
+        barrelMuzzle = railgun != null ? railgun.Find(RailgunWeaponSO.MuzzleName) : null;
         transform.rotation = Quaternion.Euler(0f, 0f, direction.x < 0f ? 180f : 0f);
         phase = Phase.Charge;
         phaseAge = 0f;
@@ -292,7 +294,10 @@ public class PlayerLaserBeam : WorldEntityBase
     private void UpdateOrigin()
     {
         Vector2 ownerPosition = owner.transform.position;
-        origin = ownerPosition + new Vector2(weapon.spawnOffset.x * direction.x, weapon.spawnOffset.y);
+        origin = barrelMuzzle != null && barrelMuzzle.gameObject.activeInHierarchy
+            ? (Vector2)barrelMuzzle.position
+            : ownerPosition + new Vector2(weapon.spawnOffset.x * direction.x, weapon.spawnOffset.y);
+        forwardOffset = Mathf.Max(0f, Vector2.Dot(origin - ownerPosition, direction));
         transform.position = origin;
     }
 

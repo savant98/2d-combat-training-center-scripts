@@ -30,9 +30,11 @@ public class FeedbackPlayer : MonoBehaviour
     private readonly List<CinemachineImpulseSource> shortImpulsePool = new();
     private readonly List<CinemachineImpulseSource> continuousImpulsePool = new();
     private readonly Dictionary<GameObject, Queue<GameObject>> particlePools = new();
+    private readonly List<ParticleSystem> particleClearBuffer = new();
 
     private Transform impulseRoot;
     private Transform particleRoot;
+    private Transform inactiveParticleRoot;
 
     private Vignette vignette;
     private Bloom bloom;
@@ -40,6 +42,8 @@ public class FeedbackPlayer : MonoBehaviour
     private ColorAdjustments colorAdjust;
 
     private float defaultVignetteIntensity;
+    private Color defaultVignetteColor;
+    private float defaultSaturation;
     private float defaultBloomIntensity;
     private float bloomScale = 1f;
     private float flashScale = 1f;
@@ -76,6 +80,11 @@ public class FeedbackPlayer : MonoBehaviour
         particleRoot = new GameObject("ParticlePool").transform;
         particleRoot.SetParent(transform);
 
+        var inactiveParticles = new GameObject("InactiveParticleCreation");
+        inactiveParticles.SetActive(false);
+        inactiveParticleRoot = inactiveParticles.transform;
+        inactiveParticleRoot.SetParent(particleRoot, false);
+
         // 미리 여러 개 만들어두기
         for (int i = 0; i < initialImpulsePoolSize; i++)
         {
@@ -109,7 +118,10 @@ public class FeedbackPlayer : MonoBehaviour
             return;
 
         if (globalVolume.profile.TryGet(out vignette))
+        {
             defaultVignetteIntensity = vignette.intensity.value;
+            defaultVignetteColor = vignette.color.value;
+        }
 
         if (globalVolume.profile.TryGet(out bloom))
             defaultBloomIntensity = bloom.intensity.value;
@@ -118,7 +130,10 @@ public class FeedbackPlayer : MonoBehaviour
             defaultChromatic = chroma.intensity.value;
 
         if (globalVolume.profile.TryGet(out colorAdjust))
+        {
             defaultColorAdjust = colorAdjust.colorFilter.value;
+            defaultSaturation = colorAdjust.saturation.value;
+        }
     }
 
     #region ImpulsePool
@@ -157,21 +172,26 @@ public class FeedbackPlayer : MonoBehaviour
         // pool에 남은게 없으면 새로 생성
         if (pool.Count == 0)
         {
-            for (int i = 0; i < particlePoolPerPrefab; i++)
+            for (int i = 0; i < Mathf.Max(1, particlePoolPerPrefab); i++)
             {
-                var obj = Instantiate(prefab, particleRoot);
+                // 위치가 정해지기 전에 OnEnable과 Play On Awake가 실행되지 않도록 복제한다.
+                var obj = Instantiate(prefab, inactiveParticleRoot);
                 obj.SetActive(false);
+                obj.transform.SetParent(particleRoot, false);
                 pool.Enqueue(obj);
             }
         }
 
-        var particleObj = pool.Dequeue();
-        particleObj.SetActive(true);
-        return particleObj;
+        return pool.Dequeue();
     }
 
     private void ReturnParticle(GameObject prefab, GameObject obj)
     {
+        if (obj == null) return;
+        obj.GetComponentsInChildren(true, particleClearBuffer);
+        foreach (var particles in particleClearBuffer)
+            particles.Clear(false);
+        particleClearBuffer.Clear();
         obj.SetActive(false);
         particlePools[prefab].Enqueue(obj);
     }
@@ -212,7 +232,7 @@ public class FeedbackPlayer : MonoBehaviour
             GameObject obj = GetParticleObject(prefab);
 
             obj.transform.SetPositionAndRotation(pos, rot);
-
+            obj.SetActive(true);
             StartCoroutine(ReturnWhenFinished(prefab, obj, data.lifeTime));
         }
 
@@ -379,17 +399,17 @@ public class FeedbackPlayer : MonoBehaviour
     }
     private IEnumerator Saturation(PostProcessingOptions fx)
     {
-        if (!fx.useSaturation) yield break;
+        if (!fx.useSaturation || colorAdjust == null) yield break;
 
         float t = 0;
         while (t < fx.saturationDuration)
         {
             t += Time.unscaledDeltaTime;
-            colorAdjust.saturation.value = Mathf.Lerp(fx.saturationIntensity, 0, t / fx.saturationDuration);
+            colorAdjust.saturation.value = Mathf.Lerp(fx.saturationIntensity, defaultSaturation, t / fx.saturationDuration);
             yield return null;
         }
 
-        colorAdjust.saturation.value = 0;
+        colorAdjust.saturation.value = defaultSaturation;
     }
     private IEnumerator Chromatic(PostProcessingOptions fx)
     {
@@ -423,18 +443,19 @@ public class FeedbackPlayer : MonoBehaviour
 
     private IEnumerator VignetteFX(PostProcessingOptions fx)
     {
-        vignette.color.value = fx.vignetteColor;
+        if (!fx.useVignette || vignette == null) yield break;
 
-        if (!fx.useVignette) yield break;
+        vignette.color.value = fx.vignetteColor;
 
         float t = 0;
         while (t < fx.vignetteDuration)
         {
             t += Time.unscaledDeltaTime;
-            vignette.intensity.value = Mathf.Lerp(fx.vignetteIntensity, 0, t / fx.vignetteDuration);
+            vignette.intensity.value = Mathf.Lerp(fx.vignetteIntensity, defaultVignetteIntensity, t / fx.vignetteDuration);
             yield return null;
         }
 
         vignette.intensity.value = defaultVignetteIntensity;
+        vignette.color.value = defaultVignetteColor;
     }
 }

@@ -13,6 +13,7 @@ public class WorldEntityPool : MonoBehaviour
 
 
     private Transform poolRoot;
+    private Transform inactiveCreationRoot;
 
     private void Awake()
     {
@@ -25,6 +26,10 @@ public class WorldEntityPool : MonoBehaviour
 
         poolRoot = new GameObject("WorldEntityPoolRoot").transform;
         poolRoot.SetParent(transform);
+        var inactive = new GameObject("InactiveWorldEntityCreation");
+        inactive.SetActive(false);
+        inactiveCreationRoot = inactive.transform;
+        inactiveCreationRoot.SetParent(poolRoot, false);
     }
 
     // ───────────────────────────────────────
@@ -44,8 +49,8 @@ public class WorldEntityPool : MonoBehaviour
             CreateObjects(prefab);
 
         var worldEntity = pool.Dequeue();
-        worldEntity.gameObject.SetActive(true);
         worldEntity.transform.SetPositionAndRotation(pos, rot);
+        worldEntity.gameObject.SetActive(true);
         worldEntity.OnSpawnedFromPool();
 
         activeWorldEntities.Add(worldEntity);
@@ -121,10 +126,11 @@ public class WorldEntityPool : MonoBehaviour
     {
         Debug.Log($"[WorldEntityPool] Pool expanded for {prefab.name}");
 
-        for (int i = 0; i < poolPerWorldEntity; i++)
+        for (int i = 0; i < Mathf.Max(1, poolPerWorldEntity); i++)
         {
-            var obj = Instantiate(prefab, poolRoot);
+            var obj = Instantiate(prefab, inactiveCreationRoot);
             obj.gameObject.SetActive(false);
+            obj.transform.SetParent(poolRoot, false);
             obj.poolPrefab = prefab; // prefab 원본 저장
             pools[prefab].Enqueue(obj);
         }

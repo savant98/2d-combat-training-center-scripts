@@ -159,11 +159,13 @@ public class RaycastMotor2D : MonoBehaviour
         float distance, LayerMask blockLayer)
     {
         if ((blockLayer.value & OneWayLayer) == 0)
-            return Physics2D.CircleCast(origin, radius, direction, distance, blockLayer);
+            return radius <= 0f ? Physics2D.Raycast(origin, direction, distance, blockLayer)
+                : Physics2D.CircleCast(origin, radius, direction, distance, blockLayer);
         var filter = new ContactFilter2D();
         filter.SetLayerMask(blockLayer); filter.useTriggers = Physics2D.queriesHitTriggers;
         environmentCastHits.Clear();
-        Physics2D.CircleCast(origin, radius, direction, filter, environmentCastHits, distance);
+        if (radius <= 0f) Physics2D.Raycast(origin, direction, filter, environmentCastHits, distance);
+        else Physics2D.CircleCast(origin, radius, direction, filter, environmentCastHits, distance);
         RaycastHit2D nearest = default;
         float nearestDistance = float.PositiveInfinity;
         foreach (var hit in environmentCastHits)

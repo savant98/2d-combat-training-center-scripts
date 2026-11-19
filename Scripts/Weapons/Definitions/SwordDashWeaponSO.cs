@@ -24,6 +24,8 @@ public class SwordDashWeaponSO : WeaponBaseSO
     [Header("Slash")]
     [Tooltip("지나간 길의 궤적·칼자국과 판정(4타). 돌진이 시작될 때 꺼낸다.")]
     [SerializeField] private SwordDashSlash slashPrefab;
+    [Tooltip("지나온 길이 처음 베이는 순간 한 번 재생한다.")]
+    [SerializeField] private FeedbackDataSO cutFeedback;
     [Tooltip("적이 맞을 때마다 그 자리에서 재생한다(마지막 타격 제외).")]
     [SerializeField] private FeedbackDataSO hitFeedback;
     [Tooltip("마지막 타격(마무리)에 재생한다. 비우면 hitFeedback.")]
@@ -48,7 +50,7 @@ public class SwordDashWeaponSO : WeaponBaseSO
         int facing = controller.Facing >= 0 ? 1 : -1;
         Vector3 start = controller.transform.position;
         SwordDashSlash slash = WorldEntityPool.Instance.Spawn(slashPrefab, start, Quaternion.identity);
-        slash.SetHit(hitFeedback, finalHitFeedback, sheatheFeedback, (owner, point) => OnHitEnemy?.Invoke(owner, point));
+        slash.SetHit(hitFeedback, finalHitFeedback, sheatheFeedback, cutFeedback, (owner, point) => OnHitEnemy?.Invoke(owner, point));
         slash.Initialize(controller, WithSource(damageInfo));   // 밀리는 방향은 돌진을 시작한 자리와 방향을 기준으로 한다
         slash.Begin(facing, dashDistance);
 

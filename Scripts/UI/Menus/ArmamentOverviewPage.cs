@@ -20,6 +20,8 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
     [Tooltip("왼쪽부터 무기 자리 열(근접, 원거리). 열마다 장착 무장 + Gear 1~3 원 4개가 선택 대상이 된다")]
     [SerializeField] private ArmamentTreeColumn[] columns = Array.Empty<ArmamentTreeColumn>();
 
+    [SerializeField] private ArmamentTreeNode[] secondaryNodes = Array.Empty<ArmamentTreeNode>();
+
     [Header("Child Pages")]
     [SerializeField] private ArmamentSwapPage swapPage;
     [SerializeField] private WeaponDetailPage detailPage;
@@ -59,6 +61,12 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
                 targetColumns.Add(column);
                 targetStages.Add(stage);
             }
+        }
+        for (int i = 0; i < secondaryNodes.Length && i < columns.Length; i++)
+        {
+            var node = secondaryNodes[i];
+            if (node == null || node.Button == null || node.Highlight == null) continue;
+            rects.Add(node.Button); marks.Add(node.Highlight); targetColumns.Add(columns[i]); targetStages.Add(4);
         }
         buttons = rects.ToArray();
         images = marks.ToArray();
@@ -134,6 +142,13 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
         if (column == null) return;
 
         var ability = FindWeaponAbility();
+        if (stage == 4)
+        {
+            if (swapPage == null) return;
+            HidePage();
+            if (!swapPage.OpenSecondaryFor(this, ability, column.SetIndex, index)) { ShowPage(); FocusSilently(index); }
+            return;
+        }
         if (stage == 0)
         {
             if (swapPage == null) return;
@@ -183,6 +198,11 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
         var ability = FindWeaponAbility();
         foreach (var column in columns)
             if (column != null) column.Refresh(ability);
+        for (int i = 0; i < secondaryNodes.Length && i < columns.Length; i++)
+        {
+            var weapon = ability != null ? ability.GetWeaponSet(columns[i].SetIndex)?.secondary : null;
+            if (secondaryNodes[i] != null && weapon != null) secondaryNodes[i].Show(weapon.weaponSprite, weapon.DisplayName, "보조 무기 · Z 교체", true);
+        }
     }
 
     private void Observe(PlayerWeaponAbility ability)

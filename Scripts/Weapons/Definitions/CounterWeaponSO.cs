@@ -10,7 +10,7 @@ public class CounterWeaponSO : WeaponBaseSO
     [SerializeField] private DamageInfo counterDamageInfo;
     [SerializeField] private FeedbackDataSO counterHitFeedback;   // 충격파에 맞은 적 위치의 효과
 
-    [SerializeField] private float counterWindowTime = 0.25f;
+    [SerializeField] private float counterWindowTime = 0.5f;
     [SerializeField] private float counterHitboxDelay = 0.1f;
     // 반격 성공 순간부터의 무적 시간(초). 회수 동작(recoverTime)이 끝난 뒤에도 이어져 그 차이만큼 판정 밖으로 빠져나갈 수 있다.
     [SerializeField] private float successInvincibleTime = 1f;

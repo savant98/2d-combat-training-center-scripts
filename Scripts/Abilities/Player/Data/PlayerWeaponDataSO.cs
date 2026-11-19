@@ -23,6 +23,8 @@ public class PlayerWeaponDataSO : PlayerAbilityDataSO
         return null;
     }
 
+    public WeaponBaseSO[] secondaryWeapons;
+
     [Header("SkillGauge")]
     public float maxSkillGauge;
 

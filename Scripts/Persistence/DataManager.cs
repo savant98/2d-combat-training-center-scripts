@@ -45,6 +45,7 @@ public class SaveData
     // 무장 자리(Player_Weapon_Data의 weaponSets 번호, 0 = 근접, 1 = 원거리)마다 장착한 무장의 armamentId(2026-11-18).
     // 비어 있거나 모르는 값이면 그 자리의 기본 무장을 쓴다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
     public List<string> equippedArmaments = new List<string>();
+    public List<string> equippedSecondaryWeapons = new List<string>();
 }
 
 /// <summary>
@@ -561,6 +562,22 @@ public class DataManager : MonoBehaviour
         while (list.Count <= setIndex) list.Add("");
         if (list[setIndex] == armamentId) return;
         list[setIndex] = armamentId;
+        SaveGame();
+    }
+
+    public string GetEquippedSecondaryWeapon(int setIndex)
+    {
+        var list = CurrentSaveData != null ? CurrentSaveData.equippedSecondaryWeapons : null;
+        return list != null && setIndex >= 0 && setIndex < list.Count ? list[setIndex] ?? "" : "";
+    }
+    public void SetEquippedSecondaryWeapon(int setIndex, string weaponName)
+    {
+        if (!HasSelectedSlot || setIndex < 0) return;
+        CurrentSaveData.equippedSecondaryWeapons ??= new List<string>();
+        var list = CurrentSaveData.equippedSecondaryWeapons;
+        while (list.Count <= setIndex) list.Add("");
+        if (list[setIndex] == weaponName) return;
+        list[setIndex] = weaponName;
         SaveGame();
     }
 

@@ -20,6 +20,7 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     private Vector3 tip, muzzleRestPosition;
     private Quaternion gunRestRotation, muzzleRestRotation;
     private bool aimed;
+    private int nextMachineGunSound;
     private float scatterStreakStart, lastScatterShot = float.NegativeInfinity;   // 머신건 연사를 이어 온 시간(흩어짐이 커지는 정도)
     public Transform Muzzle => muzzle;
     public Vector2 BarrelDirection => gun != null ? ((Vector2)gun.TransformVector(Vector3.right)).normalized : Vector2.right;
@@ -78,6 +79,14 @@ public sealed class PlayerStarShotAim : MonoBehaviour
             if (machineGun != null && machineGun.muzzleFlash != null && FeedbackPlayer.Instance != null)
                 FeedbackPlayer.Instance.Play(machineGun.muzzleFlash, muzzle);   // StarGunMuzzle 키와 같은 재생(총구 자리·회전 + 보정)
             else if (receiver != null) receiver.PlayAnimationFeedback("StarGunMuzzle");
+
+            var shotSounds = machineGun?.shotSounds;
+            if (shotSounds != null && shotSounds.Length > 0)
+            {
+                int index = nextMachineGunSound % shotSounds.Length;
+                SoundManager.Instance?.PlaySound(shotSounds[index], muzzle.position);
+                nextMachineGunSound = (index + 1) % shotSounds.Length;
+            }
         }
         pending.Clear();
     }

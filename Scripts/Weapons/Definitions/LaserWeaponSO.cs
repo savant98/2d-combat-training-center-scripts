@@ -9,6 +9,8 @@ using UnityEngine;
 [UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "LaserWeapon")]
 public class LaserWeaponSO : WeaponBaseSO
 {
+    public override string PresentationWeaponName => "Railgun";
+
     [Header("Laser Settings")]
     public LayerMask platformLayer;
     public LayerMask damageMask;

@@ -68,7 +68,7 @@ public sealed class ScreenSplitPass : ScriptableRenderPass
 
         line = new Vector4(uv.x, uv.y, direction.x, direction.y);
         shape = new Vector4(Mathf.Max(0f, state.gap), Mathf.Max(0f, state.slide), Mathf.Max(0f, state.jag), Mathf.Clamp01(state.strength));
-        axis = new Vector4(aspect, 1f, 0f, 0f);
+        axis = new Vector4(aspect, Mathf.Clamp01(state.fractureProgress), 0f, 0f);
 
         // 공용 Material 원본은 실행 중 바꾸지 않는다. 원본을 복사한 실행용 사본에만 값을 쓴다.
         if (material == null || templateSource != template)

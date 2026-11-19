@@ -21,15 +21,17 @@ public class RangedWeaponSO : WeaponBaseSO
         float t = Time.time + executeTime;
         float intervalTime = interval;
         PlayerController playerController = (PlayerController)controller;
+        var attack = playerController.AbilityManager.AttackAbility;
+        bool machineGun = this is MachineGunWeaponSO;
         // 한 번의 3점사는 시작한 방향을 유지한다. 좌우는 보는 방향을 기준으로 한다.
-        Vector2 aim = playerController.AbilityManager.AttackAbility.PrimaryFireDirection;
+        Vector2 aim = attack.PrimaryFireDirection;
 
         while (Time.time < t)
         {
             yield return null;
 
-            if (projectilePrefab is StarShot && (!playerController.AbilityManager.AttackAbility.IsStarShotActive
-                || playerController.AbilityManager.AttackAbility.AttackPhase != AbilityState.Execute)) yield break;
+            if (projectilePrefab is StarShot && (!attack.IsStarShotActive
+                || attack.AttackPhase != AbilityState.Execute)) yield break;
 
             intervalTime += Time.deltaTime;
 
@@ -39,10 +41,11 @@ public class RangedWeaponSO : WeaponBaseSO
                 controller.AddRecoil(recoilPower, controller.Facing);
 
                 // 발사체 발사
-                if (projectilePrefab is not StarShot || !playerController.AbilityManager.AttackAbility.QueuePrimaryStarShot(this, WithSource(damageInfo), aim))
+                Vector2 direction = machineGun ? attack.PrimaryFireDirection : aim;
+                if (projectilePrefab is not StarShot || !attack.QueuePrimaryStarShot(this, WithSource(damageInfo), direction))
                 {
                     var projectile = (ProjectileBase)WorldEntityPool.Instance.Spawn(projectilePrefab, controller.transform.position, controller.transform.rotation);
-                    if (projectile is StarShot star) star.SetFireDirection(aim);
+                    if (projectile is StarShot star) star.SetFireDirection(direction);
                     projectile.Initialize(controller, WithSource(damageInfo), projectileSpeed, count, platformLayer);
                     projectile.OnHitEnemy += (owner, hitPoint) => OnHitEnemy?.Invoke(owner, hitPoint);
                 }
@@ -51,7 +54,7 @@ public class RangedWeaponSO : WeaponBaseSO
                 currentCount++;
             }
 
-            if (playerController.AbilityManager.StateMachine.CurrentState != PlayerState.Attack || currentCount >= count)
+            if (currentCount >= count || (!machineGun && playerController.AbilityManager.StateMachine.CurrentState != PlayerState.Attack))
             {
                 break;
             }

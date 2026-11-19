@@ -21,6 +21,7 @@ public struct ScreenSplitState
     public float slide;         // 두 조각이 선 방향으로 서로 어긋난 거리(화면 높이 비율). 조각마다 절반씩 반대로 미끄러진다
     public float jag;           // 자른 면이 들쭉날쭉한 정도(화면 높이 비율)
     public float strength;      // 틈 가운데 빛 선·자른 면 테두리 빛의 세기(0~1)
+    public float fractureProgress; // 파편이 흩어지는 진행도(0~1)
 }
 
 public static class ScreenSplitRenderer

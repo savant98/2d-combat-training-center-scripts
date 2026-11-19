@@ -6,16 +6,23 @@ public class PlayerWeaponAbility : PlayerAbility
     public override PlayerActionType ActionType => PlayerActionType.Attack;
     public override bool IsActive => abilityState != AbilityState.None;
     public AbilityState AttackPhase => abilityState;
+    public bool IsMachineGunAttacking => IsNormalAttackRunning && selectedWeapon is MachineGunWeaponSO;
     public Vector2 PrimaryFireDirection { get; private set; } = Vector2.right;
     public bool IsStarShotActive => !isStoringSkill && IsActive && selectedWeapon == normalWeapon
         && normalWeapon is RangedWeaponSO ranged && ranged.projectilePrefab is StarShot;
     private PlayerStarShotAim starAim;
+    private bool ownsMachineGunFacingLock;
     private bool restoreStorageIdle;
     public bool QueuePrimaryStarShot(RangedWeaponSO weapon, WeaponBaseSO.DamageInfo damage, Vector2 direction)
         => starAim != null && starAim.Queue(weapon, damage, direction);
     public const int StoredSkillCapacity = 3;
     private readonly List<StoredGearSkill> storedSkills = new();
     public IReadOnlyList<StoredGearSkill> StoredSkills => storedSkills;
+    public float GetStoredSkillCooldownRemaining(int slotIndex)
+    {
+        return (uint)slotIndex < (uint)storedSkills.Count
+            ? GetWeaponCooldownRemaining(storedSkills[slotIndex].Weapon) : 0f;
+    }
     public bool IsStoringSkill => isStoringSkill;
     public float SkillStorageProgress => isStoringSkill ? 1f - Mathf.Clamp01(timer / weaponData.skillStoreDuration) : 0f;
     public event System.Action StoredSkillsChanged;
@@ -206,6 +213,12 @@ public class PlayerWeaponAbility : PlayerAbility
         var attackBlade = attackRig != null ? attackRig.Find("Hammer") : null;
         hammerAttackBlade = attackBlade != null ? attackBlade.GetComponent<SpriteRenderer>() : null;
         LoadEquippedArmaments();
+        if (weaponData.secondaryWeapons != null)
+            for (int slot = 0; slot < WeaponSetCount; slot++)
+                foreach (var candidate in weaponData.secondaryWeapons)
+                    if (candidate != null && DataManager.Instance != null
+                        && candidate.weaponName == DataManager.Instance.GetEquippedSecondaryWeapon(slot))
+                        weaponData.weaponSets[slot].secondary = candidate;
         ApplyWeaponSet(0, true);
 
         selectedWeapon = normalWeapon;
@@ -312,6 +325,7 @@ public class PlayerWeaponAbility : PlayerAbility
         {
             TryUseStoredSkill();
             if (IsActive) return;
+            if (storedSkills.Count > 0) return;
             StartNormalWeapon();        // 그사이 저장 목록이 비었으면 평소 공격
             return;
         }
@@ -322,7 +336,7 @@ public class PlayerWeaponAbility : PlayerAbility
             {
                 suppressHeldPrimaryUntilRelease = true;
                 TryUseStoredSkill();
-                if (IsActive) return;
+                return;
             }
             StartNormalWeapon();
             return;
@@ -598,7 +612,8 @@ public class PlayerWeaponAbility : PlayerAbility
 
         PublishSkillGauge();
 
-        CancelGear(PlayerGearVisual.EndReason.Fired);
+        CancelGear(selectedWeapon is HandCannonWeaponSO
+            ? PlayerGearVisual.EndReason.Silent : PlayerGearVisual.EndReason.Fired);
         StartWindup();
     }
 
@@ -631,17 +646,29 @@ public class PlayerWeaponAbility : PlayerAbility
         if (abilityState != AbilityState.None)
         {
             // 아래 + 공격: 기본 공격 중이면 곧바로 끊고 저장 기술, 다른 기술의 회수 중이면 끝날 때까지 남겨 둔다
-            if (TryCancelIntoStoredSkill())
+            if (!manager.DashAbility.IsActive && TryCancelIntoStoredSkill())
             {
                 UpdateWeaponCooldownUI();
                 UpdateGearStageCooldownUI();
                 return;
             }
+            if (IsMachineGunAttacking && (InputManager.Released(Button.Attack) || ResolveNormalWeapon(currentSetIndex) != selectedWeapon))
+            {
+                StopAllCoroutines();
+                if (starAim != null) starAim.Restore();
+                EndAttack();
+                UpdateWeaponCooldownUI();
+                UpdateGearStageCooldownUI();
+                return;
+            }
+            if (IsMachineGunAttacking)
+                PrimaryFireDirection = ReadPrimaryAim(PrimaryFireDirection.x > 0f ? 1 : -1);
+
             if (abilityState == AbilityState.Recover && !IsNormalAttackRunning && controller.CanReceiveInput) storedSkillBuffer.Hold();
             if (abilityState == AbilityState.Execute && !currentHitboxOpened && IsCurrentHitboxOpen())
                 currentHitboxOpened = true;
             TryQueueComboInput();
-            timer -= Time.deltaTime;
+            timer -= SwordFinisherCinematic.DeltaFor(controller);
 
             // 빠르게 잇는 무기(칼)는 후속 입력이 회수 중 들어와도 남은 회수 시간을 기다리지 않는다.
             if (ChainsWithoutRecover && abilityState == AbilityState.Recover && CancelAttack())
@@ -665,7 +692,7 @@ public class PlayerWeaponAbility : PlayerAbility
                         break;
                     if (selectedWeapon.ShouldEnterRecover())
                         StartRecover();
-                    else
+                    else if (!TryContinueMachineGunBurst())
                     {
                         EndAttack();
                         TryChainStoredSkill();
@@ -673,7 +700,7 @@ public class PlayerWeaponAbility : PlayerAbility
                     break;
 
                 case AbilityState.Recover:
-                    if (CancelAttack())
+                    if (TryContinueMachineGunBurst() || CancelAttack())
                         break;
 
                     EndAttack();
@@ -692,6 +719,22 @@ public class PlayerWeaponAbility : PlayerAbility
 
         UpdateWeaponCooldownUI();
         UpdateGearStageCooldownUI();
+    }
+
+    private bool TryContinueMachineGunBurst()
+    {
+        if (!IsMachineGunAttacking || !CanRepeatPrimary || skillGauge < selectedWeapon.skillGauge
+            || !IsWeaponCooldownReady(selectedWeapon))
+            return false;
+
+        // 처음 잡은 좌우 방향으로 계속 연사하며 위 입력은 발사마다 반영한다.
+        skillGauge -= selectedWeapon.skillGauge;
+        MarkWeaponUsed(selectedWeapon);
+        PublishSkillGauge();
+        StopAllCoroutines();
+        StartExecute();
+        if (!manager.DashAbility.IsActive) controller.animator.Play("WeaponExecute", 0, 0f);
+        return true;
     }
 
     // 지금 기본 공격(기본 공격 자리의 무기)을 쓰는 중인지. Gear·보조 무기·저장 기술은 아니다.
@@ -714,6 +757,7 @@ public class PlayerWeaponAbility : PlayerAbility
         }
         if (!IsNormalAttackRunning || !storedSkillBuffer.IsValid || storedSkills.Count == 0 || !controller.CanReceiveInput)
             return false;
+        if (!IsWeaponCooldownReady(storedSkills[0].Weapon)) { storedSkillBuffer.Reset(); return false; }
         storedSkillBuffer.Reset();
         // 끊는 기본 공격의 모습·판정·남은 연사를 정리한다(selectedWeapon을 바꾸기 전에 해야 기본 근접 공격으로 알아본다)
         FinishModelReturn();
@@ -736,6 +780,7 @@ public class PlayerWeaponAbility : PlayerAbility
     // 이 프레임의 상태 기계는 아직 공격(지난 프레임 값)이라 CanDo로 묻지 않는다. 공격을 이어 가는 것이고, 피격·잡기·대시는 공격을 먼저 끊으므로 여기에 오지 않는다.
     private void TryChainStoredSkill()
     {
+        if (manager.DashAbility.IsActive) return;
         if (!controller.CanReceiveInput) { storedSkillBuffer.Reset(); return; }
         if (abilityState != AbilityState.None || storedSkills.Count == 0 || !storedSkillBuffer.IsValid)
             return;
@@ -1235,6 +1280,8 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     public override void Interrupt()
     {
+        ReleaseMachineGunFacing();
+        SwordFinisherCinematic.End(controller);
         FinishModelReturn();
         storedSkillBuffer.Reset();
         primaryPressPending = false;
@@ -1285,8 +1332,11 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         FinishModelReturn();
         attackRun++;
-        // 공격 방향 결정
-        int inputDir = (int)controller.MoveInput.x;
+        bool machineGun = selectedWeapon == normalWeapon && selectedWeapon is MachineGunWeaponSO;
+        if (!machineGun) ReleaseMachineGunFacing();
+        // 기관총은 사격을 시작할 때 대각선 입력의 좌우 방향까지 함께 잡는다.
+        float horizontal = controller.MoveInput.x;
+        int inputDir = machineGun && Mathf.Abs(horizontal) > .01f ? (horizontal > 0f ? 1 : -1) : (int)horizontal;
         if (inputDir != 0)
         {
             controller.FacingUpdate(inputDir);
@@ -1295,15 +1345,14 @@ public class PlayerWeaponAbility : PlayerAbility
         if (selectedWeapon == normalWeapon)
         {
             // 위를 누르고 쏘면 위 30도. 아래 사격은 없다(아래 + 공격은 기술 저장·사용 입력이다).
-            float vertical = controller.MoveInput.y > .5f ? 1f : 0f;
-            PrimaryFireDirection = new Vector2(controller.Facing, vertical * .577350269f).normalized;
+            PrimaryFireDirection = ReadPrimaryAim(controller.Facing);
         }
         abilityState = AbilityState.Windup;
         comboQueuedThisStep = comboQueuedByHold = false;
         currentHitboxOpened = false;
 
         // Gear·보조 무기는 기술용 모형을 움직이는 Clip으로 연출한다. 대기 모형과 다르면(칼 세트의 해머 기술, 해머 세트의 칼 기술) 실행 동안 바꿔 든다.
-        if (executionSetIndex < 0 && selectedWeapon != normalWeapon)
+        if (executionSetIndex < 0 && selectedWeapon != normalWeapon && selectedWeapon != secondaryWeapon)
         {
             GameObject skillModel = GetSkillModel(selectedWeapon, currentSetIndex);
             if (GetSetModel(currentSetIndex) != skillModel)
@@ -1329,9 +1378,19 @@ public class PlayerWeaponAbility : PlayerAbility
             selectedWeapon.OnWindupStarted(controller);
         }
 
-        feedbackPlayer.Play(selectedWeapon.windupFeedback, transform);
-        controller.GravityOn = false;
-        controller.Velocity = Vector2.zero;
+        if (selectedWeapon is SwordFinisherWeaponSO) StartCoroutine(PlayFinisherPreparation(attackRun, selectedWeapon.windupFeedback));
+        else feedbackPlayer.Play(selectedWeapon.windupFeedback, transform);
+        if (machineGun)
+        {
+            LockMachineGunFacing();
+            controller.GravityOn = true;
+            controller.Velocity.x *= .5f;
+        }
+        else
+        {
+            controller.GravityOn = false;
+            controller.Velocity = Vector2.zero;
+        }
 
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 1);
         if (IsNormalMelee)
@@ -1340,6 +1399,41 @@ public class PlayerWeaponAbility : PlayerAbility
             controller.animator.Play("WeaponWindup", 0, 0f);
             controller.animator.Update(0f);
         }
+    }
+    private Vector2 ReadPrimaryAim(int horizontalFacing)
+        => controller.MoveInput.y > .5f ? new Vector2(horizontalFacing * .8660254f, .5f) : new Vector2(horizontalFacing, 0f);
+
+    private void LockMachineGunFacing()
+    {
+        if (controller.LockFacing) return;
+
+        controller.LockFacing = true;
+        ownsMachineGunFacingLock = true;
+        if (controller.facingModel == null) return;
+        var facing = controller.facingModel.transform;
+        Vector3 scale = facing.localScale;
+        scale.x = Mathf.Abs(scale.x) * controller.Facing;
+        facing.localScale = scale;
+    }
+
+    private void ReleaseMachineGunFacing()
+    {
+        if (!ownsMachineGunFacingLock) return;
+
+        controller.LockFacing = false;
+        ownsMachineGunFacingLock = false;
+    }
+
+    private System.Collections.IEnumerator PlayFinisherPreparation(int run, FeedbackDataSO feedback)
+    {
+        float elapsed = 0f;
+        while (elapsed < .1f)
+        {
+            yield return null;
+            if (run != attackRun || !IsActive) yield break;
+            elapsed += SwordFinisherCinematic.DeltaFor(controller);
+        }
+        feedbackPlayer.Play(feedback, transform);
     }
     private void StartExecute()
     {
@@ -1397,7 +1491,7 @@ public class PlayerWeaponAbility : PlayerAbility
         }
         else
         {
-            controller.GravityOn = true;
+            if (!manager.DashAbility.IsActive) controller.GravityOn = true;
             timer = selectedWeapon.recoverTime;
         }
 
@@ -1414,7 +1508,7 @@ public class PlayerWeaponAbility : PlayerAbility
     private void TryStoreGearSkill()
     {
         var weapon = weaponData.weaponSets[currentSetIndex].GetGearWeapon(gearStage);
-        if (weapon == null || storedSkills.Count >= StoredSkillCapacity || skillGauge < weapon.skillGauge
+        if (weapon == null || skillGauge < weapon.skillGauge
             || weaponData.skillStoreAnimation == null) return;
         FinishModelReturn();
         pendingSkill = new StoredGearSkill(weapon, currentSetIndex, gearStage,
@@ -1438,6 +1532,7 @@ public class PlayerWeaponAbility : PlayerAbility
         controller.Velocity = Vector2.zero;
         timer -= Time.deltaTime;
         if (timer > .0001f) return;
+        if (storedSkills.Count >= StoredSkillCapacity) storedSkills.RemoveAt(0);
         storedSkills.Add(pendingSkill);
         isStoringSkill = false;
         StoredSkillsChanged?.Invoke();
@@ -1463,6 +1558,9 @@ public class PlayerWeaponAbility : PlayerAbility
         while (storedSkills.Count > 0 && storedSkills[0].Weapon == null) storedSkills.RemoveAt(0);   // 무기가 사라진 항목이 맨 앞을 막지 않게
         if (storedSkills.Count == 0) { StoredSkillsChanged?.Invoke(); return; }
         var skill = storedSkills[0];
+        if (!IsWeaponCooldownReady(skill.Weapon)) return;
+        if (currentSetIndex != skill.SetIndex) ApplyWeaponSet(skill.SetIndex, true);
+        MarkWeaponUsed(skill.Weapon);
         storedSkills.RemoveAt(0);
         StoredSkillsChanged?.Invoke();
         selectedWeapon = skill.Weapon;
@@ -1470,7 +1568,8 @@ public class PlayerWeaponAbility : PlayerAbility
         ShowModel(GetSkillModel(selectedWeapon, executionSetIndex));
         BindWeaponEvent(selectedWeapon);
         meleeComboIndex = 0; lastMeleeAttackTime = Time.time;
-        CancelGear(PlayerGearVisual.EndReason.Fired);
+        CancelGear(selectedWeapon is HandCannonWeaponSO
+            ? PlayerGearVisual.EndReason.Silent : PlayerGearVisual.EndReason.Fired);
         StartWindup();
     }
     // 동작이 끝나거나 끊긴 뒤 이 세트의 대기 모형으로 되돌린다.
@@ -1492,6 +1591,7 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void CancelSpecialAttack()
     {
+        SwordFinisherCinematic.End(controller);
         if (isStoringSkill)
         {
             isStoringSkill = false;
@@ -1525,6 +1625,8 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void EndAttack()
     {
+        ReleaseMachineGunFacing();
+        SwordFinisherCinematic.End(controller);
         // 끝난 동작이 남긴 모습을 먼저 본다(아래 정리가 기본값을 다시 쓰기 전에).
         // endsAtIdle: 회수 Clip이 대기 자세에서 끝난 단계(해머 3타, 칼, 칼로 연출하는 기술). hammerShown: 공격용 해머가 아직 보인다.
         bool endsAtIdle = IsNormalMelee
@@ -1537,7 +1639,7 @@ public class PlayerWeaponAbility : PlayerAbility
         controller.PlayerCounterState.EndCounter();
 
         comboQueuedThisStep = false;
-        controller.GravityOn = true;
+        if (!manager.DashAbility.IsActive) controller.GravityOn = true;
         abilityState = AbilityState.None;
         controller.animator.SetInteger(selectedWeapon.weaponAnim, 0);
         // 대기 자세에서 끝난 단계는 섞지 않고 바로 대기로 넘긴다. 섞으면 0.1초 동안 WeaponModel이 대기 각도로 돌아가면서
@@ -1557,6 +1659,21 @@ public class PlayerWeaponAbility : PlayerAbility
     // 보조 무기와 교체 색은 자리에 남는다. 장착 상태는 세이브(DataManager.equippedArmaments)에 남고 Initialize에서 다시 적용한다.
     // 업그레이드 메뉴는 아래 읽기 전용 값과 ArmamentChanged를 보고 그리고, 교체는 TryEquipArmament로 요청한다.
 
+    public IReadOnlyList<WeaponBaseSO> SecondaryWeapons => weaponData.secondaryWeapons ?? System.Array.Empty<WeaponBaseSO>();
+    public bool TryEquipSecondaryWeapon(int setIndex, WeaponBaseSO weapon)
+    {
+        var set = GetWeaponSet(setIndex);
+        if (set == null || weapon == null || IsActive || isStoringSkill) return false;
+        bool available = false;
+        foreach (var candidate in SecondaryWeapons) if (candidate == weapon) available = true;
+        if (!available) return false;
+        set.secondary = weapon;
+        BindWeaponEvent(weapon);
+        if (DataManager.Instance != null) DataManager.Instance.SetEquippedSecondaryWeapon(setIndex, weapon.weaponName);
+        if (setIndex == currentSetIndex) ApplyWeaponSet(setIndex, true);
+        ArmamentChanged?.Invoke(setIndex);
+        return true;
+    }
     public int CurrentSetIndex => currentSetIndex;
     /// <summary>지금 실행 중인 기술의 자리(저장해 둔 기술이면 저장한 자리, 아니면 지금 든 자리).</summary>
     public int ExecutingSetIndex => executionSetIndex >= 0 ? executionSetIndex : currentSetIndex;

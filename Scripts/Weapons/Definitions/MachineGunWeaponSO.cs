@@ -2,7 +2,7 @@ using UnityEngine;
 
 // Rifle Gear 3단계 '머신건 장착' 동안 기본 공격 자리에 들어가는 머신건(2026-11-18 2차).
 // 사용자 지시: "머신건 사용시에는 약간의 탄 흩어짐이 있어서 탄착군을 형성하도록 해." "머신건 탄의 생김새를 더 크고 강하게 강화해줘."
-// 연사 흐름(한 사이클 count발 · interval 간격 · 조준 방향)은 RangedWeaponSO 그대로이고, 이 클래스는 탄 방향의 흩어짐과 총구 섬광만 더한다.
+// 연사 흐름(한 사이클 count발 · interval 간격 · 조준 방향)은 RangedWeaponSO를 쓰고, 격발마다 탄 퍼짐과 총구 효과를 적용한다.
 // - 흩어짐: PlayerStarShotAim이 총신은 조준 방향에 고정한 채 탄 방향만 Scatter로 돌린다(탄마다 총신이 떨리지 않는다).
 //   각도는 정규분포(표준편차 σ)이고 maxSpread도에서 자른다. 계속 쏘면 σ가 spreadSigmaStart에서 spreadSigma까지 spreadRampTime초에 걸쳐 커진다
 //   (첫 몇 발은 모이고, 이어 쏘면 탄착군이 조금 넓어진다). 쏘는 사이가 spreadResetGap초보다 벌어지면 처음부터 다시 잰다.
@@ -26,6 +26,8 @@ public class MachineGunWeaponSO : RangedWeaponSO
     [Header("Muzzle")]
     [Tooltip("탄마다 총구 자세로 재생하는 섬광(청록). 비우면 Rifle StarShot과 같은 분홍 섬광(StarGunMuzzle)")]
     public FeedbackDataSO muzzleFlash;
+    [Tooltip("실제로 발사한 탄마다 순서대로 재생하는 격발음")]
+    public SoundOptions[] shotSounds = System.Array.Empty<SoundOptions>();
 
     // 연사를 이어 온 시간(초)에 맞는 표준편차(도)
     public float SigmaAt(float sustained) =>

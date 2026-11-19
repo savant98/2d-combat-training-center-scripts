@@ -24,13 +24,16 @@ public abstract class ProjectileBase : MovingEntityBase
     private Vector2 castStart;
     private float castAngle;
     private bool movementChecked;
+    private bool initializedForHits;
+    private bool trailEmitsOnFlight;
 
     protected virtual bool UsesPathHitDetection => true;
 
     protected override void Awake()
     {
         base.Awake();
-        trail = GetComponentInChildren<TrailRenderer>();
+        trail = GetComponentInChildren<TrailRenderer>(true);
+        if (trail != null) trailEmitsOnFlight = trail.emitting;
         var body = col.attachedRigidbody;
         castOrigin = body != null ? body.transform : transform;
     }
@@ -38,12 +41,14 @@ public abstract class ProjectileBase : MovingEntityBase
     public override void OnSpawnedFromPool()
     {
         base.OnSpawnedFromPool();
+        initializedForHits = false;
         if (trail != null)
         {
-            trail.Clear();
-            trail.transform.parent = transform;
-            trail.transform.localPosition = Vector3.zero;
+            trail.emitting = false;
             trail.gameObject.SetActive(false);
+            trail.transform.SetParent(transform, false);
+            trail.transform.localPosition = Vector3.zero;
+            trail.Clear();
         }
         OnHitEnemy = null;
     }
@@ -60,12 +65,14 @@ public abstract class ProjectileBase : MovingEntityBase
         hitFilter = new ContactFilter2D();
         hitFilter.SetLayerMask(ownerFaction == Faction.Player ? enemyHitLayer : playerHitLayer);
         hitFilter.useTriggers = true;
+        initializedForHits = true;
         RaycastMotor2D.InvalidateAttackQuerySync();
 
         if (trail != null)
         {
             trail.Clear();
             trail.gameObject.SetActive(true);
+            trail.emitting = trailEmitsOnFlight;
         }
     }
 
@@ -97,7 +104,11 @@ public abstract class ProjectileBase : MovingEntityBase
             motor.CastAttackPath(castStart, castAngle, move, hitFilter, pathHits);
             foreach (var hit in pathHits)
             {
-                TryHit(hit.collider, hit.point);
+                // 시작부터 겹친 캐스트에는 새 접점이 없으므로 대상의 현재 표면을 사용한다.
+                var targetCollider = hit.collider;
+                if (targetCollider == null) continue;
+                Vector2 contact = hit.distance > 0f ? hit.point : targetCollider.ClosestPoint(castStart);
+                TryHit(targetCollider, contact);
                 if (isReturning) break;
             }
         }
@@ -119,7 +130,11 @@ public abstract class ProjectileBase : MovingEntityBase
 
     protected override void ReturnToPool()
     {
-        if (trail != null) trail.transform.parent = null;
+        if (trail != null)
+        {
+            trail.emitting = false;
+            trail.transform.SetParent(null, true);
+        }
         base.ReturnToPool();
     }
 
@@ -134,13 +149,18 @@ public abstract class ProjectileBase : MovingEntityBase
 
     protected virtual void OnTriggerEnter2D(Collider2D collision)
     {
-        if (UsesPathHitDetection)
+        if (!UsesPathHitDetection || !initializedForHits || isReturning || collision == null) return;
+
+        // 지연된 트리거가 재사용된 탄에 도착해도 현재 배치에서 겹치는 대상만 처리한다.
+        RaycastMotor2D.PrepareAttackQueries();
+        motor.OverlapAttackCollider(castOrigin.position, castOrigin.eulerAngles.z, hitFilter, overlapHits);
+        if (overlapHits.Contains(collision))
             TryHit(collision);
     }
 
     private void TryHit(Collider2D collision, Vector2? hitPoint = null)
     {
-        if (isReturning || collision == null) return;
+        if (!initializedForHits || isReturning || collision == null) return;
         if ((hitFilter.layerMask & (1 << collision.gameObject.layer)) == 0) return;
         HealthBase health = collision.GetComponentInParent<HealthBase>();
         if (health == null || health.IsInvincible) return;

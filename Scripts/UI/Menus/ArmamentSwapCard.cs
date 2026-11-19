@@ -66,6 +66,12 @@ public sealed class ArmamentSwapCard : MonoBehaviour
     public void Bind(PlayerArmamentSO armament, bool equipped)
     {
         if (armament == null) return;
+        foreach (var preview in previews)
+        {
+            if (preview.node != null) preview.node.gameObject.SetActive(true);
+            if (preview.stageText != null) preview.stageText.gameObject.SetActive(true);
+            if (preview.nameText != null) preview.nameText.gameObject.SetActive(true);
+        }
         bool ready = armament.normal != null;
         if (portText != null) portText.text = UpgradeMenuPage.CategoryCode(armament.category) + " ARMAMENT";
         if (nameText != null) nameText.text = armament.DisplayName;
@@ -90,6 +96,25 @@ public sealed class ArmamentSwapCard : MonoBehaviour
 
         for (int i = 0; previews != null && i < previews.Length; i++)
             ShowWeapon(previews[i], i == 0 ? armament.normal : armament.GetGearWeapon(i), i);
+    }
+
+    public void BindSecondary(WeaponBaseSO weapon, bool equipped)
+    {
+        if (weapon == null) return;
+        if (portText != null) portText.text = "SUPPORT";
+        if (nameText != null) nameText.text = weapon.DisplayName;
+        if (descriptionText != null) descriptionText.text = "모든 무장에서 사용 가능\n게이지 " + weapon.skillGauge.ToString("0.#") + " · 쿨타임 " + weapon.cooldown.ToString("0.#") + "초";
+        if (icon != null) { icon.sprite = weapon.weaponSprite; icon.enabled = icon.sprite != null; }
+        if (badge != null) badge.SetActive(equipped);
+        if (badgeText != null) { badgeText.text = "장착 중"; badgeText.color = equippedColor; }
+        if (badgeFrame != null) badgeFrame.color = equippedColor;
+        if (contact != null) contact.color = equipped ? contactColor : idleContactColor;
+        foreach (var preview in previews)
+        {
+            if (preview.node != null) preview.node.gameObject.SetActive(false);
+            if (preview.stageText != null) preview.stageText.gameObject.SetActive(false);
+            if (preview.nameText != null) preview.nameText.gameObject.SetActive(false);
+        }
     }
 
     // 장착에 성공한 카드의 아이콘을 짧게 튕긴다(효과음·입자는 페이지가 Feedback으로 낸다).

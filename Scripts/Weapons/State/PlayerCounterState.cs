@@ -9,6 +9,27 @@ public class PlayerCounterState : MonoBehaviour
     /// <summary>반격 성공 무적의 남은 시간(초).</summary>
     public float ProtectionRemaining => protectedHealth != null ? Mathf.Max(0f, protectionEndTime - Time.time) : 0f;
 
+    private BoxCollider2D counterRange;
+    public Collider2D CounterRange => counterRange;
+    private void SetRange(bool enabled)
+    {
+        if (enabled && counterRange == null)
+        {
+            var body = GetComponentInChildren<PlayerHealth>().GetComponent<Collider2D>();
+            if (body == null) body = GetComponentInChildren<Collider2D>();
+            if (body == null) return;
+            var sensor = new GameObject("CounterRange");
+            sensor.layer = LayerMask.NameToLayer("Player");
+            sensor.transform.SetParent(transform, false);
+            counterRange = sensor.AddComponent<BoxCollider2D>();
+            counterRange.isTrigger = true;
+            sensor.transform.position = body.bounds.center;
+            Vector3 scale = transform.lossyScale;
+            counterRange.size = new Vector2(body.bounds.size.x / Mathf.Abs(scale.x), body.bounds.size.y / Mathf.Abs(scale.y)) * 1.5f;
+        }
+        if (counterRange != null) counterRange.enabled = enabled;
+        RaycastMotor2D.InvalidateAttackQuerySync();
+    }
     private System.Action<Vector3> onSuccess;
     private PlayerHealth protectedHealth;
     private bool savedInvulnerability;
@@ -35,13 +56,14 @@ public class PlayerCounterState : MonoBehaviour
     {
         if (protectedHealth != null && Time.time >= protectionEndTime) EndInvulnerability();
     }
-    private void OnDisable() => EndInvulnerability();
+    private void OnDisable() { EndCounter(); EndInvulnerability(); }
 
     public void StartCounter(System.Action<Vector3> onSuccess)
     {
         IsWaiting = true;
         IsSuccess = false;
         this.onSuccess = onSuccess;
+        SetRange(true);
     }
 
     public bool TryCounter(Vector3 hitPosition)
@@ -51,6 +73,7 @@ public class PlayerCounterState : MonoBehaviour
 
         IsWaiting = false;
         IsSuccess = true;
+        SetRange(false);
 
         onSuccess?.Invoke(hitPosition);
         return true;
@@ -58,6 +81,7 @@ public class PlayerCounterState : MonoBehaviour
 
     public void EndCounter()
     {
+        SetRange(false);
         IsWaiting = false;
         IsSuccess = false;
         onSuccess = null;
