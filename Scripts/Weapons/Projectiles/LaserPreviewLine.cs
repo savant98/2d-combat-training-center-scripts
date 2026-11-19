@@ -239,6 +239,11 @@ public class LaserPreviewLine : WorldEntityBase
         origin = newOrigin;
     }
 
+    public void SetLength(float newLength)
+    {
+        length = Mathf.Max(0f, newLength);
+    }
+
     public void SetDirection(Vector2 newDirection)
     {
         if (newDirection.sqrMagnitude <= 0.0001f)

@@ -44,10 +44,25 @@ public class EnemyController : CharacterController2D
     private Action waveDeathHandler;
     private float initialGravity = 0f;
 
+    [Header("쉴드 브레이크 낙하")]
+    [SerializeField, Tooltip("중력 없이 나는 적이 쉴드 브레이크 동안 중력(-55)으로 바닥이나 통과 발판에 떨어집니다. 평소 비행 규칙은 그대로입니다.")]
+    private bool fallOnShieldBreak;
+    private bool breakFalling;
+    private bool oneWayLandingRequested;
+    private bool baseOneWayLanding;
+    private bool baseFloorDetection;
+    public bool FallOnShieldBreak => fallOnShieldBreak;
+    // 검증용: 브레이크로 떨어지는 중인지, 패턴이 통과 발판 착지를 요청했는지
+    public bool IsBreakFalling => breakFalling;
+    public bool IsOneWayLandingRequested => oneWayLandingRequested;
+
     protected override void Awake()
     {
         base.Awake();
         initialGravity = Gravity;
+        // 평소 값은 Awake에서 정한 그대로 둔다(브레이크 낙하·패턴 요청이 끝나면 이 값으로 돌아간다).
+        baseOneWayLanding = motor.SupportsOneWayPlatforms;
+        baseFloorDetection = floorDetectionSpeedControl;
         brain = GetComponent<AiBrain>();
         spawnController = GetComponent<EnemySpawnController>();
         teleporter = GetComponent<EnemyTeleporter>();
@@ -72,7 +87,7 @@ public class EnemyController : CharacterController2D
     }
     protected override Vector2 CalculateVelocity()
     {
-        Velocity.y += GravityOn ? Gravity * Time.deltaTime : 0;
+        Velocity.y += GravityOn || breakFalling ? Gravity * Time.deltaTime : 0;
         // 착지 콜백이 Recover로 바꾸기 전에 이번 물리 이동의 공격 구간과 피해량을 보존한다.
         foreach (var source in contactSources)
             if (source != null) source.CaptureBodyContactStep();
@@ -110,12 +125,21 @@ public class EnemyController : CharacterController2D
         force.x *= GameManager.Instance.Player.transform.position.x - transform.position.x < 0 ? -1f : 1f;
 
         Gravity = -55f;
+        // 비행 적은 브레이크 동안만 중력을 받아 바닥(통과 발판 포함)에 떨어진다. 지상 적은 원래대로 GravityOn을 쓴다.
+        if (fallOnShieldBreak && !GravityOn)
+            SetBreakFalling(true);
 
         AddKnockback(force);
     }
     private void HandleBreakEnd()
     {
         // 브레이크 종료시 호출
+        // 떨어져 있던 비행 적은 그 자리에서 멈춘 채 다시 뜬다(이후 순찰이 원래 높이로 데려간다).
+        if (breakFalling)
+        {
+            SetBreakFalling(false);
+            Velocity = Vector2.zero;
+        }
         Gravity = initialGravity;
         CanTouchDamageActive(true);
     }
@@ -197,6 +221,31 @@ public class EnemyController : CharacterController2D
         facingModel.transform.localScale = new Vector3(Facing, 1, 1);
     }
 
+    // 패턴이 잠시 통과 발판 위에 내려앉아야 할 때(Aegis 내려찍기) 켠다. 패턴이 끝나거나 멈출 때 반드시 끈다.
+    public void SetOneWayLanding(bool value)
+    {
+        oneWayLandingRequested = value;
+        ApplyGroundBody();
+    }
+    private void SetBreakFalling(bool value)
+    {
+        breakFalling = value;
+        ApplyGroundBody();
+    }
+    private void ResetGroundBody()
+    {
+        breakFalling = false;
+        oneWayLandingRequested = false;
+        ApplyGroundBody();
+    }
+    // 평소 값에 브레이크 낙하와 패턴 요청을 더해 통과 발판 착지와 착지 때 세로 속도 정리를 정한다.
+    // 위로 오를 때는 통과 발판을 늘 지나가므로(모터 규칙) 바닥에서 다시 떠오를 때 걸리지 않는다.
+    private void ApplyGroundBody()
+    {
+        if (motor != null)
+            motor.SupportsOneWayPlatforms = baseOneWayLanding || breakFalling || oneWayLandingRequested;
+        floorDetectionSpeedControl = baseFloorDetection || breakFalling;
+    }
     public void CanTouchDamageActive(bool value)
     {
         canTouchDamage = value;
@@ -212,6 +261,8 @@ public class EnemyController : CharacterController2D
         //animator.speed = 0f;
         animator.SetTrigger("Spawn");
         Velocity = Vector2.zero;
+        // 브레이크 중 사망·풀 반환처럼 브레이크 종료가 오지 않는 경로도 평소 비행 상태로 되돌린다.
+        ResetGroundBody();
 
         // 중력 끄기
         Gravity = 0f;
@@ -267,6 +318,7 @@ public class EnemyController : CharacterController2D
     {
         ClearWaveDeathHandler();
         brain.PauseBrain();
+        ResetGroundBody();
         spawnController.ResetSpawnSequence();
         if (enemyHealth is TrainingDummyHealth trainingDummy)
             trainingDummy.RestoreSpawnPose();
