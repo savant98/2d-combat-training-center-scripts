@@ -24,6 +24,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
 
     [Header("Weapon")]
     [SerializeField] private Image iconImage;
+    private WeaponGuidePanel guidePanel;
     [Tooltip("무기 아이콘 뒤의 HUD 기어 모양 원(GlowMultiply 재질)")]
     [SerializeField] private Image iconRing;
     [SerializeField] private TextMeshProUGUI weaponNameText;
@@ -150,6 +151,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
         if (stageCaptionText != null) stageCaptionText.text = stage + "단계 기술";
         if (gaugeValueText != null) gaugeValueText.text = weapon.skillGauge.ToString("0.#", CultureInfo.InvariantCulture);
         if (cooldownValueText != null) cooldownValueText.text = weapon.cooldown.ToString("0.##", CultureInfo.InvariantCulture) + "초";
+        ShowWeaponGuide();
         ApplyCertificateIcons();
         Refresh();
         if (lockOverlay != null) lockOverlay.SetLocked(!IsUnlocked(weapon));
@@ -158,6 +160,28 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
         Open();
         FocusSilently(DefaultIndex());
         return true;
+    }
+
+    private void ShowWeaponGuide()
+    {
+        if (showModuleRows || rows.Length <= RightNode || rows[LeftNode] == null || rows[RightNode] == null) return;
+        if (guidePanel == null)
+        {
+            var prefab = Resources.Load<GameObject>("UI/WeaponGuidePanel");
+            if (prefab == null) return;
+            var top = (RectTransform)rows[LeftNode].transform;
+            var bottom = (RectTransform)rows[RightNode].transform;
+            guidePanel = Instantiate(prefab, top.parent).GetComponent<WeaponGuidePanel>();
+            var rect = (RectTransform)guidePanel.transform;
+            rect.anchorMin = top.anchorMin;
+            rect.anchorMax = top.anchorMax;
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = (top.anchoredPosition + bottom.anchoredPosition) * 0.5f;
+            rect.sizeDelta = new Vector2(top.rect.width,
+                Mathf.Abs(top.anchoredPosition.y - bottom.anchoredPosition.y) + (top.rect.height + bottom.rect.height) * 0.5f);
+            guidePanel.Configure(stageCaptionText != null ? stageCaptionText.font : null);
+        }
+        guidePanel.Show(weapon, StageColor());
     }
 
     /// <summary>입력 스택에서 내리고 숨긴다. 구매 확인 창이나 진행 중인 구매 연출도 함께 정리한다.</summary>
@@ -214,6 +238,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             if (IsUnlocked(weapon)) { warning = "이미 사용할 수 있는 기술입니다."; return false; }
             var entry = ArmamentUnlocks.PurchasableEntry(weapon);
             if (entry == null) { warning = LockedByArmamentMessage(); return false; }
+            if (entry.includedWeapon != null) purchaseName = entry.Title + " · 해금";
             price = entry.price;
             if (data.TrainingCertificates < price) { warning = ShortageMessage(); return false; }
             warning = null;

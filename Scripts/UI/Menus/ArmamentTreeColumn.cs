@@ -54,7 +54,11 @@ public sealed class ArmamentTreeColumn : MonoBehaviour
         Category = UpgradeMenuPage.CategoryOf(ability, setIndex);
 
         if (titleText != null) titleText.text = UpgradeMenuPage.CategoryName(Category) + " 무장";
-        if (captionText != null) captionText.text = UpgradeMenuPage.CategoryCode(Category) + "  ·  SLOT " + (setIndex + 1);
+        if (captionText != null)
+        {
+            string trait = ArmamentMenuGuide.TraitName(Armament);
+            captionText.text = trait ?? UpgradeMenuPage.CategoryCode(Category) + "  ·  SLOT " + (setIndex + 1);
+        }
 
         bool held = ability != null && ability.CurrentSetIndex == setIndex;
         WeaponBaseSO normal = Armament != null ? Armament.normal : set != null ? set.normal : null;

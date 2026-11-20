@@ -51,6 +51,7 @@ public class StarSpearVolley : WorldEntityBase
     private Action<CharacterController2D, Vector2> onHitEnemy;
     private float age, finishedAt = -1f, lastSummonAt = -10f, nextAimAt, waited;
     private bool running;
+    private bool railCharged;
     private Vector2 anchor;
     private Vector3 sigilScale = Vector3.one;
 
@@ -96,6 +97,7 @@ public class StarSpearVolley : WorldEntityBase
     public void Begin(CharacterController2D owner, StarSpearWeaponSO weapon, WeaponBaseSO.DamageInfo damageInfo,
         Action<CharacterController2D, Vector2> onHitEnemy)
     {
+        railCharged = WeaponTraitEffects.Attack(owner)?.Traits.IsRailCharged == true;
         Initialize(owner, damageInfo);   // 발사점 등장 피드백
         this.weapon = weapon;
         this.onHitEnemy = onHitEnemy;
@@ -204,6 +206,7 @@ public class StarSpearVolley : WorldEntityBase
         Vector2 position = anchor + Direction(slot.angle) * weapon.fanRadius;
         var spear = WorldEntityPool.Instance.Spawn(weapon.spearPrefab, position, Quaternion.identity);
         spear.Initialize(owner, damageInfo, weapon.spearSpeed, index, weapon.platformLayer);
+        spear.RailCharged = railCharged;
         spear.ConfigureFlight(weapon.turnRateDegrees, weapon.maxFlightTime, weapon.explosionRadius, weapon.targetSearchRadius);
         if (onHitEnemy != null) spear.OnHitEnemy += (character, hitPoint) => onHitEnemy(character, hitPoint);
         spear.Hold(position, slot.angle);

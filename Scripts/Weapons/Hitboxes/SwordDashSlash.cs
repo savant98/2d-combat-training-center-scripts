@@ -69,6 +69,7 @@ public class SwordDashSlash : WorldEntityBase
     private BoxCollider2D box;
     private FeedbackDataSO hitFeedback, finalHitFeedback, sheatheFeedback, cutFeedback;
     private Action<CharacterController2D, Vector2> onHitEnemy;
+    private bool resolveAwarded;
     private Vector4 rect;
     private int facing = 1;
     private float plannedLength, length, head, dashAge;
@@ -113,6 +114,7 @@ public class SwordDashSlash : WorldEntityBase
         seen.Clear();
         hitFeedback = finalHitFeedback = sheatheFeedback = cutFeedback = null;
         onHitEnemy = null;
+        resolveAwarded = false;
         running = finished = sheathed = cutPlayed = false;
         length = head = dashAge = 0f;
         firstHitTime = -1f;
@@ -256,8 +258,15 @@ public class SwordDashSlash : WorldEntityBase
         EnemyHealth enemy = target.health;
         if (enemy == null || !enemy.isActiveAndEnabled || enemy.currentHP <= 0f) return;   // 그사이 쓰러졌다
         Vector2 point = HitPoint(target);
-        if (enemy.enemyShieldSystem == null) enemy.TakeDamage(damageInfo, point);
-        else enemy.enemyShieldSystem.TakeDamage(damageInfo, point);
+        var playerAttack = WeaponTraitEffects.Attack(owner);
+        uint generation = playerAttack?.Traits.Generation ?? 0;
+        bool applied = WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, point);
+        if (applied && !resolveAwarded && playerAttack != null && playerAttack.Traits.Generation == generation
+            && owner is PlayerController player && !player.Health.IsDead)
+        {
+            resolveAwarded = true;
+            player.AbilityManager.AttackAbility.Traits.ChangeResolve(1);
+        }
         onHitEnemy?.Invoke(owner, point);
         if (feedback != null) FeedbackPlayer.Instance.Play(feedback, point);
     }

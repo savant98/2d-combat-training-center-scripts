@@ -63,15 +63,17 @@ public abstract class WeaponBaseSO : ScriptableObject
 
         // 발사 시 복사된 출처를 유지하여 무기 교체 후 적중도 구분한다.
         [NonSerialized] public WeaponBaseSO sourceWeapon;
+        [NonSerialized] public CharacterController2D sourceOwner;
 
         // 공격 시작 위치와 방향을 보관해 발사 후 플레이어가 이동해도 밀리는 방향을 유지한다.
         [NonSerialized] public Vector2 knockbackOrigin;
         [NonSerialized] public int knockbackFacing;
     }
 
-    protected DamageInfo WithSource(DamageInfo info)
+    protected DamageInfo WithSource(DamageInfo info, CharacterController2D owner = null)
     {
         info.sourceWeapon = this;
+        info.sourceOwner = owner;
         return info;
     }
 

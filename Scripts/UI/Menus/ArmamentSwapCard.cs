@@ -95,7 +95,7 @@ public sealed class ArmamentSwapCard : MonoBehaviour
         if (portText != null) portText.text = UpgradeMenuPage.CategoryCode(armament.category) + " ARMAMENT";
         if (nameText != null) nameText.text = armament.DisplayName;
         if (descriptionText != null)
-            descriptionText.text = UpgradeMenuPage.EvenLines(string.IsNullOrWhiteSpace(armament.description) ? "설명이 아직 없습니다." : armament.description);
+            descriptionText.text = UpgradeMenuPage.EvenLines(ArmamentMenuGuide.CardDescription(armament));
         if (icon != null)
         {
             icon.sprite = armament.Icon;

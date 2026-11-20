@@ -38,15 +38,16 @@ public class RangedWeaponSO : WeaponBaseSO
             if (intervalTime >= interval)
             {
                 // 반동 적용
-                controller.AddRecoil(recoilPower, controller.Facing);
 
                 // 발사체 발사
                 Vector2 direction = machineGun ? attack.PrimaryFireDirection : aim;
-                if (projectilePrefab is not StarShot || !attack.QueuePrimaryStarShot(this, WithSource(damageInfo), direction))
+                if (projectilePrefab is not StarShot || !attack.QueuePrimaryStarShot(this, WithSource(damageInfo, controller), direction))
                 {
+                    if (!attack.UsePrimaryRound(this)) yield break;
+                    controller.AddRecoil(recoilPower, controller.Facing);
                     var projectile = (ProjectileBase)WorldEntityPool.Instance.Spawn(projectilePrefab, controller.transform.position, controller.transform.rotation);
                     if (projectile is StarShot star) star.SetFireDirection(direction);
-                    projectile.Initialize(controller, WithSource(damageInfo), projectileSpeed, count, platformLayer);
+                    projectile.Initialize(controller, WithSource(damageInfo, controller), projectileSpeed, count, platformLayer);
                     projectile.OnHitEnemy += (owner, hitPoint) => OnHitEnemy?.Invoke(owner, hitPoint);
                 }
 

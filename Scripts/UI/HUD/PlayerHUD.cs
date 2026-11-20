@@ -179,6 +179,13 @@ public class PlayerHUD : MonoBehaviour
         SetSkillGauge(0, 100);
     }
 
+    private void Start()
+    {
+        var prefab = Resources.Load<GameObject>("UI/WeaponTraitHud");
+        if (prefab != null)
+            Instantiate(prefab, transform).GetComponent<WeaponTraitHud>().Configure(gearStage1Slot?.cooldownText?.font, hpBar.rectTransform);
+    }
+
     private void OnDestroy()
     {
         KillWeaponSlotTween(normalSlot);
@@ -311,7 +318,8 @@ public class PlayerHUD : MonoBehaviour
                 ApplyCooldownText(slot.cooldownText, remaining, ref slot.shownCooldownKey);
         }
 
-        SetSlotCooldownReady(slot, !coolingDown);
+        var attack = GameManager.Instance?.Player?.AbilityManager?.AttackAbility;
+        SetSlotCooldownReady(slot, !coolingDown && (attack == null || attack.IsWeaponTraitReady(slot.weapon)));
     }
     private void HideCooldown(WeaponHudSlot slot)
     {

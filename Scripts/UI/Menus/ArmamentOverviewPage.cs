@@ -134,6 +134,26 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
     public void RefreshCurrency() => refreshCurrency?.Invoke();
     #endregion
 
+    protected override int FindDirectionalIndex(int from, Vector2 direction)
+    {
+        if (from < 0 || from >= targetColumns.Count || targetColumns[from] == null)
+            return base.FindDirectionalIndex(from, direction);
+
+        // 좌우 키는 같은 단계의 반대쪽 무장으로 이동한다. 가운데에 놓인 보조 무기는 아래 키로도 접근할 수 있다.
+        if (Mathf.Abs(direction.x) > Mathf.Abs(direction.y))
+        {
+            int slot = targetColumns[from].SetIndex;
+            int stage = targetStages[from];
+            for (int i = 0; i < targetColumns.Count; i++)
+            {
+                var column = targetColumns[i];
+                if (column != null && (column.SetIndex - slot) * direction.x > 0f
+                    && targetStages[i] == stage && IsNavigable(i)) return i;
+            }
+        }
+        return base.FindDirectionalIndex(from, direction);
+    }
+
     private void HandleSelected(int index)
     {
         if (!CanReceiveInput || index < 0 || index >= targetColumns.Count) return;

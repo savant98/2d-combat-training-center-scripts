@@ -30,6 +30,8 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
         public ArmamentUnlockKind kind;
         [Tooltip("kind가 Weapon일 때의 대상 기술(무기 SO)")]
         public WeaponBaseSO weapon;
+        [Tooltip("같은 훈련 필증 구매 기록으로 함께 해금하는 기술")]
+        public WeaponBaseSO includedWeapon;
         [Tooltip("kind가 Armament일 때의 대상 무장. 사면 그 무장의 기본 공격과 Gear 기술이 함께 열린다")]
         public PlayerArmamentSO armament;
         [Tooltip("훈련 필증 수")]
@@ -97,9 +99,15 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
     public Entry Find(WeaponBaseSO weapon)
     {
         if (weapon == null || string.IsNullOrEmpty(weapon.weaponName) || entries == null) return null;
+        Entry bundle = null;
         foreach (var entry in entries)
-            if (entry != null && entry.kind == ArmamentUnlockKind.Weapon && entry.Key == weapon.weaponName) return entry;
-        return null;
+        {
+            if (entry == null || entry.kind != ArmamentUnlockKind.Weapon) continue;
+            if (entry.Key == weapon.weaponName) return entry;
+            if (entry.includedWeapon != null && entry.includedWeapon.weaponName == weapon.weaponName)
+                bundle ??= entry;
+        }
+        return bundle;
     }
 
     /// <summary>그 무장의 무장 항목(없으면 null). 비교는 armamentId다.</summary>
@@ -206,6 +214,11 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
             if (entry.price < 0) Debug.LogWarning(label + ": 가격이 음수입니다.", this);
             string key = entry.kind + ":" + entry.Key;
             if (!string.IsNullOrEmpty(entry.Key) && !keys.Add(key)) Debug.LogWarning(label + ": 키가 중복됩니다(" + key + ").", this);
+            if (entry.kind == ArmamentUnlockKind.Weapon && entry.includedWeapon != null)
+            {
+                string includedKey = entry.kind + ":" + entry.includedWeapon.weaponName;
+                if (!keys.Add(includedKey)) Debug.LogWarning(label + ": 묶음 기술 키가 중복됩니다(" + includedKey + ").", this);
+            }
             if (entry.kind == ArmamentUnlockKind.Weapon && entry.weapon != null)
                 foreach (var other in entries)
                     if (other != null && other.kind == ArmamentUnlockKind.Armament && other.armament != null && other.armament.normal == entry.weapon)

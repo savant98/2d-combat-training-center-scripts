@@ -185,8 +185,16 @@ public abstract class ProjectileBase : MovingEntityBase
     {
         if (health is EnemyHealth enemy)
         {
-            if (enemy.enemyShieldSystem == null) enemy.TakeDamage(damageInfo, hitPoint);
-            else enemy.enemyShieldSystem.TakeDamage(damageInfo, hitPoint);
+            var impact = damageInfo;
+            if (impact.sourceWeapon is MachineGunWeaponSO
+                && enemy.TryGetComponent<EnemyBurn>(out var burn) && burn.Stacks > 0)
+            {
+                impact.damage *= 1f + burn.Stacks * 0.12f;
+                if (WeaponTraitEffects.ApplyEnemyHit(enemy, impact, hitPoint))
+                    WeaponTraitFeedbackSO.Play(WeaponTraitCue.MachineGunBurn, hitPoint, -velocity);
+            }
+            else if (enemy.enemyShieldSystem == null) enemy.TakeDamage(impact, hitPoint);
+            else enemy.enemyShieldSystem.TakeDamage(impact, hitPoint);
             OnHitEnemy?.Invoke(owner, hitPoint);
         }
         else if (health is PlayerHealth player)

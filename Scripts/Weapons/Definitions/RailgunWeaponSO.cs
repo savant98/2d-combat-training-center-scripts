@@ -96,7 +96,10 @@ public class RailgunWeaponSO : WeaponBaseSO
         LastDirection = direction;
         LastLength = length;
         LastBlocked = blocked;
-        LastHitCount = ApplyDamage(controller, from, direction, reach, angle, muzzle, length);
+        var traits = WeaponTraitEffects.Attack(controller)?.Traits;
+        bool charged = traits != null && traits.IsRailCharged;
+        LastHitCount = ApplyDamage(controller, from, direction, reach, angle, muzzle, length, charged);
+        traits?.AddRailHeat(0.2f);
 
         controller.AddRecoil(recoilPower, controller.Facing);
 
@@ -111,7 +114,7 @@ public class RailgunWeaponSO : WeaponBaseSO
     }
 
     // 몸 중심 높이의 총구 축(from)에서 끝(reach)까지 덮는 회전 상자 안의 적에게 한 번씩 피해를 준다. 맞은 적 수를 돌려준다.
-    private int ApplyDamage(CharacterController2D controller, Vector2 from, Vector2 direction, float reach, float angle, Vector2 muzzle, float length)
+    private int ApplyDamage(CharacterController2D controller, Vector2 from, Vector2 direction, float reach, float angle, Vector2 muzzle, float length, bool charged)
     {
         if (reach <= 0f) return 0;
         Vector2 boxCenter = from + direction * (reach * 0.5f);
@@ -146,8 +149,8 @@ public class RailgunWeaponSO : WeaponBaseSO
             float along = Mathf.Clamp(Vector2.Dot((Vector2)hit.bounds.center - muzzle, direction), 0f, length);
             Vector2 hitPoint = muzzle + direction * along;
 
-            if (enemy.enemyShieldSystem == null) enemy.TakeDamage(info, hitPoint);
-            else enemy.enemyShieldSystem.TakeDamage(info, hitPoint);
+            if (WeaponTraitEffects.ApplyEnemyHit(enemy, info, hitPoint) && charged)
+                WeaponTraitEffects.RailFollowUp(controller, muzzle, enemy, enemy.transform.position, info);
             OnHitEnemy?.Invoke(controller, hitPoint);
             if (hitFeedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(hitFeedback, hitPoint);
             hits++;

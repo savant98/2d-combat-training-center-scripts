@@ -60,6 +60,8 @@ public class PlayerHealth : HealthBase
     private void ApplyDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition, bool grabbed)
     {
         float before = currentHP;
+        var traits = GetComponentInParent<PlayerController>()?.AbilityManager?.AttackAbility?.Traits;
+        if (traits != null) damageInfo.damage = traits.Absorb(damageInfo.damage, hitPosition);
         currentHP -= damageInfo.damage;
         applyingDamage = true;
         try
@@ -135,6 +137,7 @@ public class PlayerHealth : HealthBase
     public override void ResetHealth()
     {
         base.ResetHealth();
+        GetComponentInParent<PlayerController>()?.AbilityManager?.AttackAbility?.Traits?.Reset();
         UIManager.Instance.UpdateHP(maxHP, maxHP);
         IsInvincible = false;
         IsDead = false;

@@ -6,6 +6,8 @@ public class PlayerWeaponAbility : PlayerAbility
     public override PlayerActionType ActionType => PlayerActionType.Attack;
     public override bool IsActive => abilityState != AbilityState.None;
     public AbilityState AttackPhase => abilityState;
+    public PlayerWeaponTraits Traits { get; private set; }
+    public string ActiveArmamentId => GetEquippedArmament(currentSetIndex)?.armamentId;
     public bool IsMachineGunAttacking => IsNormalAttackRunning && selectedWeapon is MachineGunWeaponSO;
     public Vector2 PrimaryFireDirection { get; private set; } = Vector2.right;
     public bool IsStarShotActive => !isStoringSkill && IsActive && selectedWeapon == normalWeapon
@@ -160,6 +162,10 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         base.Initialize(manager);
 
+        Traits = new PlayerWeaponTraits(controller);
+        EnemyHealth.DamageApplied += OnEnemyDamageApplied;
+        EnemyShieldSystem.ShieldDamageApplied += OnEnemyDamageApplied;
+        if (controller.Health != null) controller.Health.OnDamageApplied += OnPlayerDamageApplied;
         weaponData = CreateRuntimeData((PlayerWeaponDataSO)data);
         maxSkillGauge = weaponData.maxSkillGauge;
         weaponSwapCoolTime = weaponData.swapCoolTime;
@@ -207,6 +213,7 @@ public class PlayerWeaponAbility : PlayerAbility
         }
         starAim = gameObject.AddComponent<PlayerStarShotAim>();
         starAim.Initialize(controller, this);
+        gameObject.AddComponent<PlayerWeaponTraitVisual>().Bind(controller, this, starAim);
         hammerArc = FindArc("HammerArc");
         swordArc = FindArc("SwordArc");
         swordArcOff = FindArc("SwordArcOff");
@@ -288,7 +295,8 @@ public class PlayerWeaponAbility : PlayerAbility
         secondaryWeaponBuffer.RegisterInput();
     }
     private bool CanRepeatPrimary => !suppressHeldPrimaryUntilRelease && gearState == GearState.Inactive && controller.CanReceiveInput
-        && InputManager.Held(Button.Attack) && (!IsActive || selectedWeapon == normalWeapon);
+        && InputManager.Held(Button.Attack) && normalWeapon is not IncendiaryRifleWeaponSO
+        && (!IsActive || selectedWeapon == normalWeapon);
     private void RepeatPrimaryInput()
     {
         // 유지 입력은 실제 선입력 버퍼에 남기지 않아 키를 놓으면 다음 자동 타격이 취소된다.
@@ -550,7 +558,7 @@ public class PlayerWeaponAbility : PlayerAbility
             return;
         }
 
-        if (!IsWeaponCooldownReady(normalWeapon))
+        if (!IsWeaponCooldownReady(normalWeapon) || !CanFirePrimary(normalWeapon))
             return;
 
         selectedWeapon = normalWeapon;
@@ -641,6 +649,7 @@ public class PlayerWeaponAbility : PlayerAbility
     public override void Tick()
     {
         if (modelReturnTime >= 0f && Time.time >= modelReturnTime - 0.0001f) FinishModelReturn();
+        Traits.Tick();
         TickPrimaryOverride();
         if (isStoringSkill) { TickSkillStorage(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
         RepeatPrimaryInput();
@@ -653,7 +662,10 @@ public class PlayerWeaponAbility : PlayerAbility
                 UpdateGearStageCooldownUI();
                 return;
             }
-            if (IsMachineGunAttacking && (InputManager.Released(Button.Attack) || ResolveNormalWeapon(currentSetIndex) != selectedWeapon))
+            bool mountEnded = IsNormalAttackRunning
+                && (selectedWeapon is IncendiaryRifleWeaponSO || selectedWeapon is MachineGunWeaponSO)
+                && ResolveNormalWeapon(currentSetIndex) != selectedWeapon;
+            if (mountEnded || (IsMachineGunAttacking && InputManager.Released(Button.Attack)))
             {
                 StopAllCoroutines();
                 if (starAim != null) starAim.Restore();
@@ -839,6 +851,7 @@ public class PlayerWeaponAbility : PlayerAbility
         // 바꾸기 전 세트의 기본 무기(교체 아이콘에 나가는 쪽으로 표시)
         WeaponBaseSO previousWeapon = firstInit ? null : normalWeapon;
 
+        if (setIndex != currentSetIndex && IsRifle(GetWeaponSet(currentSetIndex)?.normal)) Traits.StartReload();
         currentSetIndex = setIndex;
 
         var set = weaponData.weaponSets[currentSetIndex];
@@ -909,10 +922,66 @@ public class PlayerWeaponAbility : PlayerAbility
         hitHandlers.Clear();
         if (runtimeWeaponData != null) Destroy(runtimeWeaponData);
         runtimeWeaponData = null;
-        if (controller != null && controller.Health != null) controller.Health.OnPlayerDeath -= HandlePlayerDeath;
         ArmamentUnlocks.Changed -= RefreshUnlocks;
+        EnemyHealth.DamageApplied -= OnEnemyDamageApplied;
+        EnemyShieldSystem.ShieldDamageApplied -= OnEnemyDamageApplied;
+        if (controller != null && controller.Health != null)
+        {
+            controller.Health.OnPlayerDeath -= HandlePlayerDeath;
+            controller.Health.OnDamageApplied -= OnPlayerDamageApplied;
+        }
     }
-    private void HandlePlayerDeath() => EndPrimaryOverride();
+    private void HandlePlayerDeath()
+    {
+        EndPrimaryOverride();
+        Traits.Reset();
+    }
+
+    private void OnPlayerDamageApplied(WeaponBaseSO.DamageInfo info, float amount)
+    {
+        if (amount > 0f && Traits.Resolve > 0) Traits.ChangeResolve(-1);
+    }
+
+    private void OnEnemyDamageApplied(EnemyHealth enemy, WeaponBaseSO.DamageInfo info, float amount)
+    {
+        if (info.sourceOwner != controller || info.sourceWeapon == null || controller.Health == null || controller.Health.IsDead) return;
+        foreach (var armament in Armaments)
+        {
+            if (armament == null || armament.armamentId != "Hammer") continue;
+            var source = info.sourceWeapon;
+            if (source == armament.normal || source == armament.gearStage1
+                || source == armament.gearStage2 || source == armament.gearStage3)
+                Traits.AddBarrierCharge(amount);
+            break;
+        }
+    }
+
+    private static bool IsRifle(WeaponBaseSO weapon) =>
+        weapon is RangedWeaponSO && weapon.weaponName == "StarShot";
+
+    private bool CanFirePrimary(WeaponBaseSO weapon)
+    {
+        if (IsRifle(weapon)) return Traits.RifleAmmo > 0 && Traits.ReloadRemaining <= 0f;
+        if (weapon is IncendiaryRifleWeaponSO) return Traits.IncendiaryAmmo > 0;
+        return true;
+    }
+
+    public bool UsePrimaryRound(RangedWeaponSO weapon)
+    {
+        if (IsRifle(weapon)) return Traits.UseRifleRound();
+        if (weapon is IncendiaryRifleWeaponSO)
+            return primaryOverride == weapon && PrimaryOverrideRemaining > 0f && Traits.UseIncendiaryRound();
+        return true;
+    }
+
+    public bool IsWeaponTraitReady(WeaponBaseSO weapon)
+    {
+        if (weapon is SwordFinisherWeaponSO) return Traits.Resolve >= PlayerWeaponTraits.ResolveCapacity;
+        if (weapon is RailgunWeaponSO || weapon is RailgunChargeWeaponSO
+            || weapon is StarSpearWeaponSO || weapon is LaserWeaponSO)
+            return Traits.OverheatRemaining <= 0f;
+        return true;
+    }
     #endregion
 
     #region OnWeaponHit
@@ -1187,7 +1256,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
     private bool IsWeaponCooldownReady(WeaponBaseSO weapon)
     {
-        return GetWeaponCooldownRemaining(weapon) <= 0f;
+        return GetWeaponCooldownRemaining(weapon) <= 0f && IsWeaponTraitReady(weapon);
     }
 
     private void MarkWeaponUsed(WeaponBaseSO weapon)
@@ -1332,6 +1401,7 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void StartWindup()
     {
+        if (selectedWeapon is SwordFinisherWeaponSO) Traits.ChangeResolve(-PlayerWeaponTraits.ResolveCapacity);
         FinishModelReturn();
         attackRun++;
         bool machineGun = selectedWeapon == normalWeapon && selectedWeapon is MachineGunWeaponSO;
@@ -1704,6 +1774,7 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (!CanEquipArmament(setIndex, armament)) return false;
         if (GetEquippedArmament(setIndex) == armament) return true;
+        if (IsRifle(GetWeaponSet(setIndex)?.normal)) Traits.StartReload();
         EndPrimaryOverride(setIndex);   // 그 자리의 머신건 장착은 풀린다
         WriteArmament(weaponData.weaponSets[setIndex], armament);
         FilterLockedGear(setIndex);
@@ -1934,7 +2005,9 @@ public class PlayerWeaponAbility : PlayerAbility
     // 표시는 다른 자리를 들거나 총이 숨을 때도 꺼진다. 종료음은 표시 대신 실제 장착 시간의 만료에서만 낸다.
     private void TickPrimaryOverride()
     {
-        if (primaryOverride == null || Time.time < primaryOverrideEnd) return;
+        if (primaryOverride == null) return;
+        bool empty = primaryOverride is IncendiaryRifleWeaponSO && Traits.IncendiaryAmmo == 0;
+        if (!empty && Time.time < primaryOverrideEnd) return;
         FeedbackDataSO expiredFeedback = primaryOverrideExpirationFeedback;
         EndPrimaryOverride();   // 먼저 상태를 지워 다음 Tick과 종료 이벤트에서 중복 재생하지 않게 한다.
         if (expiredFeedback != null && feedbackPlayer != null) feedbackPlayer.Play(expiredFeedback, transform);

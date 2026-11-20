@@ -105,7 +105,7 @@ public abstract class UpgradeMenuPage : SelectableMenuUI
     }
 
     // OptionMenu.FindDirectionalIndex와 같은 계산: 진행 방향으로 1 이상 떨어진 후보 중 (전진 거리 + 옆 거리 × 3)이 가장 작은 버튼.
-    protected int FindDirectionalIndex(int from, Vector2 direction)
+    protected virtual int FindDirectionalIndex(int from, Vector2 direction)
     {
         if (buttons == null || from < 0 || from >= buttons.Length || buttons[from] == null) return -1;
         if (direction.sqrMagnitude < .01f) return -1;

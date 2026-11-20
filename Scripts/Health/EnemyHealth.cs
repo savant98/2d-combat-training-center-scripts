@@ -124,6 +124,7 @@ public class EnemyHealth : HealthBase
     {
         ApplyHealthData();
         base.ResetHealth();
+        GetComponent<EnemyBurn>()?.Clear();
 
         foreach (var sprite in hitSprites)
         {

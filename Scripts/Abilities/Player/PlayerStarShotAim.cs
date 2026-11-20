@@ -23,6 +23,8 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     private int nextMachineGunSound;
     private float scatterStreakStart, lastScatterShot = float.NegativeInfinity;   // 머신건 연사를 이어 온 시간(흩어짐이 커지는 정도)
     public Transform Muzzle => muzzle;
+    public bool IsModelVisible => gun != null && gun.gameObject.activeInHierarchy;
+    public Vector3 BarrelTip => gun != null ? gun.TransformPoint(tip) : transform.position;
     public Vector2 BarrelDirection => gun != null ? ((Vector2)gun.TransformVector(Vector3.right)).normalized : Vector2.right;
 
     public void Initialize(PlayerController player, PlayerWeaponAbility source)
@@ -69,6 +71,8 @@ public sealed class PlayerStarShotAim : MonoBehaviour
                 fire = machineGun.Scatter(shot.direction, Time.time - scatterStreakStart);
                 rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(fire.y, fire.x) * Mathf.Rad2Deg);
             }
+            if (!ability.UsePrimaryRound(shot.weapon)) continue;
+            owner.AddRecoil(shot.weapon.recoilPower, owner.Facing);
             var projectile = WorldEntityPool.Instance.Spawn(shot.weapon.projectilePrefab, muzzle.position, rotation);
             if (projectile is not StarShot star) continue;
             star.SetFireDirection(fire);
@@ -78,7 +82,15 @@ public sealed class PlayerStarShotAim : MonoBehaviour
             star.OnHitEnemy += (player, point) => weapon.OnHitEnemy?.Invoke(player, point);
             if (machineGun != null && machineGun.muzzleFlash != null && FeedbackPlayer.Instance != null)
                 FeedbackPlayer.Instance.Play(machineGun.muzzleFlash, muzzle);   // StarGunMuzzle 키와 같은 재생(총구 자리·회전 + 보정)
-            else if (receiver != null) receiver.PlayAnimationFeedback("StarGunMuzzle");
+            else if (weapon is IncendiaryRifleWeaponSO)
+                WeaponTraitFeedbackSO.Play(WeaponTraitCue.IncendiaryFire, muzzle.position, fire);
+            else
+            {
+                if (receiver != null) receiver.PlayAnimationFeedback("StarGunMuzzle");
+                if (weapon.weaponName == "StarShot")
+                    WeaponTraitFeedbackSO.Play(WeaponTraitCue.RifleRound, muzzle.position - (Vector3)fire * 0.48f,
+                        Vector2.Perpendicular(fire) * owner.Facing);
+            }
 
             var shotSounds = machineGun?.shotSounds;
             if (shotSounds != null && shotSounds.Length > 0)

@@ -44,6 +44,7 @@ public class StarSpear : ProjectileBase
     [SerializeField, Min(0.05f)] private float sparkSpacing = 0.9f;
     [SerializeField] private Vector2 sparkSpeed = new Vector2(2f, 6f);        // 불꽃이 옆으로 튀는 속도(칸/초) 범위
 
+    public bool RailCharged { get; set; }
     public SpearState State { get; private set; } = SpearState.Held;
     public DetonationCause LastCause { get; private set; }
     public Vector2 LastDetonationPoint { get; private set; }
@@ -107,6 +108,7 @@ public class StarSpear : ProjectileBase
         float speed, int count, LayerMask collideLayer)
     {
         base.Initialize(owner, damageInfo, speed, count, collideLayer);
+        RailCharged = false;
         enemyFilter = new ContactFilter2D();
         enemyFilter.SetLayerMask(1 << LayerMask.NameToLayer(ownerFaction == Faction.Player ? "Enemy" : "Player"));
         enemyFilter.useTriggers = true;
@@ -236,7 +238,7 @@ public class StarSpear : ProjectileBase
 
     protected override void HitTarget(HealthBase health, Vector2 hitPoint)
     {
-        Detonate(hitPoint, DetonationCause.Enemy);
+        Detonate(hitPoint, DetonationCause.Enemy, health as EnemyHealth);
     }
 
     protected override void OnHitSomething()
@@ -247,7 +249,7 @@ public class StarSpear : ProjectileBase
         Detonate(transform.position, DetonationCause.Wall);
     }
 
-    private void Detonate(Vector2 center, DetonationCause cause)
+    private void Detonate(Vector2 center, DetonationCause cause, EnemyHealth direct = null)
     {
         // 폭발은 소환 위치가 아니라 폭발 중심에서 바깥쪽으로 민다.
         damageInfo.knockbackOrigin = center;
@@ -259,6 +261,11 @@ public class StarSpear : ProjectileBase
         velocity = Vector2.zero;
         if (flying) RecordPath(center);   // 선·연기가 폭발 지점까지 닿게 한다
         damagedTargets.Clear();
+        if (direct != null)
+        {
+            damagedTargets.Add(direct);
+            DamageTarget(direct, center, RailCharged);
+        }
         if (motor != null && explosionRadius > 0f && damageInfo.damage > 0f)
         {
             RaycastMotor2D.InvalidateAttackQuerySync();
@@ -279,15 +286,16 @@ public class StarSpear : ProjectileBase
         ReturnToPool();
     }
 
-    private void DamageTarget(HealthBase health, Vector2 hitPoint)
+    private void DamageTarget(HealthBase health, Vector2 hitPoint, bool charged = false)
     {
         if (health.IsInvincible) return;
         if (owner != null && (health == owner.GetComponentInParent<HealthBase>() || health.transform.IsChildOf(owner.transform))) return;
         if (ownerFaction == Faction.Player && health is EnemyHealth enemy)
         {
             if (enemy.enemyShieldSystem != null && enemy.enemyShieldSystem.IsSpawnLocked) return;
-            if (enemy.enemyShieldSystem == null) enemy.TakeDamage(damageInfo, hitPoint);
-            else enemy.enemyShieldSystem.TakeDamage(damageInfo, hitPoint);
+            if (WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint) && charged)
+                WeaponTraitEffects.RailFollowUp(owner, (Vector2)owner.transform.position + Vector2.up * 0.65f,
+                    enemy, enemy.transform.position, damageInfo);
             OnHitEnemy?.Invoke(owner, hitPoint);
         }
         else if (ownerFaction == Faction.Enemy && health is PlayerHealth player)

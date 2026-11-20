@@ -171,8 +171,7 @@ public class HandCannonWeaponSO : WeaponBaseSO
             if (!InFan(hit, apex, axis, halfAngle, out Vector2 hitPoint)) continue;   // 이 Collider는 밖이어도 같은 대상의 다른 Collider는 볼 수 있다
             damagedTargets.Add(health);
 
-            if (enemy.enemyShieldSystem == null) enemy.TakeDamage(info, hitPoint);
-            else enemy.enemyShieldSystem.TakeDamage(info, hitPoint);
+            if (WeaponTraitEffects.ApplyEnemyHit(enemy, info, hitPoint)) EnemyBurn.Apply(enemy);
             OnHitEnemy?.Invoke(controller, hitPoint);
             if (hitFeedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(hitFeedback, hitPoint);
             hits++;

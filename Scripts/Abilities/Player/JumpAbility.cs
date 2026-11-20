@@ -8,6 +8,7 @@ public class JumpAbility : PlayerAbility
     private int maxJumpCount = 2;
     private float lowGravity = -15f;
     private float highGravity = -55f;
+    public float MaxJumpHeight => jumpForce * jumpForce / (2f * UnityEngine.Mathf.Max(0.01f, -lowGravity));
 
     // Feedbacks
     private FeedbackDataSO startJumpFeedback;

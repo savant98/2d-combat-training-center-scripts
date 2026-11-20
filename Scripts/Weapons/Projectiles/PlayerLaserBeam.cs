@@ -95,6 +95,9 @@ public class PlayerLaserBeam : WorldEntityBase
 
     private readonly Collider2D[] overlapResults = new Collider2D[64];
     private readonly HashSet<HealthBase> damagedTargets = new HashSet<HealthBase>();
+    private readonly HashSet<EnemyHealth> chargedTargets = new();
+    private bool railCharged;
+    private static readonly int ChargedId = Shader.PropertyToID("_Charged");
 
     private MaterialPropertyBlock block;
     private LaserWeaponSO weapon;
@@ -215,6 +218,8 @@ public class PlayerLaserBeam : WorldEntityBase
     {
         if (phase != Phase.Charge || weapon == null) return;
         ClearParticles(chargeMotes);
+        railCharged = WeaponTraitEffects.Attack(owner)?.Traits.IsRailCharged == true;
+        chargedTargets.Clear();
         phase = Phase.Fire;
         phaseAge = 0f;
         beamTime = 0f;
@@ -226,6 +231,7 @@ public class PlayerLaserBeam : WorldEntityBase
         owner.AddRecoil(weapon.recoilPower, owner.Facing);
         UpdateOrigin();
         UpdateBlock();
+        if (railCharged) WeaponTraitFeedbackSO.Play(WeaponTraitCue.RailCross, origin, direction);
         SetRenderers(false, true);
         if (reticle != null) reticle.gameObject.SetActive(false);
         if (muzzle != null) muzzle.gameObject.SetActive(true);
@@ -378,8 +384,16 @@ public class PlayerLaserBeam : WorldEntityBase
             float along = Mathf.Clamp(Vector2.Dot((Vector2)hit.bounds.center - origin, direction), 0f, reach);
             Vector2 hitPoint = origin + direction * along;
 
-            if (enemy.enemyShieldSystem == null) enemy.TakeDamage(damageInfo, hitPoint);
-            else enemy.enemyShieldSystem.TakeDamage(damageInfo, hitPoint);
+            bool hitApplied = WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint);
+            if (hitApplied && railCharged && chargedTargets.Add(enemy))
+            {
+                var followUp = damageInfo;
+                followUp.knockbackFacing = 0;
+                followUp.damage *= 0.65f;
+                WeaponTraitEffects.ApplyEnemyHit(enemy, followUp, hitPoint);
+                WeaponTraitEffects.ApplyEnemyHit(enemy, followUp, hitPoint);
+                WeaponTraitFeedbackSO.Play(WeaponTraitCue.RailEcho, hitPoint, direction, 0.85f);
+            }
             onHitEnemy?.Invoke(owner, hitPoint);
             if (hitFeedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(hitFeedback, hitPoint);
         }
@@ -558,6 +572,7 @@ public class PlayerLaserBeam : WorldEntityBase
         block.SetFloat(FlowId, beamTime);
         block.SetFloat(FlashId, flashValue);
         block.SetFloat(AlphaId, alpha);
+        block.SetFloat(ChargedId, railCharged ? 1f : 0f);
         beamBody.SetPropertyBlock(block);
     }
 

@@ -14,6 +14,7 @@ public sealed class PlayerRailgunAim : MonoBehaviour
     [SerializeField, Min(0f)] private float releaseDelay = 0.08f;    // 공격이 끝난 뒤 수평으로 되돌리기까지(초)
 
     private PlayerWeaponAbility ability;
+    private LineRenderer heatLine;
     private Quaternion restRotation = Quaternion.identity;
     private bool hasRest, aiming;
     private float idleSince = -1f;
@@ -56,19 +57,35 @@ public sealed class PlayerRailgunAim : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (!aiming) return;
         var attack = Ability;
-        if (attack == null || attack.AttackPhase == AbilityState.None)
+        if (aiming)
         {
-            if (idleSince < 0f) idleSince = Time.time;
-            if (Time.time - idleSince >= releaseDelay)
+            if (attack == null || attack.AttackPhase == AbilityState.None)
             {
-                Restore();
-                return;
+                if (idleSince < 0f) idleSince = Time.time;
+                if (Time.time - idleSince >= releaseDelay) Restore();
             }
+            else idleSince = -1f;
+            if (aiming) Apply();
         }
-        else idleSince = -1f;
-        Apply();
+        DrawHeat(attack?.Traits);
+    }
+
+    private void DrawHeat(PlayerWeaponTraits traits)
+    {
+        float heat = traits?.Heat ?? 0f;
+        if (heat <= 0f || Muzzle == null)
+        {
+            if (heatLine != null) heatLine.enabled = false;
+            return;
+        }
+        heatLine ??= WeaponTraitEffects.MakeLine("RailgunBarrelHeat", transform);
+        heatLine.enabled = true;
+        Vector3 axis = transform.TransformVector(Vector3.right).normalized;
+        Color color = Color.Lerp(new Color(0.54f, 0.15f, 0.05f), WeaponTraitEffects.HeatColor, heat);
+        if (traits.IsRailCharged) color = Color.Lerp(color, WeaponTraitEffects.RailColor, 0.55f);
+        WeaponTraitEffects.SetLine(heatLine, Muzzle.position - axis * (0.2f + heat * 0.75f),
+            Muzzle.position - axis * 0.08f, 0.07f + 0.07f * heat, color);
     }
 
     private void Apply()
