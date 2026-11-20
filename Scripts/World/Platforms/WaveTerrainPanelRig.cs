@@ -22,6 +22,18 @@ public sealed class WaveTerrainPanelRig : MonoBehaviour
     /// <summary>맞물림 섬광의 색. 일반 지형은 지형 선의 초록, 생성 외형·OneWay는 그 발판 발광의 주황 계열이다.</summary>
     public static readonly Color TerrainFlash = new Color(.55f, 1f, .62f, 1f);
     public static readonly Color GeneratedFlash = new Color(1f, .66f, .34f, 1f);
+    /// <summary>
+    /// 지형 선의 발광색(재질의 발광색 × 세기)에서 맞물림 섬광 색을 만든다. 스타일이 선 재질을 따로 정한 기본 지형에 쓴다.
+    /// 가장 밝은 성분을 1로 맞추고 흰색을 섞어, 위 두 상수와 비슷한 밝기·채도의 같은 색 계열이 되게 한다.
+    /// </summary>
+    public static Color FlashFrom(Color glow)
+    {
+        float peak = Mathf.Max(glow.r, Mathf.Max(glow.g, glow.b));
+        if (peak <= 0f) return TerrainFlash;
+        var color = Color.Lerp(new Color(glow.r / peak, glow.g / peak, glow.b / peak, 1f), Color.white, .45f);
+        color.a = 1f;
+        return color;
+    }
     private const float InnerBay = .68f;        // 수납구 깊은 면의 크기(바깥 테두리에 대한 비율)
     private const float SegmentLength = .27f;   // 팔 한 마디 길이(칸)
 

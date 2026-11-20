@@ -14,9 +14,7 @@ public class TrainingDefinitionSO : ScriptableObject
     public string trainingId;
     public string displayName;
 
-    [Header("Reward Settings")]
-    public int baseRewardGold = 100;
-
+    // 수료 보상(훈련 필증)과 훈련 메뉴의 순서는 정의가 아니라 훈련 목록(TrainingCatalogSO)이 정한다.
     [Header("Grade Rules")]
     public GradeRule[] rules;
 
@@ -33,17 +31,5 @@ public class TrainingDefinitionSO : ScriptableObject
             }
         }
         return Grade.Poor;
-    }
-
-    public int GetRewardGoldByGrade(Grade grade)
-    {
-        float multiplier = 1.0f;
-        switch (grade)
-        {
-            case Grade.Flawless: multiplier = 1.5f; break; // 최고 랭크 2배
-            case Grade.Excellent: multiplier = 1.2f; break;
-            default: multiplier = 1f; break;
-        }
-        return Mathf.RoundToInt(baseRewardGold * multiplier);
     }
 }

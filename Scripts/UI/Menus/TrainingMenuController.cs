@@ -1,5 +1,6 @@
 using DG.Tweening;
 using System;
+using System.Collections.Generic;
 using TMPro;
 using Unity.Cinemachine;
 using UnityEngine;
@@ -28,24 +29,16 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField] private TextMeshProUGUI listTitleText;
     [SerializeField] private TextMeshProUGUI listSummaryText;
     [SerializeField] private TextMeshProUGUI listCompletionText;
-    [SerializeField, TextArea] private string listDescription = "근거리·원거리 적과 방어막 목표를 상대합니다.";
-    [SerializeField, Min(0), Tooltip("목록에서 이 패널의 currentTraining으로 입장하는 항목의 순서입니다.")]
-    private int currentTrainingListIndex;
-    [SerializeField, Tooltip("목록 순서별 제목·설명과 진행 기록을 보여 줄 훈련입니다. 손목 단말기의 훈련 목표 순서와 맞춥니다.")]
-    private TrainingListEntry[] listEntries;
+    [SerializeField, Tooltip("훈련 목록의 원본입니다. 비우면 Resources/Training/TrainingCatalog를 씁니다.")]
+    private TrainingCatalogSO catalog;
 
-    // 목록별 훈련 기록과 입장 대상을 연결한다.
-    [System.Serializable]
-    private struct TrainingListEntry
-    {
-        public string title;
-        [TextArea] public string summary;
-        [Tooltip("진행 기록을 표시할 훈련입니다. 비우면 잠긴 훈련으로 표시합니다.")]
-        public TrainingDefinitionSO recordTraining;
-        public Room targetRoom;
-        public WaveDataSO waveData;
-        public Transform spawnPoint;
-    }
+    // 테스트 훈련(진행 순서에 들지 않는 항목)의 줄 앞에 번호 대신 붙이는 표시.
+    private const string TestRowMark = "TEST";
+
+    // 지금 목록 줄에 올라 있는 훈련. 줄의 순서가 이 목록의 순서다. 메뉴를 열 때마다 훈련 목록에서 다시 채운다.
+    private readonly List<TrainingCatalogSO.Entry> shownEntries = new List<TrainingCatalogSO.Entry>();
+    private readonly List<string> rowLabels = new List<string>();
+    private TrainingCatalogSO Catalog => catalog != null ? catalog : TrainingCatalogSO.Load();
 
     [Header("Training Menu Animation")]
     [SerializeField] private RectTransform listScroll;
@@ -56,9 +49,8 @@ public class TrainingMenuController : MonoBehaviour
 
     [SerializeField] private TextMeshProUGUI detailTitleText;
     [SerializeField] private TextMeshProUGUI detailDescriptionText;
-    public Room SelectedRoom { get; private set; }
+    // 목록에서 고른 훈련의 WaveData. 방과 도착 지점은 입구(RoomTrigger)가 정한다. 목록이 없는 패널에서는 null(방의 기본 데이터)이다.
     public WaveDataSO SelectedWaveData { get; private set; }
-    public Transform SelectedSpawnPoint { get; private set; }
     public event Action OnConfirmEnterRoom;
 
     private bool isOpen;
@@ -161,7 +153,11 @@ public class TrainingMenuController : MonoBehaviour
         animator.SetBool("Open", true);
         virtualCamera.Priority = 999;
         UIManager.Instance.HUDVisible(false);
-        if (HasList) ShowList();
+        if (HasList)
+        {
+            BuildList();
+            ShowList();
+        }
         else menu.Open();
 
         RefreshUI();
@@ -258,21 +254,13 @@ public class TrainingMenuController : MonoBehaviour
     private void HandleListSelect(int index)
     {
         if (isTransitioning) return;
-        bool registered = listEntries != null && index >= 0 && index < listEntries.Length
-            && listEntries[index].recordTraining != null && listEntries[index].targetRoom != null
-            && listEntries[index].spawnPoint != null;
-        if (!registered && (index != currentTrainingListIndex || currentTraining == null)) return;
-        if (registered)
-        {
-            var entry = listEntries[index];
-            currentTraining = entry.recordTraining;
-            SelectedRoom = entry.targetRoom;
-            SelectedWaveData = entry.waveData;
-            SelectedSpawnPoint = entry.spawnPoint;
-            if (detailTitleText != null) detailTitleText.text = entry.title;
-            if (detailDescriptionText != null) detailDescriptionText.text = entry.summary;
-        }
-        else { SelectedRoom = null; SelectedSpawnPoint = null; SelectedWaveData = null; }
+        // 줄에 올라 있는 훈련만 고를 수 있다(아직 열리지 않은 훈련은 줄이 없다).
+        var entry = EntryAt(index);
+        if (entry == null) return;
+        currentTraining = entry.definition;
+        SelectedWaveData = entry.waveData;
+        if (detailTitleText != null) detailTitleText.text = entry.Title;
+        if (detailDescriptionText != null) detailDescriptionText.text = entry.summary;
         RefreshUI();
         if (!HasPresentation)
         {
@@ -342,36 +330,60 @@ public class TrainingMenuController : MonoBehaviour
         if (!isTransitioning) Cleanup();
     }
 
+    // 훈련 목록에서 지금 보일 훈련을 줄에 채운다: 훈련 메뉴에 나오는 항목 가운데 열린 것만, 진행 순서대로.
+    // 아직 열리지 않은 훈련은 자리 표시 없이 줄 자체를 끈다(앞 훈련을 수료하면 다음에 열 때 나타난다).
+    private void BuildList()
+    {
+        TrainingCatalogSO source = Catalog;
+        shownEntries.Clear();
+        rowLabels.Clear();
+        if (source != null) source.CollectListed(DataManager.Instance, shownEntries);
+        if (shownEntries.Count > listMenu.RowCount)
+        {
+            Debug.LogWarning($"[{name}] 훈련 {shownEntries.Count}개 가운데 목록 줄 {listMenu.RowCount}개만 표시합니다. Prefab의 줄을 늘려야 합니다.", this);
+            shownEntries.RemoveRange(listMenu.RowCount, shownEntries.Count - listMenu.RowCount);
+        }
+        foreach (var entry in shownEntries)
+        {
+            // 번호는 진행 순서의 번호라서 테스트 훈련이 섞여도 바뀌지 않는다.
+            int number = source.ProgressionNumber(entry);
+            rowLabels.Add((number > 0 ? number.ToString("00") : TestRowMark) + "  " + entry.Title);
+        }
+        listMenu.SetRows(rowLabels);
+    }
+
+    private TrainingCatalogSO.Entry EntryAt(int index) => index >= 0 && index < shownEntries.Count ? shownEntries[index] : null;
+
     private void RefreshList(int index)
     {
-        bool hasEntry = listEntries != null && index >= 0 && index < listEntries.Length;
-        TrainingListEntry entry = hasEntry ? listEntries[index] : default;
-        string title = string.IsNullOrEmpty(entry.title) ? $"TRAINING {index + 1:00}" : entry.title;
-
-        if (index == currentTrainingListIndex && entry.recordTraining == null && currentTraining != null)
+        var entry = EntryAt(index);
+        if (entry == null)
         {
-            if (listTitleText != null) listTitleText.text = string.IsNullOrEmpty(entry.title) ? currentTraining.displayName : entry.title;
-            if (listSummaryText != null) listSummaryText.text = $"{listDescription}\n\nREWARD  {currentTraining.baseRewardGold} G";
-            if (listCompletionText != null) listCompletionText.text = IsCompleted(currentTraining) ? "COMPLETED" : "NOT CLEARED";
+            // 훈련 목록 에셋이 없거나 비어 있을 때만 여기에 온다(첫 훈련은 처음부터 열려 있다).
+            if (listTitleText != null) listTitleText.text = "TRAINING";
+            if (listSummaryText != null) listSummaryText.text = "지금 받을 수 있는 훈련이 없습니다.";
+            if (listCompletionText != null) listCompletionText.text = "";
             return;
         }
 
-        if (listTitleText != null) listTitleText.text = title;
-        if (entry.recordTraining != null)
-        {
-            if (listSummaryText != null) listSummaryText.text = $"{entry.summary}\n\nREWARD  {entry.recordTraining.baseRewardGold} G";
-            if (listCompletionText != null) listCompletionText.text = IsCompleted(entry.recordTraining) ? "COMPLETED" : "NOT CLEARED";
-            return;
-        }
-        if (listSummaryText != null) listSummaryText.text = string.IsNullOrEmpty(entry.summary) ? "준비 중인 훈련입니다." : entry.summary;
-        if (listCompletionText != null) listCompletionText.text = "LOCKED";
+        if (listTitleText != null) listTitleText.text = entry.Title;
+        if (listSummaryText != null) listSummaryText.text = entry.summary + CertificateLine(entry);
+        if (listCompletionText != null) listCompletionText.text = IsCompleted(entry.definition) ? "COMPLETED" : "NOT CLEARED";
     }
 
-    private static bool IsCompleted(TrainingDefinitionSO training)
+    // 요약 아래의 수료 보상 줄. 훈련 필증을 주는 훈련에서만, 아직 받지 않았으면 보상을, 받았으면 수령 완료를 적는다.
+    private static string CertificateLine(TrainingCatalogSO.Entry entry)
     {
-        TrainingRoomSaveData record = DataManager.Instance.GetTrainingRoomRecord(training.trainingId);
-        return record != null && record.bestHitCount != int.MaxValue && record.bestTimeSeconds != float.MaxValue;
+        if (!entry.grantsCertificate) return "";
+        string certificate = TrainingCatalogSO.CertificateName;
+        return DataManager.Instance.HasTrainingCertificate(entry.TrainingId)
+            ? $"\n\n{certificate} 수령 완료"
+            : $"\n\n수료 보상  {certificate} 1";
     }
+
+    // 수료 판정은 훈련 목록의 열림 판정과 같은 기준(DataManager.IsCleared)을 쓴다.
+    private static bool IsCompleted(TrainingDefinitionSO training) =>
+        DataManager.IsCleared(DataManager.Instance.GetTrainingRoomRecord(training.trainingId));
 
     private void Cleanup()
     {

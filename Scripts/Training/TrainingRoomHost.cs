@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Animations;
 
 // Scene에는 이 Host와 Room 하나만 남기고, WaveData가 선택한 모듈을 교체한다.
 [DisallowMultipleComponent]
@@ -23,6 +24,9 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
     public Transform entryPoint;
     public TrainingRoomContent Content { get; private set; }
     public WaveDataSO Data { get; private set; }
+    // 지금 방 내용을 만들 때 WaveData가 고른 방 배경(WaveDataSO.roomBackdrop). Tool에서 바꾼 뒤 같은 WaveData로 다시 들어오면 방 내용을 새로 만든다.
+    private GameObject contentBackdrop;
+    private const string BackdropName = "TrainingBackdrop";
 
     // ── 입장 로딩 ──
     // TrainingRoom에 들어올 때 한 번, Wave가 넘어갈 때 쓸 것(반복 배경 모듈, 지형 캐시, 적·장치 풀)을 미리 만들어 둔다.
@@ -143,7 +147,13 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
     public void Load(WaveDataSO data)
     {
         if (data == null) data = defaultData;
-        if (Content != null && Data == data)
+        // 기본 WaveData까지 비어 있으면(삭제·참조 끊김) 방을 만들 수 없다. 예외로 Room 초기화를 끊지 않고 알리기만 한다.
+        if (data == null)
+        {
+            Debug.LogError("[TrainingRoomHost] 불러올 WaveData가 없습니다(요청과 defaultData가 모두 비어 있음).", this);
+            return;
+        }
+        if (Content != null && Data == data && contentBackdrop == data.roomBackdrop)
         {
             // Tool에서 첫 Wave 좌표를 바꾼 뒤 같은 데이터로 다시 입장하는 경우도 갱신한다.
             entryPoint.localPosition = WaveRoomState.EntryPoint(data);
@@ -167,6 +177,8 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         Content = Instantiate(template, staging.transform);
         Content.name = "TrainingContent";
         Content.transform.localPosition = Vector3.zero;
+        contentBackdrop = data.roomBackdrop;
+        if (contentBackdrop != null) ReplaceBackdrop(Content.transform, contentBackdrop, staging.transform);
         foreach (var binding in bindings)
         {
             if (binding.template != template) continue;
@@ -199,5 +211,40 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         entryPoint.localPosition = WaveRoomState.EntryPoint(data);
         Content.transform.SetParent(transform, false);
         Destroy(staging);
+    }
+
+    // WaveData가 고른 배경 Prefab을 방 내용의 'TrainingBackdrop' 자리에 끼운다(부모·형제 순서·위치·이름을 물려받는다).
+    // 방 내용이 아직 꺼진 staging 안에 있을 때 바꾸므로, 뒤이어 붙는 반복 배경(WaveRoomBackdrop: 모듈·시차·화면 밖 정지·입장 로딩)과
+    // 원본 배경 표시(WaveRoomBackground), 이름으로 배경을 찾는 잡기 연출 캡처(GrabCinematicBackdropView)가 모두 새 배경을 원본으로 삼는다.
+    private static void ReplaceBackdrop(Transform content, GameObject prefab, Transform discard)
+    {
+        var old = content.Find(BackdropName);
+        if (old == null)
+        {
+            Debug.LogWarning($"Room 콘텐츠에 '{BackdropName}'이 없어 방 배경({prefab.name})을 바꾸지 못했습니다. Room 원본 배경을 그대로 씁니다.", prefab);
+            return;
+        }
+        if (!WaveRoomBackground.IsBackground(prefab))
+        {
+            Debug.LogError($"방 배경 Prefab({prefab.name})에는 카메라·Collider·Room·WaveManager를 포함할 수 없습니다. Room 원본 배경을 그대로 씁니다.", prefab);
+            return;
+        }
+        var fresh = Instantiate(prefab, content, false).transform;
+        fresh.name = BackdropName;
+        fresh.localPosition = old.localPosition;
+        fresh.SetSiblingIndex(old.GetSiblingIndex());
+        // Room 템플릿이 중첩 배경에서 지워 둔 편집용 시차 부품(제약·구동 스크립트·기준점)은 새 배경에 있어도 같이 지운다.
+        // 제약이 남아 있으면 WaveRoomBackdrop이 그 weight를 층의 시차 계수로 읽어 코드의 기본 계수와 달라진다.
+        // 바로 뒤(같은 프레임)에 읽히므로 즉시 지운다. 아직 한 번도 켜지지 않은 개체라 Awake·OnDestroy는 불리지 않는다.
+        foreach (var constraint in fresh.GetComponentsInChildren<PositionConstraint>(true)) DestroyImmediate(constraint);
+        var parallax = fresh.GetComponent<LobbyBackdropParallax>();
+        if (parallax != null) DestroyImmediate(parallax);
+        var anchor = fresh.Find("ParallaxAnchor");
+        if (anchor != null) DestroyImmediate(anchor.gameObject);
+        // 옛 배경은 이름을 바꿔 곧 없어질 staging으로 옮긴다. Destroy는 프레임 끝에 처리되므로 제자리에 두면 같은 프레임의 Find에 먼저 걸린다.
+        old.name = BackdropName + "_Replaced";
+        old.gameObject.SetActive(false);
+        old.SetParent(discard, false);
+        Destroy(old.gameObject);
     }
 }

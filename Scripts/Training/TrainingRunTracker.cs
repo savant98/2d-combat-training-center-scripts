@@ -269,13 +269,9 @@ public class TrainingRunTracker : MonoBehaviour
         lastTimeSeconds = timeSeconds;
         Grade grade = cleared ? training.Evaluate(hitCount, timeSeconds) : Grade.Poor;
 
-        int rewardGold = 0;
-
-        if (cleared)
-        {
-            rewardGold = training.GetRewardGoldByGrade(grade);
-            DataManager.Instance.AddGold(rewardGold);
-        }
+        // 훈련 필증: 이 훈련의 필증을 아직 받지 않은 수료(최초 수료)에만 1개. 지급 대상과 중복은 DataManager가 가린다.
+        // 아래의 기록 갱신보다 먼저 판정한다. 수료(cleared)는 곧 통과 이상이다(미흡은 HandleClear가 패배로 돌린다).
+        int awardedCertificates = cleared && DataManager.Instance.TryAwardTrainingCertificate(training.trainingId) ? 1 : 0;
 
         RunResult result = new RunResult()
         {
@@ -285,7 +281,7 @@ public class TrainingRunTracker : MonoBehaviour
             grade = grade,
             cleared = cleared,
             endedAtIso = DateTime.UtcNow.ToString("O"),
-            earnedGold = rewardGold
+            earnedCertificates = awardedCertificates
         };
 
         // 결과 저장 및 기록

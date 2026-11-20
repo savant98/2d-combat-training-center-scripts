@@ -53,6 +53,18 @@ public sealed class TrainingRoomLoadingPanel : MonoBehaviour
         return instance;
     }
 
+    /// <summary>
+    /// source의 로딩을 보여 주고 있는 표시를 바로 닫는다. 다른 연출이 로딩을 자기 화면 속에 묻을 때 쓴다(각개 전투 엘리베이터의 이동 연출).
+    /// 그 로딩을 보여 주고 있지 않으면 아무것도 하지 않는다. Scene을 검색하지 않는다. 닫았으면 true.
+    /// </summary>
+    public static bool Dismiss(ILoadingSource source)
+    {
+        if (instance == null || source == null || instance.source != source || !instance.gameObject.activeSelf) return false;
+        instance.source = null;
+        instance.gameObject.SetActive(false);
+        return true;
+    }
+
     private void Begin(ILoadingSource target)
     {
         source = target;

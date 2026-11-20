@@ -7,6 +7,8 @@ using UnityEngine.UI;
 /// 맨 아래 큰 원으로, 그 무장의 Gear 1~3단계 무기를 위로 쌓인 작은 원으로 보여 주고 원 사이를 세로선으로 잇는다.
 /// 무장 정보는 PlayerWeaponAbility의 장착 무장(GetEquippedArmament)에서 읽고, 무장이 없으면 그 자리의 무기 칸을 그대로 보여 준다.
 /// Gear 원은 그 무기를 해금했으면 단계 색으로 밝게, 해금 전이면 어둡게 보인다(해금 기록 키는 weaponName, 2026-11-18 2차).
+/// 2026-11-20 훈련 개편: 해금 판정은 훈련 필증 해금(ArmamentUnlocks)이고, 잠긴 Gear 원에는 잠금 부품과 '잠김 · 필증 n'을 보인다.
+/// Gear 원은 실행용 사본이 아니라 무장 SO의 값을 읽으므로 잠긴 기술도 원에 남아 상세 페이지에서 해금할 수 있다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class ArmamentTreeColumn : MonoBehaviour
@@ -71,9 +73,14 @@ public sealed class ArmamentTreeColumn : MonoBehaviour
             var node = GetNode(stage);
             if (node != null)
             {
-                // 단계 번호는 원 옆의 큰 'GEAR n' 표시가 보여 주므로 상태 줄에는 강화 상태만 둔다.
+                // 단계 번호는 원 옆의 큰 'GEAR n' 표시가 보여 주므로 상태 줄에는 해금 상태만 둔다(2026-11-20 훈련 개편: 사용 가능 / 잠김 · 필증 n).
                 if (weapon == null) node.ShowEmpty("없음", "비어 있음");
-                else node.Show(weapon.weaponSprite, weapon.DisplayName, UpgradeMenuPage.UpgradeSummary(weapon), UpgradeMenuPage.IsUnlocked(weapon));
+                else
+                {
+                    bool unlocked = UpgradeMenuPage.IsUnlocked(weapon);
+                    node.Show(weapon.weaponSprite, weapon.DisplayName, unlocked ? "사용 가능" : UpgradeMenuPage.LockedLabel(weapon), unlocked);
+                    node.SetLocked(!unlocked);
+                }
             }
             if (connectors != null && stage - 1 < connectors.Length && connectors[stage - 1] != null)
                 connectors[stage - 1].color = weapon != null ? linkColor : emptyLinkColor;

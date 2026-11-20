@@ -252,25 +252,30 @@ public abstract class UpgradeMenuPage : SelectableMenuUI
         return setIndex == 0 ? ArmamentCategory.Melee : ArmamentCategory.Ranged;
     }
 
-    // 업그레이드 기록 요약(해금 전 / 강화 n/2 / 강화 완료). 기록 키는 weaponName이다.
+    // 해금 상태 요약(2026-11-20 훈련 개편, 훈련 필증 해금): 기본 지급 / 해금 완료 / 무장과 함께 해금 / 잠김 · 필증 n / 사용 가능.
+    // 비용 0 시절의 옛 해금 기록(weaponRecords)은 보지 않는다. A·B 모듈 강화 줄은 숨겨 강화 상태도 표시하지 않는다.
     public static string UpgradeSummary(WeaponBaseSO weapon)
     {
         if (weapon == null || string.IsNullOrWhiteSpace(weapon.weaponName)) return string.Empty;
-        var data = DataManager.Instance;
-        if (data == null) return string.Empty;
-        string id = weapon.weaponName;
-        if (!data.IsWeaponUnlocked(id)) return "해금 전";
-        int count = (data.IsWeaponNodeUpgraded(id, false) ? 1 : 0) + (data.IsWeaponNodeUpgraded(id, true) ? 1 : 0);
-        return count >= 2 ? "강화 완료" : "강화 " + count + "/2";
+        switch (ArmamentUnlocks.SourceOf(weapon))
+        {
+            case UnlockSource.Default: return "기본 지급";
+            case UnlockSource.Purchased: return "해금 완료";
+            case UnlockSource.ViaArmament: return "무장과 함께 해금";
+            case UnlockSource.Locked: return LockedLabel(weapon);
+            default: return "사용 가능";
+        }
     }
 
-    // 업그레이드 기록에서 이 무기를 해금했는지(기록 키는 weaponName). Gear 원의 밝은/어두운 재질을 고를 때 쓴다.
-    public static bool IsUnlocked(WeaponBaseSO weapon)
+    // 잠긴 기술의 상태 글자. 이 기술을 바로 살 수 있으면 가격을 붙인다(무장에 묶인 기술은 '잠김'만).
+    public static string LockedLabel(WeaponBaseSO weapon)
     {
-        if (weapon == null || string.IsNullOrWhiteSpace(weapon.weaponName)) return false;
-        var data = DataManager.Instance;
-        return data != null && data.IsWeaponUnlocked(weapon.weaponName);
+        var entry = ArmamentUnlocks.PurchasableEntry(weapon);
+        return entry != null ? "잠김 · " + ArmamentUnlocks.PriceLabel(entry.price) : "잠김";
     }
+
+    // 이 기술을 지금 쓸 수 있는지(훈련 필증 해금 판정, ArmamentUnlocks). Gear 원의 밝은/어두운 재질을 고를 때 쓴다.
+    public static bool IsUnlocked(WeaponBaseSO weapon) => weapon != null && ArmamentUnlocks.IsWeaponUnlocked(weapon);
 
     // 여러 줄 글자에 예비 글꼴 글자(가운뎃점 등)가 섞이면 그 줄만 높이가 달라진다. 줄 높이를 글꼴 기본값으로 고정한다.
     public static string EvenLines(string text) => "<line-height=100%>" + (text ?? string.Empty);

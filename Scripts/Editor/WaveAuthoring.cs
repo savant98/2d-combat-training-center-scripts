@@ -116,21 +116,90 @@ public static class WaveAuthoring
             issues.Add(label + ": 소수 외곽은 원본 보존용입니다. 새 Room은 정수 칸을 권장합니다.");
     }
 
+    // ── 새 WaveData의 기본 방 ──
+    // 다른 WaveData를 복사하지 않고 직접 만든다. 외형에 쓰는 에셋은 공통 규칙(WaveRoomRules)과 아래 경로의 셀 Prefab·Tile에서 읽는다.
+    /// <summary>새 WaveData의 기본 실내: 26×17칸(x -4~21, y -3~13).</summary>
+    public static readonly RectInt BaseRoom = new RectInt(-4, -3, 26, 17);
+    /// <summary>기본 실내를 둘러싸는 외곽 지형의 두께(칸).</summary>
+    public const int BaseBorder = 3;
+    private const string PlatformCellPath = "Assets/Prefabs/Training/PlatformCell.prefab";
+    private const string OneWayCellPath = "Assets/Prefabs/Training/GeneratedOneWayPlatformCell.prefab";
+    private const string GeneratedCellPath = "Assets/Prefabs/Training/GeneratedPlatformCell.prefab";
+    private const string TerrainTilePath = "Assets/Art/Tiles/BtnItem01GreenP.asset";
+    private const string GeneratedTilePath = "Assets/Art/Tiles/GeneratedPlatformCollision.asset";
+
+    /// <summary>
+    /// 기본 방을 가진 새 WaveData를 path에 만든다: 26×17 실내 + 사방 3칸 외곽(스타일 0), 스타일 0 기본 지형·1 생성 발광, 생성 기준점 (0, 0), Wave 1개.
+    /// 이 에셋만 디스크에 쓴다(다른 더티 에셋은 저장하지 않는다). 기본 지형 에셋을 찾지 못하면 만들지 않고 예외를 던진다.
+    /// </summary>
     public static WaveDataSO Create(string path, TrainingRoomContent template)
     {
         var data = ScriptableObject.CreateInstance<WaveDataSO>();
         data.roomTemplate = template;
-        var basis = AssetDatabase.LoadAssetAtPath<WaveDataSO>("Assets/Data/Waves/ComprehensiveFundamentalsWave.asset");
-        if (basis != null && basis.cellMap.enabled)
-        {
-            data.cellMap = JsonUtility.FromJson<WaveCellMap>(JsonUtility.ToJson(basis.cellMap));
-            data.room = JsonUtility.FromJson<WaveRoomLayout>(JsonUtility.ToJson(basis.room));
-            data.playerStart = basis.playerStart;
-        }
+        try { data.cellMap = BaseCellMap(template); }
+        catch { UnityEngine.Object.DestroyImmediate(data); throw; }
+        data.room = new WaveRoomLayout { bounds = new Rect(BaseRoom.x, BaseRoom.y, BaseRoom.width, BaseRoom.height), spawnOffset = Vector2.zero };
         data.waves = new[] { new Wave { spawnObjects = Array.Empty<WaveSpawnInfo>() } };
         AssetDatabase.CreateAsset(data, path);
-        AssetDatabase.SaveAssets();
+        AssetDatabase.SaveAssetIfDirty(data);
         return data;
+    }
+    /// <summary>
+    /// 기본 방의 셀 맵을 새로 만든다(스타일 0 기본 지형, 1 생성 발광, 기본 Platform·OneWay 셀 Prefab, 외곽 칸).
+    /// 이미 있는 WaveData의 지형을 기본 방으로 되돌릴 때도 쓴다. template은 기본 Tile을 찾지 못했을 때의 대체용이다.
+    /// </summary>
+    public static WaveCellMap BaseCellMap(TrainingRoomContent template = null)
+    {
+        var rules = WaveRoomRulesSO.Default;
+        var platform = rules != null && rules.platformCell != null ? rules.platformCell : AssetDatabase.LoadAssetAtPath<WaveTerrainCellView>(PlatformCellPath);
+        var oneWay = rules != null && rules.oneWayCell != null ? rules.oneWayCell : AssetDatabase.LoadAssetAtPath<WaveTerrainCellView>(OneWayCellPath);
+        var generated = AssetDatabase.LoadAssetAtPath<WaveTerrainCellView>(GeneratedCellPath);
+        var tile = AssetDatabase.LoadAssetAtPath<UnityEngine.Tilemaps.TileBase>(TerrainTilePath);
+        if (tile == null && template != null) tile = template.terrainTile;
+        var generatedTile = generated != null && generated.collisionTile != null ? generated.collisionTile : AssetDatabase.LoadAssetAtPath<UnityEngine.Tilemaps.TileBase>(GeneratedTilePath);
+        var missing = new List<string>();
+        if (platform == null) missing.Add(PlatformCellPath);
+        if (oneWay == null) missing.Add(OneWayCellPath);
+        if (generated == null) missing.Add(GeneratedCellPath);
+        if (tile == null) missing.Add(TerrainTilePath);
+        if (generatedTile == null) missing.Add(GeneratedTilePath);
+        // 빠진 채로 만들면 셀 맵이 꺼지거나 지형이 보이지 않는 데이터가 조용히 생긴다.
+        if (missing.Count > 0) throw new InvalidOperationException("새 WaveData의 기본 지형 에셋을 찾지 못했습니다: " + string.Join(", ", missing));
+        return new WaveCellMap
+        {
+            enabled = true,
+            // 0번: 기본 지형. 그림은 Tile, 재질·정렬·Layer는 기본 Platform 셀 Prefab의 것(Sprite-Unlit, Platform Layer).
+            // 1번: 생성 발광 발판. 충돌 Tile·재질·정렬은 생성 발판 셀 Prefab의 것.
+            styles = new[] { BaseStyle(platform, tile, false), BaseStyle(generated, generatedTile, true) },
+            platformPrefab = platform,
+            oneWayPrefab = oneWay,
+            cells = BorderCells(BaseRoom, BaseBorder),
+            groups = Array.Empty<WaveCellGroup>(),
+        };
+    }
+    private static WaveCellStyle BaseStyle(WaveTerrainCellView cell, UnityEngine.Tilemaps.TileBase tile, bool generated)
+    {
+        var image = cell.image != null ? cell.image : cell.GetComponentInChildren<SpriteRenderer>(true);
+        return new WaveCellStyle
+        {
+            tile = tile,
+            material = image != null ? image.sharedMaterial : null,
+            sortingLayer = image != null ? image.sortingLayerID : 0,
+            sortingOrder = image != null ? image.sortingOrder : generated ? 1 : 0,
+            layer = cell.gameObject.layer,
+            generated = generated,
+            prefab = generated ? cell : null,
+        };
+    }
+    /// <summary>실내(interior)를 border칸 두께로 둘러싼 외곽 Platform 칸(스타일 0, 그룹 없음). 편집기가 저장하는 순서(아래에서 위, 왼쪽에서 오른쪽)다.</summary>
+    public static WaveMapCell[] BorderCells(RectInt interior, int border)
+    {
+        var cells = new List<WaveMapCell>();
+        for (int y = interior.yMin - border; y < interior.yMax + border; y++)
+            for (int x = interior.xMin - border; x < interior.xMax + border; x++)
+                if (x < interior.xMin || x >= interior.xMax || y < interior.yMin || y >= interior.yMax)
+                    cells.Add(new WaveMapCell { position = new Vector2Int(x, y), kind = WaveCellKind.Platform });
+        return cells.ToArray();
     }
     [MenuItem("Assets/Create/Game/WaveData")]
     private static void CreateCellWave()

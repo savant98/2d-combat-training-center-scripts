@@ -79,5 +79,5 @@ public struct RunResult
     public Grade grade;
     public bool cleared;
     public string endedAtIso;
-    public int earnedGold;
+    public int earnedCertificates;
 }

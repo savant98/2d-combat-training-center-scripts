@@ -53,6 +53,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
     private Vector3 origin;
     private Rect sourceBounds = new Rect(-4, -3, 26, 17);
     private Transform window;
+    // 통창을 숨긴 동안 Resize가 둘레 케이블을 맞추지 못했는지(다시 켜질 때 맞춘다).
+    private bool windowCablePending;
     private readonly List<Mesh> meshes = new();
     private readonly List<Vector3[]> vertices = new();
     private Camera view;
@@ -262,7 +264,22 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
             cable.positionCount = 4;
             cable.SetPositions(new[] { new Vector3(-bounds.width / 2, 0), new Vector3(bounds.width / 2, 0),
                 new Vector3(bounds.width / 2, bounds.height), new Vector3(-bounds.width / 2, bounds.height) });
+            windowCablePending = false;
         }
+        // 통창을 통째로 숨긴 동안(WaveDataSO.hideObservationWindow)에는 꺼진 케이블을 찾지 못한다. 위치와 Mesh는 위에서 이미 맞췄으므로
+        // 케이블만 다시 켜질 때(RefreshWindow) 맞추도록 표시해 둔다. 방 내용이 아직 켜지기 전(staging)의 호출은 숨기지 않았을 때도 케이블을 건드리지 않으므로 표시하지 않는다.
+        else if (!window.gameObject.activeSelf && window.parent != null && window.parent.gameObject.activeInHierarchy) windowCablePending = true;
+    }
+    /// <summary>숨겨 두었던 통창을 다시 켠 직후에 부른다. 숨긴 동안 건너뛴 둘레 케이블을 지금 공간에 맞춘다(건너뛴 적이 없으면 아무것도 하지 않는다).</summary>
+    public void RefreshWindow()
+    {
+        if (window == null || !windowCablePending || !hasBounds) return;
+        var cable = window.GetComponentInChildren<LineRenderer>();
+        if (cable == null) return;
+        cable.positionCount = 4;
+        cable.SetPositions(new[] { new Vector3(-currentBounds.width / 2, 0), new Vector3(currentBounds.width / 2, 0),
+            new Vector3(currentBounds.width / 2, currentBounds.height), new Vector3(-currentBounds.width / 2, currentBounds.height) });
+        windowCablePending = false;
     }
     // 지금 공간에 필요한데 아직 켜지 않은 반복 모듈을 켠다. 화면에 걸리는 것은 모두 바로 켜고, 그 밖의 것은 프레임마다 조금씩 켠다.
     // 입장 로딩이 미리 만들어 두지 못한 모듈(예상하지 못한 공간)은 여기서 만든다. 모듈 하나가 설비 전체의 복제라 화면 밖의 것은 한 프레임에 하나만 만든다.

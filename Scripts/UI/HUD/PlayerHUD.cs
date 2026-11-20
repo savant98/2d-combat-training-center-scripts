@@ -29,6 +29,11 @@ public class PlayerHUD : MonoBehaviour
 
         // 쿨다운 글자에 마지막으로 넣은 표시 키(0 = 아직 없음). 표시 문자열이 바뀔 때만 text를 다시 넣으려고 둔다.
         [System.NonSerialized] public int shownCooldownKey;
+
+        // 해금 전이라 비운 칸(Gear 기술) 또는 빈 보조 무기 칸(2026-11-20 훈련 개편). 잠금 표시는 실행 중에 만든다(MainScene을 고치지 않는다).
+        // 칸 GameObject는 끄지 않는다(기초 훈련의 강조 표시가 아이콘 GameObject의 활성 여부를 본다).
+        [System.NonSerialized] public bool locked;
+        [System.NonSerialized] public Image lockMark;
     }
 
     // 체력 깎인 양을 잠시 남겨 보여 주는 뒤쪽 값(셰이더 _Trail)과 그 줄어드는 Tween
@@ -125,6 +130,11 @@ public class PlayerHUD : MonoBehaviour
     [Tooltip("단계 색으로 그리는 기어 슬롯 톱니의 밝기(준비 완료 · 준비 전)")]
     [SerializeField] private float gearReadyIntensity = 1.7f;
     [SerializeField] private float gearPreparingIntensity = 0.45f;
+
+    [Header("Locked Slot")]
+    [Tooltip("잠긴 칸(해금 전 Gear 기술·빈 보조 무기) 가운데의 자물쇠 크기와 색. 자물쇠는 실행 중에 아이콘 옆에 만든다")]
+    [SerializeField] private float lockMarkSize = 30f;
+    [SerializeField] private Color lockMarkColor = new Color(1f, 1f, 1f, .8f);
 
     [Header("Weapon Swap Motion")]
     [SerializeField] private float weaponSwapSlotScale = -0.4f;
@@ -372,6 +382,11 @@ public class PlayerHUD : MonoBehaviour
         SetSlotWeapon(gearStage3Slot, weaponSet.gearStage3);
         SetSlotWeapon(secondarySlot, weaponSet.secondary);
 
+        SetSlotLocked(gearStage1Slot, weaponSet.IsSlotLocked(1));
+        SetSlotLocked(gearStage2Slot, weaponSet.IsSlotLocked(2));
+        SetSlotLocked(gearStage3Slot, weaponSet.IsSlotLocked(3));
+        SetSlotLocked(secondarySlot, weaponSet.IsSlotLocked(WeaponSet.SecondarySlot));
+
         UpdateWeaponSetImage(weaponSet, value);
         UpdateNormalSlotStatic();
 
@@ -583,7 +598,8 @@ public class PlayerHUD : MonoBehaviour
         slot.preparingMaterial.SetColor(EmissionColorID, stageColor);
         slot.preparingMaterial.SetFloat(IntensityID, gearPreparingIntensity);
 
-        slot.circle.material = slot.isReady ? slot.readyMaterial : slot.preparingMaterial;
+        if (!slot.locked)
+            slot.circle.material = slot.isReady ? slot.readyMaterial : slot.preparingMaterial;
     }
 
     private void DestroyGearSlotMaterials(WeaponHudSlot slot)
@@ -625,6 +641,106 @@ public class PlayerHUD : MonoBehaviour
 
             instanced.SetColor(EmissionColorID, GetSkillIconEmission(i, false));
         }
+    }
+
+    // 칸의 잠금 상태를 바꾼다(PlayerWeaponAbility의 실행용 사본이 남긴 WeaponSet 잠금 표시). 잠기면 아이콘 없는 회색 잠금 링 + 작은 자물쇠.
+    private void SetSlotLocked(WeaponHudSlot slot, bool locked)
+    {
+        if (slot == null)
+            return;
+
+        bool changed = slot.locked != locked;
+        slot.locked = locked;
+
+        if (locked)
+        {
+            EnsureLockMark(slot);
+            if (slot.circle != null)
+            {
+                slot.circle.rectTransform.DOKill();
+                slot.circle.rectTransform.localScale = Vector3.one;
+            }
+            ShowLockedSlot(slot);
+            return;
+        }
+
+        if (slot.lockMark != null)
+            slot.lockMark.enabled = false;
+
+        // 잠금 링 재질이 남지 않도록 준비 중 모습으로 한 번 맞춘다(다음 갱신에서 준비 상태가 다시 정해진다).
+        if (changed)
+        {
+            slot.isReady = false;
+            SetSlotVisual(slot, false, slot.weapon == null);
+        }
+    }
+
+    // 잠긴 칸의 모습: 아이콘을 끄고, 원은 회색 잠금 링 재질로 맞추고, 자물쇠를 켠다. 매 프레임 불리므로 바뀐 값만 넣는다.
+    private void ShowLockedSlot(WeaponHudSlot slot)
+    {
+        slot.isReady = false;
+
+        if (slot.circle != null)
+        {
+            Material material = LockedRingMaterial(slot);
+            if (material != null && slot.circle.material != material)
+                slot.circle.material = material;
+
+            if (slot.circle.rectTransform.localScale != Vector3.one)
+            {
+                slot.circle.rectTransform.DOKill();
+                slot.circle.rectTransform.localScale = Vector3.one;
+            }
+        }
+
+        if (slot.icon != null && slot.icon.enabled)
+            slot.icon.enabled = false;
+
+        if (slot.lockMark != null && !slot.lockMark.enabled)
+            slot.lockMark.enabled = true;
+    }
+
+    private Material LockedRingMaterial(WeaponHudSlot slot)
+    {
+        ArmamentUnlockCatalogSO catalog = ArmamentUnlockCatalogSO.Load();
+        if (catalog != null && catalog.lockedRingMaterial != null)
+            return catalog.lockedRingMaterial;
+
+        return slot.preparingMaterial != null ? slot.preparingMaterial : weaponPreparingMaterial;
+    }
+
+    // 자물쇠 그림을 아이콘 바로 다음 형제(쿨다운 표시 앞)로 한 번 만든다. 원의 형제라 칸 원과 함께 돌지 않는다.
+    private void EnsureLockMark(WeaponHudSlot slot)
+    {
+        if (slot.lockMark != null || slot.icon == null)
+            return;
+
+        ArmamentUnlockCatalogSO catalog = ArmamentUnlockCatalogSO.Load();
+        Sprite glyph = catalog != null ? catalog.lockGlyph : null;
+        if (glyph == null)
+            return;
+
+        Transform parent = slot.icon.transform.parent;
+        GameObject mark = new GameObject("LockMark", typeof(RectTransform), typeof(Image));
+        mark.layer = slot.icon.gameObject.layer;
+
+        RectTransform rect = (RectTransform)mark.transform;
+        rect.SetParent(parent, false);
+        rect.SetSiblingIndex(slot.icon.transform.GetSiblingIndex() + 1);
+        rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new Vector2(lockMarkSize, lockMarkSize);
+        RectTransform iconRect = slot.icon.rectTransform;
+        rect.localPosition = parent != null ? parent.InverseTransformPoint(iconRect.TransformPoint(iconRect.rect.center)) : iconRect.localPosition;
+        rect.localRotation = Quaternion.identity;
+        rect.localScale = Vector3.one;
+
+        Image image = mark.GetComponent<Image>();
+        image.sprite = glyph;
+        image.color = lockMarkColor;
+        image.raycastTarget = false;
+        image.preserveAspect = true;
+        image.enabled = false;
+        slot.lockMark = image;
     }
 
     private void SetSlotWeapon(WeaponHudSlot slot, WeaponBaseSO weapon)
@@ -684,6 +800,12 @@ public class PlayerHUD : MonoBehaviour
     {
         if (slot == null)
             return;
+
+        if (slot.locked)
+        {
+            ShowLockedSlot(slot);
+            return;
+        }
 
         if (slot.weapon == null && !slot.alwaysReady)
         {

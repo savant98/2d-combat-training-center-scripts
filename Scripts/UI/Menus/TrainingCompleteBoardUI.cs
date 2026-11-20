@@ -1,14 +1,15 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 // 훈련 결과 보드, 패배 화면, 클리어 패널(2026-11-10 리메이크). PlayerHUD 사이파이 판으로 짰다.
 // - 클리어 패널(TrainingClearPanelUI): UIManager.StartTrainingCompletePanelEffect가 PlayClearPanel을 부른다.
-// - 결과 보드(승리): 판이 가로선에서 세로로 열리고, 피격 횟수와 걸린 시간이 세어 올라가고, 골드가 옮겨지고,
+// - 결과 보드(승리): 판이 가로선에서 세로로 열리고, 피격 횟수와 걸린 시간이 세어 올라가고, 훈련 필증이 더해지고,
 //   오른쪽 조준경 고리 안에 등급이 도장처럼 찍힌다. 끝나면 "닫기" 안내가 켜지고 입력을 받는다(Jump, Attack으로 닫는다).
 // - 2쪽(사용자 요청 "내가 넣은 총 데미지, 받은 피해, 무장별 피해량(힐량)을 같이 표시. 우측의 성적은 내버려 두고 왼쪽 세부사항을 2페이지로"):
-//   왼쪽 영역만 1쪽(피격 횟수, 걸린 시간, 획득 골드)과 2쪽(가한 피해, 받은 피해, 회복량, 무장별 기록)으로 넘긴다. 상하(승리 화면은 좌우도)로 넘긴다.
+//   왼쪽 영역만 1쪽(피격 횟수, 걸린 시간, 훈련 필증)과 2쪽(가한 피해, 받은 피해, 회복량, 무장별 기록)으로 넘긴다. 상하(승리 화면은 좌우도)로 넘긴다.
 //   무장 줄에는 실제 피해와 함께 가한 피해 전체 대비 비율(%)과 비율 막대를 적는다(2026-11-11, 사용자 요청 "정산 화면에서 데미지를 %로 계산해서
 //   실제 데미지와 함께 보여줘. 이미 자율훈련장에서 그런 걸 쓰고 있어"). 계산과 표기는 자율 훈련장의 기여 비율과 같다.
 // - Wave 시간: 요약·전투 기록 다음 쪽에 이번 판의 완료/중단/미진행 Wave와 소요 시간을 표시한다.
@@ -26,7 +27,9 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     [SerializeField] private TextMeshProUGUI hitText;
     [SerializeField] private TextMeshProUGUI timeText;
     [SerializeField] private TextMeshProUGUI gradeText;
-    [SerializeField] private TextMeshProUGUI goldText;
+    // 3행(훈련 필증): 보유 수와 그 옆의 이번 판 결과 글자. Prefab의 옛 골드 줄 연결을 그대로 쓴다.
+    [FormerlySerializedAs("goldText")]
+    [SerializeField] private TextMeshProUGUI certificateText;
     [SerializeField] private TextMeshProUGUI earnedText;
     [SerializeField] private TextMeshProUGUI trainingNameText;
 
@@ -55,7 +58,10 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     [Header("Page 1 (요약)")]
     [SerializeField] private CanvasGroup page1Group;
     [SerializeField] private TextMeshProUGUI thirdRowLabel;
-    [SerializeField] private GameObject goldRoot;
+    [FormerlySerializedAs("goldRoot")]
+    [SerializeField] private GameObject certificateRoot;
+    [Tooltip("3행의 재화 아이콘. 비우면 certificateRoot 아래의 첫 Image를 쓴다")]
+    [SerializeField] private Image certificateIconImage;
     [SerializeField] private TextMeshProUGUI failReasonText;
 
     [Header("Page 2 (전투 기록)")]
@@ -98,7 +104,8 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     [SerializeField] private TrainingClearPanelUI clearPanel;
 
     [Header("Timing (실제 시간, 초)")]
-    [SerializeField] private float goldAnimationDuration = 0.5f;
+    [FormerlySerializedAs("goldAnimationDuration")]
+    [SerializeField] private float certificateAnimationDuration = 0.5f;
     [SerializeField] private float dimAlpha = 0.82f;
     [SerializeField] private float inputReleaseTime = 2.4f;
     [SerializeField] private float closeDuration = 0.32f;
@@ -107,8 +114,8 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     [SerializeField] private float defeatBoardSpeed = 1.35f;       // 패배: 보드 공개를 조금 빠르게
     [SerializeField] private float noRecordReleaseTime = 0.6f;     // 기록 없는 패배: 띠와 메뉴만
 
-    // 보드 공개 시간표(초): 판 0~0.32, 머리말 0.3, 행 0.45부터 0.28 간격, 골드 이체 1.4~, 등급 고리 1.35, 도장 1.9, 안내 inputReleaseTime
-    private const float RowStart = 0.45f, RowStep = 0.28f, GoldMove = 1.4f, RingIn = 1.35f, Stamp = 1.9f;
+    // 보드 공개 시간표(초): 판 0~0.32, 머리말 0.3, 행 0.45부터 0.28 간격, 필증 가산 1.4~, 등급 고리 1.35, 도장 1.9, 안내 inputReleaseTime
+    private const float RowStart = 0.45f, RowStep = 0.28f, CertificateMove = 1.4f, RingIn = 1.35f, Stamp = 1.9f;
 
     private BoardMode mode;
     private float revealTime = -1f;
@@ -118,8 +125,10 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     private int hits;
     private float seconds;
     private Grade grade;
-    private int startGold, targetGold, earnedGold;
-    private int shownHits = -1, shownSeconds = -1, shownGold = int.MinValue, shownEarned = int.MinValue;
+    private int startCertificates, targetCertificates, earnedCertificates;
+    // 보유 수 옆의 글자: 이번 판에 받았으면 "+1", 이미 받은 훈련이면 "수령 완료", 지급 대상이 아니면 "-"
+    private string certificateNote = "";
+    private int shownHits = -1, shownSeconds = -1, shownCertificates = int.MinValue;
     private int page, shownPage = -1;
     private float pageBlend;
     private Vector2[] rowBase = new Vector2[0];
@@ -313,10 +322,15 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
         seconds = result.timeSeconds;
         grade = result.grade;
 
-        // EndRun이 보상을 먼저 더했다. 지금 골드 - 보상에서 시작해 보상만큼 옮긴다.
-        targetGold = DataManager.Instance != null ? DataManager.Instance.CurrentGold : result.earnedGold;
-        earnedGold = Mathf.Max(0, result.earnedGold);
-        startGold = targetGold - earnedGold;
+        // EndRun이 필증을 먼저 더했다. 지금 보유 수 - 받은 수에서 시작해 받은 만큼 올린다.
+        DataManager data = DataManager.Instance;
+        targetCertificates = data != null ? data.TrainingCertificates : result.earnedCertificates;
+        earnedCertificates = Mathf.Max(0, result.earnedCertificates);
+        startCertificates = targetCertificates - earnedCertificates;
+        certificateNote = earnedCertificates > 0 ? "+" + earnedCertificates
+            : data != null && data.HasTrainingCertificate(result.trainingId) ? "<size=70%>수령 완료</size>"
+            : "-";
+        ApplyCertificateIcon();
 
         if (trainingNameText != null) trainingNameText.text = TrainingName(result.trainingId);
         if (gradeText != null)
@@ -327,7 +341,11 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
         Color ring = TrainingBoardStyle.GradeColor(grade);
         ring.a = 0.85f;
         if (gradeRingImage != null) gradeRingImage.color = ring;
-        if (earnedText != null) earnedText.gameObject.SetActive(earnedGold > 0);
+        if (earnedText != null)
+        {
+            earnedText.gameObject.SetActive(true);
+            earnedText.text = certificateNote;
+        }
     }
 
     // 모드에 따라 머리말, 3행, 아래 줄, 띠, 메뉴를 바꾼다.
@@ -346,8 +364,8 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
         headerStatusText.color = defeat ? (Color)TrainingBoardStyle.Warning : (Color)TrainingBoardStyle.Gold;
         headerAccent.color = defeat ? (Color)TrainingBoardStyle.Warning : (Color)TrainingBoardStyle.LineBright;
 
-        thirdRowLabel.text = defeat ? "실패 사유" : "획득 골드";
-        goldRoot.SetActive(!defeat);
+        thirdRowLabel.text = defeat ? "실패 사유" : TrainingCatalogSO.CertificateName;
+        certificateRoot.SetActive(!defeat);
         failReasonText.gameObject.SetActive(defeat);
         failReasonText.text = reasonLabel;
 
@@ -377,7 +395,7 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     private void StartReveal()
     {
         shownHits = shownSeconds = -1;
-        shownGold = shownEarned = int.MinValue;
+        shownCertificates = int.MinValue;
         revealTime = 0f;
         EvaluateReveal(0f);
     }
@@ -531,27 +549,23 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
             timeText.text = TrainingBoardStyle.FormatTime(shownTime, false);
         }
 
-        // 골드: 시작 골드에서 보상이 옮겨지며 총액이 오른다(+보상은 0까지 줄어든다). 패배 화면은 이 줄에 실패 사유를 적는다.
+        // 훈련 필증: 이번 판에 받았으면 보유 수가 받기 전 값에서 지금 값으로 오르고, 옆의 "+1"이 찍혔다가 흐려진다.
+        // 받지 않은 판은 보유 수와 상태 글자("수령 완료", 지급 대상이 아니면 "-")만 보인다. 패배 화면은 이 줄에 실패 사유를 적는다.
         if (mode == BoardMode.Victory)
         {
-            float move = earnedGold > 0 ? TrainingBoardMotion.Seg(t, GoldMove, GoldMove + goldAnimationDuration) : 1f;
-            int gold = Mathf.RoundToInt(Mathf.Lerp(startGold, targetGold, move));
-            int left = Mathf.RoundToInt(Mathf.Lerp(earnedGold, 0f, move));
-            if (gold != shownGold)
+            bool earned = earnedCertificates > 0;
+            float move = earned ? TrainingBoardMotion.Seg(t, CertificateMove, CertificateMove + certificateAnimationDuration) : 1f;
+            int held = Mathf.RoundToInt(Mathf.Lerp(startCertificates, targetCertificates, move));
+            if (held != shownCertificates)
             {
-                shownGold = gold;
-                goldText.text = $"x{gold}";
+                shownCertificates = held;
+                certificateText.text = $"x{held}";
             }
-            if (earnedText != null && earnedGold > 0)
+            if (earnedText != null)
             {
-                if (left != shownEarned)
-                {
-                    shownEarned = left;
-                    earnedText.text = $"+{left}";
-                }
-                float pop = TrainingBoardMotion.Seg(t, GoldMove - 0.2f, GoldMove - 0.05f);
-                Color e = TrainingBoardStyle.Gold;
-                e.a = pop * (move >= 1f ? 0.45f : 1f);
+                float pop = TrainingBoardMotion.Seg(t, CertificateMove - 0.2f, CertificateMove - 0.05f);
+                Color e = earned ? TrainingBoardStyle.Gold : TrainingBoardStyle.Line;
+                e.a = pop * (earned ? (move >= 1f ? 0.45f : 1f) : 0.7f);
                 earnedText.color = e;
                 earnedText.rectTransform.localScale = Vector3.one * Mathf.Lerp(1.5f, 1f, TrainingBoardMotion.OutBack(pop));
             }
@@ -659,6 +673,16 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
             c.a = Mathf.Min(c.a, 0.4f * fade);
             defeatEdgeGlows[i].color = c;
         }
+    }
+
+    // 3행의 재화 아이콘을 훈련 필증 아이콘으로 맞춘다(Prefab에는 옛 동전 그림이 남아 있을 수 있다).
+    // 아이콘이 정해지지 않았으면 원래 그림을 그대로 둔다.
+    private void ApplyCertificateIcon()
+    {
+        if (certificateIconImage == null && certificateRoot != null)
+            certificateIconImage = certificateRoot.GetComponentInChildren<Image>(true);
+        Sprite icon = TrainingCatalogSO.CertificateIcon;
+        if (certificateIconImage != null && icon != null) certificateIconImage.sprite = icon;
     }
 
     private static string TrainingName(string trainingId)

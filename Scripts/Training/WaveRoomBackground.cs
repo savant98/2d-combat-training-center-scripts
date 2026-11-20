@@ -9,6 +9,9 @@ public sealed class WaveRoomBackground : MonoBehaviour
 {
     private readonly Dictionary<Renderer, bool> originalRenderers = new();
     private readonly Dictionary<Renderer, bool> observationGlass = new();
+    // 통창 전체 숨김(WaveDataSO.hideObservationWindow)에 쓰는 통창 루트와 Room 원본의 켜짐 상태.
+    private GameObject observationWindow;
+    private bool observationWindowActive;
     private WaveDataSO data;
     private GameObject selectedPrefab;
     private GameObject instance;
@@ -42,9 +45,13 @@ public sealed class WaveRoomBackground : MonoBehaviour
                 foreach (var renderer in child.GetComponentsInChildren<Renderer>(true)) originalRenderers[renderer] = renderer.enabled;
         var window = transform.Find("Furniture/TrainingObservationWindow");
         if (window != null)
+        {
+            observationWindow = window.gameObject;
+            observationWindowActive = observationWindow.activeSelf;
             foreach (var renderer in window.GetComponentsInChildren<Renderer>(true))
                 if (renderer.name == "LobbyWindow_Glass" || renderer.name == "LobbyWindow_Reflections")
                     observationGlass[renderer] = renderer.enabled;
+        }
         SetRoomBounds(data.room.bounds);
         ApplyWave(0);
     }
@@ -55,6 +62,17 @@ public sealed class WaveRoomBackground : MonoBehaviour
         // 유리·반사만 선택적으로 숨긴다. 프레임·케이블과 통창의 공간 크기는 그대로 유지한다.
         foreach (var row in observationGlass)
             if (row.Key != null) row.Key.enabled = data.ShowObservationGlassAt(index) && row.Value;
+        // 통창 전체 숨김: 프레임·테두리 빛·케이블까지 통째로 끈다(개체를 꺼서 케이블 흐름 같은 갱신도 돌지 않는다).
+        // 통창의 위치·크기는 WaveRoomBackdrop이 꺼진 동안에도 맞춰 두고, 그동안 건너뛴 둘레 케이블은 다시 켤 때 맞춘다.
+        if (observationWindow != null)
+        {
+            bool show = observationWindowActive && !data.hideObservationWindow;
+            if (observationWindow.activeSelf != show)
+            {
+                observationWindow.SetActive(show);
+                if (show) GetComponent<WaveRoomBackdrop>()?.RefreshWindow();
+            }
+        }
     }
     public void Apply(GameObject prefab) => Apply(prefab, false);
     public void Apply(GameObject prefab, bool fit)

@@ -62,7 +62,8 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
         titleText.text = "업그레이드 구매 확인";
         messageText.text = purchaseName + "\n구매하시겠습니까?";
         messageText.color = Color.white;
-        priceText.text = "구매 가격  " + price.ToString("N0") + " G";
+        priceText.text = "구매 가격  " + TrainingCatalogSO.CertificateName + " " + price.ToString("N0") + "개";
+        ApplyCertificateIcon();
         priceText.gameObject.SetActive(true);
         SetAccents(normalTint);
         ShowVisual();
@@ -103,6 +104,15 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
         buttons = warning ? new[] { confirmButton } : new[] { cancelButton, confirmButton };
         images = warning ? new[] { confirmHighlight } : new[] { cancelHighlight, confirmHighlight };
         texts = warning ? new[] { confirmLabel } : new[] { cancelLabel, confirmLabel };
+    }
+
+    // 가격 줄의 재화 아이콘(Prefab의 CurrencyIcon, 옛 재화 그림)을 훈련 필증 아이콘으로 바꿔 끼운다.
+    // 아이콘이 정해지지 않았으면 원래 그림을 그대로 둔다.
+    private void ApplyCertificateIcon()
+    {
+        Sprite icon = TrainingCatalogSO.CertificateIcon;
+        Transform slot = icon != null ? priceText.transform.Find("CurrencyIcon") : null;
+        if (slot != null && slot.TryGetComponent(out UnityEngine.UI.Image image)) image.sprite = icon;
     }
 
     private void SetAccents(Color color)

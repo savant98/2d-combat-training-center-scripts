@@ -162,7 +162,8 @@ public static class WavePrefabVisuals
     {
         // 스타일 전용 Prefab(시범 발판 등)이 자기 그림을 쓰면 실행 화면과 같게 그 그림을 그린다.
         var own = map.styles.Length > 0 ? map.styles[Mathf.Clamp(cell.style,0,map.styles.Length-1)].prefab : null;
-        var source = own != null && own.kind == cell.kind ? own : cell.kind == WaveCellKind.OneWayPlatform ? map.oneWayPrefab : null;
+        // 전용 Prefab이 없는 칸은 실행 화면처럼 맵 기본 Prefab이 그린다. 자기 그림을 쓰지 않는 기본 Platform Prefab은 아래에서 스타일의 Tile로 그린다.
+        var source = own != null && own.kind == cell.kind ? own : cell.kind == WaveCellKind.OneWayPlatform ? map.oneWayPrefab : map.platformPrefab;
         if (source != null && source.ownVisual && DrawOwnVisual(rect, source, mask)) return;
         if (cell.kind == WaveCellKind.OneWayPlatform)
         {

@@ -36,7 +36,7 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
     private readonly List<ArmamentTreeColumn> targetColumns = new List<ArmamentTreeColumn>();
     private readonly List<int> targetStages = new List<int>();
     private Action closeMenu;
-    private Action refreshGold;
+    private Action refreshCurrency;
     private PlayerWeaponAbility observed;
     private Sequence noticeSequence;
     private bool initialized;
@@ -90,13 +90,13 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
     #region UpgradeMenu Entry
     /// <summary>
     /// UpgradeMenu.OpenMenu가 자기 Open 뒤에 부른다. 이 페이지를 입력 스택 맨 위에 올린다. 열 수 없으면 false(UpgradeMenu가 메뉴를 닫는다).
-    /// closeMenu: 이 페이지에서 X로 메뉴를 닫을 때, refreshGold: 재화 표시 갱신.
+    /// closeMenu: 이 페이지에서 X로 메뉴를 닫을 때, refreshCurrency: 재화(훈련 필증) 표시 갱신.
     /// </summary>
-    public bool OpenFromMenu(Action onCloseMenu, Action onRefreshGold)
+    public bool OpenFromMenu(Action onCloseMenu, Action onRefreshCurrency)
     {
         if (!initialized || !isActiveAndEnabled || UIManager.Instance == null) return false;
         closeMenu = onCloseMenu;
-        refreshGold = onRefreshGold;
+        refreshCurrency = onRefreshCurrency;
         CloseChildren();
         HideNotice();
         var ability = FindWeaponAbility();
@@ -125,13 +125,13 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
     {
         if (!IsActive) return;
         Refresh();
-        refreshGold?.Invoke();
+        refreshCurrency?.Invoke();
         ShowPage();
         FocusSilently(focusIndex);
     }
 
     // 상세 페이지에서 구매한 뒤 보드 위의 재화 표시를 맞춘다.
-    public void RefreshGold() => refreshGold?.Invoke();
+    public void RefreshCurrency() => refreshCurrency?.Invoke();
     #endregion
 
     private void HandleSelected(int index)
@@ -198,10 +198,16 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
         var ability = FindWeaponAbility();
         foreach (var column in columns)
             if (column != null) column.Refresh(ability);
+        var catalog = ArmamentUnlockCatalogSO.Load();
         for (int i = 0; i < secondaryNodes.Length && i < columns.Length; i++)
         {
+            if (secondaryNodes[i] == null || columns[i] == null) continue;
             var weapon = ability != null ? ability.GetWeaponSet(columns[i].SetIndex)?.secondary : null;
-            if (secondaryNodes[i] != null && weapon != null) secondaryNodes[i].Show(weapon.weaponSprite, weapon.DisplayName, "보조 무기 · Z 교체", true);
+            // 빈 보조 무기 칸(해금 전, 2026-11-20 훈련 개편)도 그 상태를 그린다. 고르면 교체 페이지에서 해금·장착한다.
+            // HUD와 같은 모습(회색 잠금 링 + 작은 자물쇠)으로 그린다(독립 검토: 원래 노드 재질은 dim = lit = HudSlotNormal이라 밝은 링 그대로였다).
+            if (weapon != null) secondaryNodes[i].Show(weapon.weaponSprite, weapon.DisplayName, "보조 무기 · Z 교체", true);
+            else secondaryNodes[i].ShowLockedEmpty("비어 있음", "보조 무기 · Z 교체",
+                catalog != null ? catalog.lockedRingMaterial : null, catalog != null ? catalog.lockGlyph : null);
         }
     }
 

@@ -395,7 +395,7 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
             tag = "CONTINUE";
             title = "훈련 진행 중";
             detail = "마지막 접속 " + Date(summary.lastPlayedLocal) + "   ·   플레이 " + PlayTime(summary.playTimeSeconds)
-                + "   ·   " + summary.gold.ToString("N0", CultureInfo.InvariantCulture) + " G";
+                + "   ·   필증 " + summary.certificates.ToString("N0", CultureInfo.InvariantCulture);
             accent = TrainingBoardStyle.Line;
         }
         if (view.tag != null) { view.tag.text = tag; view.tag.color = accent; }

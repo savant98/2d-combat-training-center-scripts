@@ -101,6 +101,8 @@ public class PlayerWeaponAbility : PlayerAbility
     private PlayerWeaponDataSO runtimeWeaponData;
     // 자리(weaponSets 번호)마다 장착한 무장. 무장을 정하지 않은 자리는 null이고 무기 칸을 그대로 쓴다.
     private PlayerArmamentSO[] equippedArmaments = new PlayerArmamentSO[0];
+    // 에셋(Player_Weapon_Data)의 자리별 기본 보조 무기. 실행용 사본의 secondary는 장착·잠금으로 바뀌므로 원래 값을 따로 둔다(2026-11-20 훈련 개편).
+    private WeaponBaseSO[] defaultSecondaries = new WeaponBaseSO[0];
 
     // 기본 공격 자리를 잠시 다른 무기로 바꾼 상태(Rifle Gear 3단계 '머신건 장착', 2026-11-18). 그 자리를 든 동안만 기본 공격이 바뀌고 시간이 지나면 돌아온다.
     private WeaponBaseSO primaryOverride;
@@ -212,13 +214,12 @@ public class PlayerWeaponAbility : PlayerAbility
         hammerAttackRig = attackRig != null ? attackRig.gameObject : null;
         var attackBlade = attackRig != null ? attackRig.Find("Hammer") : null;
         hammerAttackBlade = attackBlade != null ? attackBlade.GetComponent<SpriteRenderer>() : null;
+        // 시작 능력 제한(2026-11-20 훈련 개편): 해금하지 않은 무장·Gear 기술·보조 무기는 실행용 사본에서 비운다(ArmamentUnlocks).
+        CaptureDefaultSecondaries();
         LoadEquippedArmaments();
-        if (weaponData.secondaryWeapons != null)
-            for (int slot = 0; slot < WeaponSetCount; slot++)
-                foreach (var candidate in weaponData.secondaryWeapons)
-                    if (candidate != null && DataManager.Instance != null
-                        && candidate.weaponName == DataManager.Instance.GetEquippedSecondaryWeapon(slot))
-                        weaponData.weaponSets[slot].secondary = candidate;
+        ResolveSecondaryWeapons();
+        ArmamentUnlocks.Changed -= RefreshUnlocks;
+        ArmamentUnlocks.Changed += RefreshUnlocks;
         ApplyWeaponSet(0, true);
 
         selectedWeapon = normalWeapon;
@@ -909,6 +910,7 @@ public class PlayerWeaponAbility : PlayerAbility
         if (runtimeWeaponData != null) Destroy(runtimeWeaponData);
         runtimeWeaponData = null;
         if (controller != null && controller.Health != null) controller.Health.OnPlayerDeath -= HandlePlayerDeath;
+        ArmamentUnlocks.Changed -= RefreshUnlocks;
     }
     private void HandlePlayerDeath() => EndPrimaryOverride();
     #endregion
@@ -1658,16 +1660,19 @@ public class PlayerWeaponAbility : PlayerAbility
     // 무장(PlayerArmamentSO) = 기본 무기 + Gear 1~3단계 무기 묶음. 자리(weaponSets[n], 0 = 근접, 1 = 원거리)마다 같은 분류의 무장을 하나씩 장착한다.
     // 보조 무기와 교체 색은 자리에 남는다. 장착 상태는 세이브(DataManager.equippedArmaments)에 남고 Initialize에서 다시 적용한다.
     // 업그레이드 메뉴는 아래 읽기 전용 값과 ArmamentChanged를 보고 그리고, 교체는 TryEquipArmament로 요청한다.
+    // 해금(2026-11-20 훈련 개편): 훈련 필증으로 해금하지 않은 무장은 장착할 수 없고, 잠긴 Gear 기술·보조 무기 칸은 실행용 사본에서 비운다(ArmamentUnlocks).
+    // 비운 칸에는 잠금 표시(WeaponSet.lockedSlots)를 남겨 HUD가 자물쇠를 띄운다. 입력·저장 기술·HUD·Gear 게이지는 기존의 빈 칸 처리를 그대로 쓴다.
 
     public IReadOnlyList<WeaponBaseSO> SecondaryWeapons => weaponData.secondaryWeapons ?? System.Array.Empty<WeaponBaseSO>();
     public bool TryEquipSecondaryWeapon(int setIndex, WeaponBaseSO weapon)
     {
         var set = GetWeaponSet(setIndex);
-        if (set == null || weapon == null || IsActive || isStoringSkill) return false;
+        if (set == null || weapon == null || IsActive || isStoringSkill || !ArmamentUnlocks.IsWeaponUnlocked(weapon)) return false;
         bool available = false;
         foreach (var candidate in SecondaryWeapons) if (candidate == weapon) available = true;
         if (!available) return false;
         set.secondary = weapon;
+        set.SetSlotLocked(WeaponSet.SecondarySlot, false);
         BindWeaponEvent(weapon);
         if (DataManager.Instance != null) DataManager.Instance.SetEquippedSecondaryWeapon(setIndex, weapon.weaponName);
         if (setIndex == currentSetIndex) ApplyWeaponSet(setIndex, true);
@@ -1686,12 +1691,12 @@ public class PlayerWeaponAbility : PlayerAbility
     /// <summary>자리의 무장이 바뀌었다(자리 번호).</summary>
     public event System.Action<int> ArmamentChanged;
 
-    /// <summary>그 자리에 이 무장을 장착할 수 있는가. 분류가 같아야 하고, 공격·기술 저장 중에는 바꾸지 않는다.</summary>
+    /// <summary>그 자리에 이 무장을 장착할 수 있는가. 분류가 같아야 하고, 훈련 필증으로 해금한 무장이어야 하며, 공격·기술 저장 중에는 바꾸지 않는다.</summary>
     public bool CanEquipArmament(int setIndex, PlayerArmamentSO armament)
     {
         WeaponSet set = GetWeaponSet(setIndex);
         return set != null && armament != null && armament.category == set.armamentCategory && armament.normal != null
-            && !IsActive && !isStoringSkill;
+            && !IsActive && !isStoringSkill && ArmamentUnlocks.IsArmamentUnlocked(armament);
     }
 
     /// <summary>그 자리에 무장을 장착하고 세이브에 남긴다. 지금 든 자리면 모형·HUD를 바로 맞춘다(교체 연출 없이).</summary>
@@ -1701,6 +1706,7 @@ public class PlayerWeaponAbility : PlayerAbility
         if (GetEquippedArmament(setIndex) == armament) return true;
         EndPrimaryOverride(setIndex);   // 그 자리의 머신건 장착은 풀린다
         WriteArmament(weaponData.weaponSets[setIndex], armament);
+        FilterLockedGear(setIndex);
         equippedArmaments[setIndex] = armament;
         if (DataManager.Instance != null) DataManager.Instance.SetEquippedArmament(setIndex, armament.armamentId);
         if (setIndex == currentSetIndex) ApplyWeaponSet(setIndex, true);
@@ -1719,7 +1725,8 @@ public class PlayerWeaponAbility : PlayerAbility
         return runtimeWeaponData;
     }
 
-    // 세이브에 남은 장착 무장을 자리마다 적용한다. 기록이 없거나 분류가 다르면 그 자리의 기본 무장을 쓴다.
+    // 세이브에 남은 장착 무장을 자리마다 적용한다. 기록이 없거나 분류가 다르거나 아직 해금하지 않은 무장이면 그 자리의 기본 무장을 쓴다.
+    // 잠긴 무장을 든 옛 기록은 기본 무장으로 바꿔 저장한다(나중에 해금했을 때 저절로 장착되지 않게). 해금하지 않은 Gear 기술은 비운다.
     private void LoadEquippedArmaments()
     {
         int count = WeaponSetCount;
@@ -1730,9 +1737,17 @@ public class PlayerWeaponAbility : PlayerAbility
             WeaponSet set = weaponData.weaponSets[i];
             if (set == null) continue;
             PlayerArmamentSO armament = weaponData.FindArmament(save != null ? save.GetEquippedArmament(i) : null);
-            if (armament == null || armament.category != set.armamentCategory || armament.normal == null) armament = set.defaultArmament;
-            if (armament == null) continue;   // 무장을 정하지 않은 자리는 무기 칸을 그대로 쓴다
+            bool lockedRecord = armament != null && !ArmamentUnlocks.IsArmamentUnlocked(armament);
+            if (armament == null || armament.category != set.armamentCategory || armament.normal == null || lockedRecord) armament = set.defaultArmament;
+            if (lockedRecord && save != null && armament != null) save.SetEquippedArmament(i, armament.armamentId);
+            if (armament == null)
+            {
+                // 무장을 정하지 않은 자리는 무기 칸을 그대로 쓴다(잠긴 Gear 기술만 비운다)
+                FilterLockedGear(i);
+                continue;
+            }
             WriteArmament(set, armament);
+            FilterLockedGear(i);
             equippedArmaments[i] = armament;
         }
     }
@@ -1743,6 +1758,145 @@ public class PlayerWeaponAbility : PlayerAbility
         set.gearStage1 = armament.gearStage1;
         set.gearStage2 = armament.gearStage2;
         set.gearStage3 = armament.gearStage3;
+    }
+
+    // 해금하지 않은 Gear 기술 칸을 비우고 잠금 표시를 남긴다(HUD가 자물쇠를 띄운다). 기본 공격 칸(normal)은 건드리지 않는다.
+    // 원래 비어 있는 단계(Rifle·Sword Gear 2, Railgun Gear 1)는 잠금 표시 없이 빈 칸으로 둔다. 무장 값을 다시 쓴 직후에 부른다.
+    // Gear 충전은 빈 단계도 순서대로 지나가므로(Hammer Gear 1이 잠겨도 Gear 2까지 충전된다) 충전 규칙은 바꾸지 않는다.
+    private void FilterLockedGear(int setIndex)
+    {
+        WeaponSet set = GetWeaponSet(setIndex);
+        if (set == null) return;
+        for (int stage = 1; stage <= 3; stage++)
+        {
+            WeaponBaseSO weapon = set.GetGearWeapon(stage);
+            bool locked = weapon != null && !ArmamentUnlocks.IsWeaponUnlocked(weapon);
+            if (locked) set.SetGearWeapon(stage, null);
+            set.SetSlotLocked(stage, locked);
+        }
+    }
+
+    // 무장을 정하지 않은 자리: Gear 칸을 에셋 값으로 되돌린다(잠금으로 비웠던 칸을 다시 거르기 전에 채운다).
+    private void CopySourceGear(int setIndex)
+    {
+        var source = data as PlayerWeaponDataSO;
+        WeaponSet set = GetWeaponSet(setIndex);
+        WeaponSet from = source != null && source.weaponSets != null && setIndex < source.weaponSets.Length ? source.weaponSets[setIndex] : null;
+        if (set == null || from == null) return;
+        for (int stage = 1; stage <= 3; stage++) set.SetGearWeapon(stage, from.GetGearWeapon(stage));
+    }
+
+    // 에셋의 자리 기본 보조 무기를 기억한다(Initialize에서 실행용 사본을 만든 직후, 아직 바꾸기 전에 부른다).
+    private void CaptureDefaultSecondaries()
+    {
+        int count = WeaponSetCount;
+        defaultSecondaries = new WeaponBaseSO[count];
+        for (int i = 0; i < count; i++)
+            defaultSecondaries[i] = weaponData.weaponSets[i] != null ? weaponData.weaponSets[i].secondary : null;
+    }
+
+    // 자리마다 보조 무기를 정한다(PR #156의 세이브 적용 + 해금 검사). 결과는 세이브 기록과 해금 상태만으로 정해지므로 다시 불러와도 같다.
+    // 1) 세이브 기록이 후보에 있고 해금됐으면 그것 2) 기록이 후보에 있지만 잠겼으면 기록을 지워 저장하고 3)으로
+    // 3) 기록이 없으면(모르는 이름 포함) 에셋 기본값이 해금됐을 때 그것 4) 아니면 비운다.
+    // 같은 무기를 두 자리에 쓰는 것(직접 장착과 기본값 채움 모두)은 PR #156 규칙대로 허용한다. 다른 자리의 기록 때문에 기본값을 비우지 않는다
+    // (비우면 원거리 자리에 피해 재생을 끼운 뒤 상관없는 해금만으로 Hammer 자리의 피해 재생이 사라지고, 세션과 다시 불러온 결과가 달라진다. 2026-11-20 독립 검토).
+    // 세이브 슬롯이 없어 장착을 기록할 수 없으면 지금 칸의 해금된 보조 무기를 그대로 둔다. 비운 자리는 잠금 표시(WeaponSet.SecondarySlot)를 켠다.
+    private void ResolveSecondaryWeapons()
+    {
+        int count = WeaponSetCount;
+        DataManager save = DataManager.Instance;
+        bool canRecord = save != null && save.HasSelectedSlot;
+        for (int i = 0; i < count; i++)
+        {
+            WeaponSet set = weaponData.weaponSets[i];
+            if (set == null) continue;
+            WeaponBaseSO chosen = null;
+            WeaponBaseSO record = FindSecondaryCandidate(save != null ? save.GetEquippedSecondaryWeapon(i) : null);
+            if (record != null && ArmamentUnlocks.IsWeaponUnlocked(record)) chosen = record;
+            else
+            {
+                // 잠긴 기록은 지운다(나중에 해금해도 저절로 장착되지 않게)
+                if (record != null && save != null) save.SetEquippedSecondaryWeapon(i, "");
+                if (!canRecord && set.secondary != null && ArmamentUnlocks.IsWeaponUnlocked(set.secondary)) chosen = set.secondary;
+                else
+                {
+                    WeaponBaseSO fallback = i < defaultSecondaries.Length ? defaultSecondaries[i] : null;
+                    if (fallback != null && ArmamentUnlocks.IsWeaponUnlocked(fallback)) chosen = fallback;
+                }
+            }
+            set.secondary = chosen;
+            set.SetSlotLocked(WeaponSet.SecondarySlot, chosen == null);
+        }
+    }
+
+    private WeaponBaseSO FindSecondaryCandidate(string weaponName)
+    {
+        if (string.IsNullOrEmpty(weaponName)) return null;
+        foreach (var candidate in SecondaryWeapons)
+            if (candidate != null && candidate.weaponName == weaponName) return candidate;
+        return null;
+    }
+
+    /// <summary>
+    /// 해금 기록이 바뀌었다(구매·테스트 진입점, ArmamentUnlocks.Changed): 실행용 사본의 무장·Gear·보조 무기를 다시 정하고 HUD·메뉴에 알린다.
+    /// 장착 무장이 잠기면(테스트 진입점으로 다시 잠근 경우) 그 자리의 기본 무장으로 바꿔 저장하고, 새로 잠긴 칸이 있으면 머신건 장착을 끝내며
+    /// 저장 기술 중 잠긴 것을 지운다. 공격·저장 중이면 먼저 끊는다(메뉴 안의 구매에서는 생기지 않는다).
+    /// </summary>
+    public void RefreshUnlocks()
+    {
+        if (weaponData == null || weaponData.weaponSets == null) return;
+        if (IsActive || isStoringSkill) Interrupt();
+        DataManager save = DataManager.Instance;
+        int count = WeaponSetCount;
+        if (equippedArmaments == null || equippedArmaments.Length != count) System.Array.Resize(ref equippedArmaments, count);
+        var lockedBefore = new int[count];
+        bool newlyLocked = false;
+        for (int i = 0; i < count; i++)
+        {
+            WeaponSet set = weaponData.weaponSets[i];
+            if (set == null) continue;
+            lockedBefore[i] = set.lockedSlots;
+            PlayerArmamentSO armament = equippedArmaments[i];
+            if (armament != null && !ArmamentUnlocks.IsArmamentUnlocked(armament) && set.defaultArmament != null && set.defaultArmament != armament)
+            {
+                armament = set.defaultArmament;
+                equippedArmaments[i] = armament;
+                newlyLocked = true;
+                if (save != null) save.SetEquippedArmament(i, armament.armamentId);
+            }
+            if (armament != null) WriteArmament(set, armament);
+            else CopySourceGear(i);
+            FilterLockedGear(i);
+        }
+        ResolveSecondaryWeapons();
+        for (int i = 0; i < count; i++)
+        {
+            WeaponSet set = weaponData.weaponSets[i];
+            if (set != null && (set.lockedSlots & ~lockedBefore[i]) != 0) newlyLocked = true;
+        }
+        if (newlyLocked) EndPrimaryOverride();
+        PurgeLockedStoredSkills();
+        ApplyWeaponSet(currentSetIndex, true);
+        PublishSkillGauge(true);
+        for (int i = 0; i < count; i++) ArmamentChanged?.Invoke(i);
+    }
+
+    // 저장해 둔 기술 중 지금 잠긴 기술을 지운다(테스트 진입점으로 다시 잠근 경우).
+    private void PurgeLockedStoredSkills()
+    {
+        int removed = storedSkills.RemoveAll(skill => skill.Weapon == null || !ArmamentUnlocks.IsWeaponUnlocked(skill.Weapon));
+        if (removed > 0) StoredSkillsChanged?.Invoke();
+    }
+
+    /// <summary>이 자리의 그 칸이 해금 전이라 비어 있는가(1~3 = Gear 단계, WeaponSet.SecondarySlot = 보조 무기). 검증·메뉴용.</summary>
+    public bool IsSlotLocked(int setIndex, int slot) => GetWeaponSet(setIndex)?.IsSlotLocked(slot) == true;
+
+    /// <summary>그 자리에 이 보조 무기를 끼울 수 있는가(후보에 있고, 해금됐고, 공격·저장 중이 아님).</summary>
+    public bool CanEquipSecondaryWeapon(int setIndex, WeaponBaseSO weapon)
+    {
+        if (GetWeaponSet(setIndex) == null || weapon == null || IsActive || isStoringSkill || !ArmamentUnlocks.IsWeaponUnlocked(weapon)) return false;
+        foreach (var candidate in SecondaryWeapons) if (candidate == weapon) return true;
+        return false;
     }
     #endregion
 

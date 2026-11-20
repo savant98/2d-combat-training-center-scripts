@@ -17,6 +17,9 @@ using UnityEngine;
 /// - 작업 동작(2026-11-18): 메뉴 안에서 설비가 일하는 순간(구매·장착, menus 아래의 ILobbyStationActivity.Performed)에 Animator의 Trigger 'Upgrade'를 건다
 ///   (업그레이드 장치만 그 파라미터가 있다: 메뉴 층 Opened → Upgrading → Opened). 사용자 요청: "업그레이드 장치의 업그레이드 시 Animation도 추가해줘".
 ///   작업 도중 메뉴가 닫혀 닫는 동작으로 넘어가면, 닫는 동작이 쓰지 않는 부품(받침 콘솔·렌즈·타워)을 작업 Clip의 끝 자세(쉬는 자세)로 한 번 되돌린다.
+/// - 해금 동작(2026-11-20 훈련 개편): 메뉴 안에서 훈련 필증 해금이 시작되면(menus 아래의 ILobbyStationUnlockActivity.UnlockPerformed) Trigger 'Unlock'을 건다
+///   (메뉴 층 Opened → Unlocking → Opened). 컨트롤러에 'Unlock'이 없으면(적용 도구 실행 전) 'Upgrade'로 대신한다. Unlocking Clip은 Upgrading과
+///   같은 속성만 쓰고 끝 자세가 같으므로, 작업 도중 닫힐 때의 정리는 같은 activityClip 끝 자세로 한다(tools/Unity/ArmamentUnlockSetup.cs가 검사한다).
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class LobbyStation : MonoBehaviour
@@ -62,10 +65,14 @@ public sealed class LobbyStation : MonoBehaviour
     // 작업 동작(업그레이드 장치의 메뉴 층 Opened → Upgrading → Opened). 파라미터가 없는 설비(훈련 메뉴·자율훈련장)는 아무것도 하지 않는다.
     private static readonly int UpgradeId = Animator.StringToHash("Upgrade");
     private static readonly int UpgradingStateId = Animator.StringToHash("Upgrading");
+    // 해금 동작(메뉴 층 Opened → Unlocking → Opened). 없으면 Upgrade로 대신한다.
+    private static readonly int UnlockId = Animator.StringToHash("Unlock");
+    private static readonly int UnlockingStateId = Animator.StringToHash("Unlocking");
     private const int MenuLayer = 1;
     private readonly List<ILobbyStationActivity> activities = new();
+    private readonly List<ILobbyStationUnlockActivity> unlockActivities = new();
     private RuntimeAnimatorController upgradeCheckedFor;
-    private bool hasUpgrade, inActivity, activitySettlePending;
+    private bool hasUpgrade, hasUnlock, inActivity, activitySettlePending;
     private SoundHandle activitySoundHandle;
     private bool activitySoundStarted;
     private bool registered, menuOpen, applied, appliedPowered;
@@ -141,7 +148,7 @@ public sealed class LobbyStation : MonoBehaviour
                 // 작업 동작 도중에 꺼지면 닫는 동작이 쓰지 않는 부품(콘솔·렌즈·타워)을 먼저 쉬는 자세로 돌린다(메뉴 층 부품은 아래 Closed가 다시 쓴다).
                 if (inActivity) SettleActivity();
                 animator.SetBool(OpenId, false);
-                if (HasUpgradeParameter()) animator.ResetTrigger(UpgradeId);
+                ResetActivityTriggers();
                 animator.Play("Closed", 1, 0f);
                 animator.Update(0f);
             }
@@ -235,7 +242,7 @@ public sealed class LobbyStation : MonoBehaviour
             {
                 animator.SetBool(OpenId, open);
                 // 여는 동작(Opening) 중에 받아 아직 쓰지 않은 작업 신호가 다음에 열 때 재생되지 않게 지운다.
-                if (!open && HasUpgradeParameter()) animator.ResetTrigger(UpgradeId);
+                if (!open) ResetActivityTriggers();
             }
             if (followers != null)
                 foreach (var follower in followers)
@@ -251,7 +258,7 @@ public sealed class LobbyStation : MonoBehaviour
         }
     }
 
-    // Animator가 이번 프레임을 평가한 뒤에 본다: 작업 상태(Upgrading)를 막 벗어났으면(끝까지 돌았거나 메뉴가 닫혀 Closing으로 넘어감) 쉬는 자세로 맞춘다.
+    // Animator가 이번 프레임을 평가한 뒤에 본다: 작업 상태(Upgrading·Unlocking)를 막 벗어났으면(끝까지 돌았거나 메뉴가 닫혀 Closing으로 넘어감) 쉬는 자세로 맞춘다.
     private void LateUpdate()
     {
         UpdateActivitySound();
@@ -260,8 +267,7 @@ public sealed class LobbyStation : MonoBehaviour
             StopActivitySound();
             return;
         }
-        bool now = animator.GetCurrentAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId
-            || (animator.IsInTransition(MenuLayer) && animator.GetNextAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId);
+        bool now = InActivityState();
         if (inActivity && !now) SettleActivity();
         if (!now) StopActivitySound();
         inActivity = now;
@@ -277,15 +283,13 @@ public sealed class LobbyStation : MonoBehaviour
 
     // ---- 작업 동작 ----
 
-    /// <summary>Upgrading Clip의 시작 AnimationEvent에서 부른다. Opening 중 대기하는 구매 신호에서는 소리를 먼저 내지 않는다.</summary>
+    /// <summary>Upgrading·Unlocking Clip의 시작 AnimationEvent에서 부른다. Opening 중 대기하는 구매 신호에서는 소리를 먼저 내지 않는다.</summary>
     public void PlayActivitySound()
     {
         if (activitySoundStarted || !powered || !isActiveAndEnabled || !MenusOpen()
             || animator == null || !animator.isActiveAndEnabled || !animator.isInitialized || animator.layerCount <= MenuLayer
             || activitySound == null || activitySound.clip == null || SoundManager.Instance == null) return;
-        bool upgrading = animator.GetCurrentAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId
-            || (animator.IsInTransition(MenuLayer) && animator.GetNextAnimatorStateInfo(MenuLayer).shortNameHash == UpgradingStateId);
-        if (!upgrading) return;
+        if (!InActivityState()) return;
 
         activitySoundStarted = true;
         // 기존 SoundHandle 경로로 재생하되 반복을 끈다. 끝나기 전 중단해도 풀의 소스를 정확히 반환할 수 있다.
@@ -325,6 +329,12 @@ public sealed class LobbyStation : MonoBehaviour
                 activities.Add(activity);
                 activity.Performed += HandleActivityPerformed;
             }
+            foreach (var activity in menu.GetComponentsInChildren<ILobbyStationUnlockActivity>(true))
+            {
+                if (activity == null || unlockActivities.Contains(activity)) continue;
+                unlockActivities.Add(activity);
+                activity.UnlockPerformed += HandleUnlockPerformed;
+            }
         }
     }
 
@@ -333,28 +343,63 @@ public sealed class LobbyStation : MonoBehaviour
         foreach (var activity in activities)
             if (activity is UnityEngine.Object unityObject ? unityObject != null : activity != null) activity.Performed -= HandleActivityPerformed;
         activities.Clear();
+        foreach (var activity in unlockActivities)
+            if (activity is UnityEngine.Object unityObject ? unityObject != null : activity != null) activity.UnlockPerformed -= HandleUnlockPerformed;
+        unlockActivities.Clear();
     }
 
     // 메뉴가 구매·장착 연출을 시작했다: 전원이 있고 이 설비의 메뉴가 열려 있으며 Animator에 'Upgrade'가 있을 때만 작업 동작을 건다.
     private void HandleActivityPerformed()
     {
-        if (!powered || !isActiveAndEnabled || animator == null || !animator.isActiveAndEnabled || !MenusOpen() || !HasUpgradeParameter()) return;
+        if (!CanPerformActivity() || !HasTrigger(UpgradeId)) return;
         animator.SetTrigger(UpgradeId);
     }
 
-    private bool HasUpgradeParameter()
+    // 메뉴가 해금 연출을 시작했다: 해금 전용 동작(Unlock)을 건다. 컨트롤러에 없으면 작업 동작(Upgrade)으로 대신한다.
+    private void HandleUnlockPerformed()
+    {
+        if (!CanPerformActivity()) return;
+        if (HasTrigger(UnlockId)) animator.SetTrigger(UnlockId);
+        else if (HasTrigger(UpgradeId)) animator.SetTrigger(UpgradeId);
+    }
+
+    private bool CanPerformActivity() =>
+        powered && isActiveAndEnabled && animator != null && animator.isActiveAndEnabled && MenusOpen();
+
+    // 지금(또는 전이 목적지가) 작업 상태(Upgrading·Unlocking)인가.
+    private bool InActivityState()
+    {
+        int current = animator.GetCurrentAnimatorStateInfo(MenuLayer).shortNameHash;
+        if (current == UpgradingStateId || current == UnlockingStateId) return true;
+        if (!animator.IsInTransition(MenuLayer)) return false;
+        int next = animator.GetNextAnimatorStateInfo(MenuLayer).shortNameHash;
+        return next == UpgradingStateId || next == UnlockingStateId;
+    }
+
+    private void ResetActivityTriggers()
+    {
+        if (HasTrigger(UpgradeId)) animator.ResetTrigger(UpgradeId);
+        if (HasTrigger(UnlockId)) animator.ResetTrigger(UnlockId);
+    }
+
+    // 컨트롤러에 그 Trigger 파라미터가 있는가(컨트롤러가 바뀔 때만 다시 찾는다). 작업 동작이 없는 설비(훈련 메뉴·자율훈련장)는 false.
+    private bool HasTrigger(int id)
     {
         if (animator == null || !animator.isInitialized) return false;
         var controller = animator.runtimeAnimatorController;
         if (controller != upgradeCheckedFor)
         {
             upgradeCheckedFor = controller;
-            hasUpgrade = false;
+            hasUpgrade = hasUnlock = false;
             if (controller != null)
                 foreach (var parameter in animator.parameters)
-                    if (parameter.nameHash == UpgradeId && parameter.type == AnimatorControllerParameterType.Trigger) { hasUpgrade = true; break; }
+                {
+                    if (parameter.type != AnimatorControllerParameterType.Trigger) continue;
+                    if (parameter.nameHash == UpgradeId) hasUpgrade = true;
+                    else if (parameter.nameHash == UnlockId) hasUnlock = true;
+                }
         }
-        return hasUpgrade;
+        return id == UpgradeId ? hasUpgrade : id == UnlockId && hasUnlock;
     }
 
     // 작업 Clip의 끝 자세(메뉴 층이 쓰는 부품은 열린 자세, 받침 콘솔·렌즈·타워는 쉬는 자세)를 한 번 적용한다.

@@ -16,11 +16,19 @@ public class WaveDataSO : ScriptableObject
     public bool fitBackgroundToRoom;
     [Tooltip("통창 유리와 반사를 표시합니다. 프레임과 케이블은 이 설정과 관계없이 유지합니다.")]
     public bool showObservationGlass = true;
+    [Tooltip("Room 콘텐츠의 'TrainingBackdrop'을 이 Prefab으로 바꿉니다. 반복 모듈·시차·입장 로딩은 그대로 적용됩니다. 비우면 Room 원본 배경입니다.")]
+    public GameObject roomBackdrop;
+    [Tooltip("통창 전체(유리·프레임·테두리 빛·케이블)를 그리지 않습니다.")]
+    public bool hideObservationWindow;
     [Tooltip("끄면 Room 콘텐츠에 원래 연결된 음악을 사용합니다. 켜고 Clip을 비우면 무음입니다.")]
     public bool overrideBgm;
     public AudioClip bgmClip;
     [Range(0f, 1f)] public float bgmVolume = .38f;
     [Min(0f)] public float bgmFadeDuration = .8f;
+    [Tooltip("끄면 Room 콘텐츠의 공용 보스 음악을 사용합니다. 켜고 Clip을 비우면 보스가 등장해도 방 음악을 그대로 유지합니다.")]
+    public bool overrideBossBgm;
+    public AudioClip bossBgmClip;
+    [Range(0f, 1f)] public float bossBgmVolume = .38f;
     [Tooltip("모든 Wave를 클리어한 뒤 나타나는 Lobby 복귀 포탈의 위치를 Tool에서 지정합니다.")]
     public bool overrideClearPortalPosition;
     public Vector2 clearPortalPosition;
@@ -53,6 +61,13 @@ public class WaveDataSO : ScriptableObject
         volume = float.IsFinite(selectedVolume) ? Mathf.Clamp01(selectedVolume) : .38f;
         fade = float.IsFinite(selectedFade) ? Mathf.Max(0f, selectedFade) : .8f;
         return useWave || overrideBgm;
+    }
+    // false면 Room 원본 보스 음악을 사용한다. true와 null Clip의 조합은 '보스가 등장해도 방 음악 유지'다.
+    public bool TryGetBossBgm(out AudioClip clip, out float volume)
+    {
+        clip = overrideBossBgm ? bossBgmClip : null;
+        volume = float.IsFinite(bossBgmVolume) ? Mathf.Clamp01(bossBgmVolume) : .38f;
+        return overrideBossBgm;
     }
     private Wave WaveAt(int index) => waves != null && index >= 0 && index < waves.Length ? waves[index] : null;
 }

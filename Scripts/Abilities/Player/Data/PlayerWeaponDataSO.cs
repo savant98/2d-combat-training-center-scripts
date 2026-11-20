@@ -103,6 +103,30 @@ public class WeaponSet
     [Tooltip("이 세트로 바꿀 때 머리 위 교체 아이콘의 색")]
     public Color swapColor = Color.white;
 
+    // 실행용 사본에서 해금 전이라 비운 칸(PlayerWeaponAbility가 채운다. 저장하지 않는다). 1~3 = Gear 단계, SecondarySlot = 보조 무기.
+    // 직렬화하지 않으므로 에셋 파일은 바뀌지 않고, Instantiate로 만든 실행용 사본에서는 0으로 시작한다(2026-11-20 훈련 개편).
+    public const int SecondarySlot = 4;
+    [NonSerialized] public int lockedSlots;
+
+    public bool IsSlotLocked(int slot) => slot >= 1 && slot <= SecondarySlot && (lockedSlots & (1 << slot)) != 0;
+
+    public void SetSlotLocked(int slot, bool locked)
+    {
+        if (slot < 1 || slot > SecondarySlot) return;
+        if (locked) lockedSlots |= 1 << slot;
+        else lockedSlots &= ~(1 << slot);
+    }
+
+    public void SetGearWeapon(int stage, WeaponBaseSO weapon)
+    {
+        switch (stage)
+        {
+            case 1: gearStage1 = weapon; break;
+            case 2: gearStage2 = weapon; break;
+            case 3: gearStage3 = weapon; break;
+        }
+    }
+
     public WeaponBaseSO GetGearWeapon(int stage)
     {
         return stage switch

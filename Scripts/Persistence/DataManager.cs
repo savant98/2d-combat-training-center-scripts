@@ -30,8 +30,12 @@ public class SaveData
     public string lastPlayedUtc = "";
     public float playTimeSeconds;
 
-    // [확장 영역] 플레이어 기본 정보 및 재화
-    public int currentGold;
+    // 재화 '훈련 필증'(2026-11-19 훈련 개편). 훈련을 처음 수료(통과 이상)할 때마다 1개를 받고 업그레이드 시설에서 쓴다.
+    // 옛 세이브의 Gold는 읽지 않고 버린다(JsonUtility는 클래스에 없는 키를 무시한다).
+    public int trainingCertificates;
+
+    // 필증을 이미 준 훈련(trainingId). 같은 훈련을 다시 수료해도 또 주지 않는다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
+    public List<string> certifiedTrainings = new List<string>();
 
     // 훈련장 관련 클리어 및 베스트 기록 정보 리스트
     public List<TrainingRoomSaveData> trainingRoomRecords = new List<TrainingRoomSaveData>();
@@ -46,6 +50,11 @@ public class SaveData
     // 비어 있거나 모르는 값이면 그 자리의 기본 무장을 쓴다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
     public List<string> equippedArmaments = new List<string>();
     public List<string> equippedSecondaryWeapons = new List<string>();
+
+    // 훈련 필증으로 해금한 기술(weaponName)과 무장(armamentId)(2026-11-20 훈련 개편). 기본 해금 항목은 남기지 않는다(ArmamentUnlockCatalogSO).
+    // 비용 0 시절의 옛 해금 기록(weaponRecords의 isUnlocked)과는 별개다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
+    public List<string> certificateUnlockedWeapons = new List<string>();
+    public List<string> certificateUnlockedArmaments = new List<string>();
 }
 
 /// <summary>
@@ -73,7 +82,7 @@ public struct SaveSlotSummary
     public bool exists;        // 세이브 파일이 있는가
     public bool corrupted;     // 파일은 있으나 읽지 못했는가(고를 수 없고 지울 수만 있다)
     public bool isFirstStart;
-    public int gold;
+    public int certificates;   // 세이브에 저장된 훈련 필증 수. 필증이 생기기 전 세이브의 소급분은 게임 안에서 받고 저장한 뒤부터 들어간다
     public float playTimeSeconds;
     public DateTime lastPlayedLocal;   // 기록이 없으면 DateTime.MinValue
     public TrainingRoomSaveData[] trainingRecords;
@@ -176,12 +185,11 @@ public class DataManager : MonoBehaviour
     private Dictionary<string, WeaponSaveData> weaponCache = new Dictionary<string, WeaponSaveData>();
     private Dictionary<string, TrainingRoomSaveData> trainingCache = new Dictionary<string, TrainingRoomSaveData>();
 
-    // 슬롯 기능 이전의 단일 세이브 파일 구조(읽기 전용)
+    // 슬롯 기능 이전의 단일 세이브 파일 구조(읽기 전용). 옛 재화(Gold)는 훈련 필증으로 바뀌어 읽지 않는다.
     [Serializable]
     private class LegacySaveData
     {
         public OptionSettings options;
-        public int currentGold;
         public bool trainingNoticeSigned;
         public List<TrainingRoomSaveData> trainingRoomRecords;
         public List<WeaponSaveData> weaponRecords;
@@ -348,7 +356,7 @@ public class DataManager : MonoBehaviour
                         global.options.Sanitize();
                     }
 
-                    bool hasProgress = legacy.currentGold != 0 || legacy.trainingNoticeSigned
+                    bool hasProgress = legacy.trainingNoticeSigned
                         || (legacy.trainingRoomRecords != null && legacy.trainingRoomRecords.Count > 0)
                         || (legacy.weaponRecords != null && legacy.weaponRecords.Count > 0);
                     string target = SlotPath(0);
@@ -359,7 +367,6 @@ public class DataManager : MonoBehaviour
                             // 이미 플레이하던 기록이므로 도입부와 Lobby 안내를 다시 강제하지 않는다.
                             isFirstStart = false,
                             onboardingStep = SaveData.OnboardingDone,
-                            currentGold = legacy.currentGold,
                             lastPlayedUtc = File.GetLastWriteTimeUtc(legacyPath).ToString("o", CultureInfo.InvariantCulture),
                             trainingRoomRecords = legacy.trainingRoomRecords ?? new List<TrainingRoomSaveData>(),
                             weaponRecords = legacy.weaponRecords ?? new List<WeaponSaveData>(),
@@ -445,7 +452,7 @@ public class DataManager : MonoBehaviour
         }
 
         summary.isFirstStart = data.isFirstStart;
-        summary.gold = data.currentGold;
+        summary.certificates = data.trainingCertificates;
         summary.playTimeSeconds = data.playTimeSeconds;
         summary.trainingRecords = data.trainingRoomRecords.ToArray();
         if (DateTime.TryParse(data.lastPlayedUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTime played))
@@ -617,8 +624,11 @@ public class DataManager : MonoBehaviour
             if (data == null) return null;
             data.weaponRecords ??= new List<WeaponSaveData>();
             data.trainingRoomRecords ??= new List<TrainingRoomSaveData>();
+            data.certifiedTrainings ??= new List<string>();
             data.completedEvents ??= new List<string>();
             data.equippedArmaments ??= new List<string>();
+            data.certificateUnlockedWeapons ??= new List<string>();
+            data.certificateUnlockedArmaments ??= new List<string>();
             data.lastPlayedUtc ??= "";
             return data;
         }
@@ -637,9 +647,12 @@ public class DataManager : MonoBehaviour
     private void GenerateCache()
     {
         CurrentSaveData ??= new SaveData();
+        CurrentSaveData.certifiedTrainings ??= new List<string>();
         CurrentSaveData.weaponRecords ??= new List<WeaponSaveData>();
         CurrentSaveData.trainingRoomRecords ??= new List<TrainingRoomSaveData>();
         CurrentSaveData.equippedArmaments ??= new List<string>();
+        CurrentSaveData.certificateUnlockedWeapons ??= new List<string>();
+        CurrentSaveData.certificateUnlockedArmaments ??= new List<string>();
         weaponCache.Clear();
         foreach (var data in CurrentSaveData.weaponRecords)
         {
@@ -653,6 +666,9 @@ public class DataManager : MonoBehaviour
             if (!string.IsNullOrEmpty(data.trainingId))
                 trainingCache[data.trainingId] = data;
         }
+
+        // 세이브를 새로 읽었다. 필증 소급분은 필증을 처음 읽거나 쓸 때 확인한다(EnsureCertificateBackfill).
+        certificateBackfillPending = true;
     }
 
     private void SyncCacheToList()
@@ -783,33 +799,131 @@ public class DataManager : MonoBehaviour
         _ => 0
     };
 
-    public int CurrentGold => CurrentSaveData != null ? CurrentSaveData.currentGold : 0;
+    // ==========================
+    // [3] 훈련 필증(재화) API
+    // ==========================
 
+    // 지금 세이브에 줄 필증 소급분을 아직 확인하지 않았는가. 세이브를 새로 읽을 때마다 켜진다(GenerateCache).
+    private bool certificateBackfillPending;
 
-    // 골드 획득
-    public void AddGold(int amount)
+    /// <summary>보유한 훈련 필증 수.</summary>
+    public int TrainingCertificates
     {
-        if (amount <= 0)
-            return;
-
-        CurrentSaveData.currentGold += amount;
-        SaveGame();
-
-        Debug.Log($"[Gold] {amount}G 획득! 현재 골드: {CurrentSaveData.currentGold}G");
+        get
+        {
+            EnsureCertificateBackfill();
+            return CurrentSaveData != null ? CurrentSaveData.trainingCertificates : 0;
+        }
     }
 
-    // 골드 소비
-    public bool TrySpendGold(int amount)
-    {
-        if (CurrentSaveData.currentGold >= amount)
-        {
-            CurrentSaveData.currentGold -= amount;
-            SaveGame();
-            return true;
-        }
+    // 휴대용 단말기(InventoryTerminalMenu)의 재화 칸이 읽는 호환용 이름이다. 훈련 필증 수를 돌려준다. 단말기 개편 때 삭제한다.
+    public int CurrentGold => TrainingCertificates;
 
-        Debug.LogWarning("[Gold] 골드가 부족합니다!");
-        return false;
+    /// <summary>이 훈련의 필증을 이미 받았는가.</summary>
+    public bool HasTrainingCertificate(string trainingId)
+    {
+        EnsureCertificateBackfill();
+        return !string.IsNullOrEmpty(trainingId) && CurrentSaveData != null && CurrentSaveData.certifiedTrainings != null
+            && CurrentSaveData.certifiedTrainings.Contains(trainingId);
+    }
+
+    /// <summary>
+    /// 훈련을 수료한 판에서 부른다. 이 훈련의 필증을 아직 받지 않았으면 1개를 주고 저장한다(최초 수료 보상).
+    /// 이미 받았거나 훈련 목록(TrainingCatalogSO)의 지급 대상이 아니면 아무것도 하지 않고 false.
+    /// </summary>
+    public bool TryAwardTrainingCertificate(string trainingId)
+    {
+        if (CurrentSaveData == null || string.IsNullOrEmpty(trainingId) || HasTrainingCertificate(trainingId)) return false;
+        var catalog = TrainingCatalogSO.Load();
+        if (catalog == null || !catalog.GrantsCertificate(trainingId)) return false;
+
+        CurrentSaveData.certifiedTrainings ??= new List<string>();
+        CurrentSaveData.certifiedTrainings.Add(trainingId);
+        CurrentSaveData.trainingCertificates++;
+        SaveGame();
+        Debug.Log($"[DataManager] 훈련 필증 지급: {trainingId} (보유 {CurrentSaveData.trainingCertificates})");
+        return true;
+    }
+
+    /// <summary>필증을 쓰고 저장한다. 모자라면 쓰지 않고 false.</summary>
+    public bool TrySpendCertificates(int amount)
+    {
+        EnsureCertificateBackfill();
+        if (CurrentSaveData == null || amount < 0 || CurrentSaveData.trainingCertificates < amount) return false;
+        if (amount == 0) return true;
+        CurrentSaveData.trainingCertificates -= amount;
+        SaveGame();
+        return true;
+    }
+
+    // 필증이 생기기 전의 세이브: 수료 기록은 있는데 지급 기록이 없는 훈련(훈련 목록의 지급 대상만)의 필증을 한 번 준다.
+    // 지급 기록이 함께 남아 다시 읽어도 늘지 않고, 파일에는 다음 저장 때 남는다.
+    // 세이브를 읽는 자리(타이틀의 세이브 요약, 슬롯 선택)가 아니라 필증을 처음 읽거나 쓰기 직전에 한다. 소급에 필요한 훈련 목록은
+    // 모든 훈련의 WaveData를 참조하므로, 타이틀에서 불러오면 그 에셋들이 진행 표시 없이 한꺼번에 읽힌다. 줄 것이 없으면 목록을 불러오지 않는다.
+    private void EnsureCertificateBackfill()
+    {
+        if (!certificateBackfillPending) return;
+        certificateBackfillPending = false;
+        if (CurrentSaveData == null) return;
+
+        CurrentSaveData.certifiedTrainings ??= new List<string>();
+        TrainingCatalogSO catalog = null;
+        foreach (var record in trainingCache.Values)
+        {
+            if (!IsCleared(record) || CurrentSaveData.certifiedTrainings.Contains(record.trainingId)) continue;
+            if (catalog == null)
+            {
+                catalog = TrainingCatalogSO.Load();
+                if (catalog == null) return; // 훈련 목록이 없으면 지급 대상을 알 수 없다
+            }
+            if (!catalog.GrantsCertificate(record.trainingId)) continue;
+            CurrentSaveData.certifiedTrainings.Add(record.trainingId);
+            CurrentSaveData.trainingCertificates++;
+        }
+    }
+
+    // ==========================
+    // [4] 무장 해금(훈련 필증) API
+    // ==========================
+
+    /// <summary>훈련 필증으로 해금한 기록이 있는가(Weapon = weaponName, Armament = armamentId). 기본 해금 여부는 ArmamentUnlocks가 판단한다.</summary>
+    public bool HasCertificateUnlock(ArmamentUnlockKind kind, string key)
+    {
+        if (string.IsNullOrEmpty(key) || CurrentSaveData == null) return false;
+        var list = kind == ArmamentUnlockKind.Weapon ? CurrentSaveData.certificateUnlockedWeapons : CurrentSaveData.certificateUnlockedArmaments;
+        return list != null && list.Contains(key);
+    }
+
+    /// <summary>
+    /// 필증 price개를 쓰고 해금 기록을 남긴 뒤 한 번만 저장한다(차감과 기록 사이에 꺼져 필증만 사라지는 일이 없게).
+    /// 슬롯을 고르기 전, 이미 기록이 있음, 필증 부족이면 아무것도 바꾸지 않고 false.
+    /// </summary>
+    public bool TryPurchaseCertificateUnlock(ArmamentUnlockKind kind, string key, int price)
+    {
+        if (!HasSelectedSlot || CurrentSaveData == null || string.IsNullOrEmpty(key) || price < 0) return false;
+        EnsureCertificateBackfill();
+        var list = CertificateUnlockList(kind);
+        if (list.Contains(key) || CurrentSaveData.trainingCertificates < price) return false;
+        CurrentSaveData.trainingCertificates -= price;
+        list.Add(key);
+        SaveGame();
+        Debug.Log($"[DataManager] 무장 해금: {kind} {key} (필증 {price}개 사용, 보유 {CurrentSaveData.trainingCertificates})");
+        return true;
+    }
+
+    /// <summary>검증·개발용: 해금 기록 두 목록을 통째로 바꾸고 저장한다(필증은 그대로).</summary>
+    public void SetCertificateUnlocks(IEnumerable<string> weapons, IEnumerable<string> armaments)
+    {
+        if (CurrentSaveData == null) return;
+        CurrentSaveData.certificateUnlockedWeapons = weapons != null ? new List<string>(weapons) : new List<string>();
+        CurrentSaveData.certificateUnlockedArmaments = armaments != null ? new List<string>(armaments) : new List<string>();
+        SaveGame();
+    }
+
+    private List<string> CertificateUnlockList(ArmamentUnlockKind kind)
+    {
+        if (kind == ArmamentUnlockKind.Weapon) return CurrentSaveData.certificateUnlockedWeapons ??= new List<string>();
+        return CurrentSaveData.certificateUnlockedArmaments ??= new List<string>();
     }
 
     #endregion

@@ -25,6 +25,10 @@ public sealed class WaveEditorWindow : EditorWindow
     private bool showRoom;
     private GameObject pendingBackground;
     private readonly List<GameObject> backgrounds = new();
+    // 방 배경 교체 Prefab의 규격 확인 결과. 다시 그릴 때마다 Prefab 전체를 훑지 않도록 Prefab·Room 콘텐츠가 바뀔 때만 다시 본다.
+    private GameObject checkedBackdrop;
+    private TrainingRoomContent checkedBackdropRoom;
+    private string checkedBackdropIssue;
     private bool showRaw;
     private int terrainTarget;
     private int selectedBatch = -1;
@@ -101,7 +105,7 @@ public sealed class WaveEditorWindow : EditorWindow
         wasLoadingPreviews = loading;
         Repaint();
     }
-    private void OnProjectChange() { ReloadPalette(); geometry.Invalidate(); WavePrefabVisuals.Invalidate(); Repaint(); }
+    private void OnProjectChange() { ReloadPalette(); geometry.Invalidate(); WavePrefabVisuals.Invalidate(); checkedBackdrop = null; Repaint(); }
     private void OnDisable()
     {
         Undo.undoRedoPerformed -= Refresh; ResetGesture();
@@ -678,7 +682,9 @@ public sealed class WaveEditorWindow : EditorWindow
     {
         var styles = data.cellMap.styles ?? Array.Empty<WaveCellStyle>();
         var own = cell.style >= 0 && cell.style < styles.Length && styles[cell.style] != null ? styles[cell.style].prefab : null;
-        bool ownVisual = own != null && own.kind == cell.kind ? own.ownVisual : cell.kind == WaveCellKind.OneWayPlatform && data.cellMap.oneWayPrefab != null && data.cellMap.oneWayPrefab.ownVisual;
+        // 스타일 전용 Prefab이 없으면 맵 기본 Prefab(Platform·OneWay)이 그린다. 기본 Platform Prefab이 자기 그림을 쓰면 그 칸도 이웃과 잇는다.
+        var basis = cell.kind == WaveCellKind.OneWayPlatform ? data.cellMap.oneWayPrefab : data.cellMap.platformPrefab;
+        bool ownVisual = own != null && own.kind == cell.kind ? own.ownVisual : basis != null && basis.ownVisual;
         if (!ownVisual) return 0;
         bool byAssembly = cell.kind == WaveCellKind.OneWayPlatform || cell.style >= 0 && cell.style < styles.Length && styles[cell.style] != null && styles[cell.style].generated;
         int Assembly(Vector2Int at) => assemblies != null && assemblies.TryGetValue(at, out var id) ? id : 0;
@@ -1004,6 +1010,12 @@ public sealed class WaveEditorWindow : EditorWindow
                 pendingBackground = (GameObject)EditorGUILayout.ObjectField("배경 Prefab", pendingBackground, typeof(GameObject), false);
                 EditorGUILayout.PropertyField(serialized.FindProperty("fitBackgroundToRoom"), new GUIContent("기본 배경을 현재 방에 맞춤"));
                 EditorGUILayout.PropertyField(serialized.FindProperty("showObservationGlass"), new GUIContent("기본 통창 유리·반사 표시"));
+                EditorGUILayout.PropertyField(serialized.FindProperty("hideObservationWindow"), new GUIContent("통창 전체 숨김", "유리·반사뿐 아니라 프레임·테두리 빛·케이블까지 통창을 통째로 그리지 않습니다."));
+                var roomBackdrop = serialized.FindProperty("roomBackdrop");
+                EditorGUILayout.PropertyField(roomBackdrop, new GUIContent("방 배경 교체 Prefab", "Room 콘텐츠의 TrainingBackdrop을 이 Prefab으로 바꿉니다. 반복 모듈·시차·화면 밖 정지·입장 로딩이 그대로 적용됩니다. 비우면 Room 원본 배경입니다."));
+                string backdropIssue = RoomBackdropIssue(roomBackdrop.objectReferenceValue as GameObject);
+                if (backdropIssue != null) EditorGUILayout.HelpBox(backdropIssue, MessageType.Warning);
+                EditorGUILayout.HelpBox("방 배경 교체는 Room 원본 배경(TrainingBackdrop) 자리에 같은 규격(직계 자식 층 FarStructure·TrainingChambers·RecoveryMachinery)의 Prefab을 끼웁니다. 위 '배경 선택'과 달리 넓은 맵에서도 반복·시차가 유지됩니다. 방 내용을 새로 만들 때 적용되므로 Play 중에는 저장한 뒤 방을 나갔다가 다시 입장하세요. 통창 숨김은 아래 버튼으로 바로 반영됩니다.", MessageType.None);
                 if (GUILayout.Button("선택한 배경 적용")) ApplySelectedBackground();
                 GUILayout.Space(6);
                 GUILayout.Label("현재 Wave의 배경", EditorStyles.boldLabel);
@@ -1033,12 +1045,21 @@ public sealed class WaveEditorWindow : EditorWindow
                     Property(wave, "bgmVolume", "Wave BGM 음량");
                     Property(wave, "bgmFadeDuration", "Wave BGM 전환 시간");
                 }
+                GUILayout.Label("보스 BGM", EditorStyles.boldLabel);
+                EditorGUILayout.PropertyField(serialized.FindProperty("overrideBossBgm"), new GUIContent("보스 BGM 직접 지정"));
+                if (serialized.FindProperty("overrideBossBgm").boolValue)
+                {
+                    EditorGUILayout.PropertyField(serialized.FindProperty("bossBgmClip"), new GUIContent("보스 BGM Clip"));
+                    EditorGUILayout.PropertyField(serialized.FindProperty("bossBgmVolume"), new GUIContent("보스 BGM 음량"));
+                }
+                EditorGUILayout.HelpBox("보스 BGM 직접 지정을 끄면 Room 콘텐츠의 공용 보스 음악을 사용합니다. 켜고 Clip을 비우면 보스가 등장해도 방 음악을 그대로 유지합니다. 전용 곡을 가진 보스(Nightmare)는 이 설정과 관계없이 자기 곡을 재생합니다.", MessageType.None);
                 EditorGUILayout.HelpBox("Wave 직접 지정 → 기본 BGM → Room 원본 음악 순으로 사용합니다. 직접 지정한 Clip을 비우면 무음입니다. 보스 음악은 우선하며 보스전 종료 후 현재 Wave 음악으로 돌아옵니다.", MessageType.None);
                 if (GUILayout.Button("BGM 설정 적용")) ApplySelectedBgm();
                 EditorGUILayout.PropertyField(serialized.FindProperty("training"), new GUIContent("훈련 기록 / 보상"));
                 EditorGUILayout.PropertyField(serialized.FindProperty("playerStart"), new GUIContent("미지정 Wave의 기본 시작 좌표"));
                 if (data.cellMap.enabled) RoomProperties(serialized.FindProperty("room"));
                 else EditorGUILayout.PropertyField(serialized.FindProperty("room"), new GUIContent("기본 Room"), true);
+                if (data.cellMap.enabled) TerrainLineProperties(serialized.FindProperty("cellMap").FindPropertyRelative("styles"));
                 Property(wave, "changeTerrain", "Wave 시작 시 지형 변경");
                 if (Current.changeTerrain)
                 {
@@ -1186,6 +1207,42 @@ public sealed class WaveEditorWindow : EditorWindow
         foreach (var player in UnityEngine.Object.FindObjectsByType<RoomBgmPlayer>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             if (player.WaveData == data) player.RefreshWaveMusic();
         if (EditorUtility.IsPersistent(data)) AssetDatabase.SaveAssetIfDirty(data);
+    }
+    // 방 배경 교체 Prefab이 규격에 맞지 않으면 그 이유를, 맞으면 null을 돌려준다.
+    private string RoomBackdropIssue(GameObject prefab)
+    {
+        if (prefab == null) { checkedBackdrop = null; return null; }
+        var room = data.roomTemplate != null ? data.roomTemplate : AssetDatabase.LoadAssetAtPath<TrainingRoomContent>("Assets/Prefabs/Training/TrainingRoomBase.prefab");
+        if (prefab == checkedBackdrop && room == checkedBackdropRoom) return checkedBackdropIssue;
+        checkedBackdrop = prefab; checkedBackdropRoom = room;
+        if (!WaveRoomBackground.IsBackground(prefab))
+            checkedBackdropIssue = "카메라·Collider·Room·WaveManager가 없는 배경 Prefab이어야 합니다. 실행 시 Room 원본 배경을 그대로 씁니다.";
+        else if (room != null && room.transform.Find("TrainingBackdrop") == null)
+            checkedBackdropIssue = "이 Room 콘텐츠에는 'TrainingBackdrop'이 없어 배경이 교체되지 않습니다(Room 원본 배경 유지).";
+        else if (new[] { "FarStructure", "TrainingChambers", "RecoveryMachinery" }.All(layer => prefab.transform.Find(layer) == null))
+            checkedBackdropIssue = "직계 자식에 FarStructure·TrainingChambers·RecoveryMachinery 층이 하나도 없습니다. 배경은 바뀌지만 반복 모듈·시차가 적용되지 않습니다.";
+        else checkedBackdropIssue = null;
+        return checkedBackdropIssue;
+    }
+    // 스타일의 선 재질. 기본 지형은 외곽선·패널 테두리·이음매·섬광 모두, 생성 외형은 끼워지는 동안의 패널 테두리·섬광에만 쓴다.
+    private void TerrainLineProperties(SerializedProperty styles)
+    {
+        var names = StyleNames();
+        bool any = false;
+        for (int i = 0; i < styles.arraySize; i++)
+        {
+            var style = styles.GetArrayElementAtIndex(i);
+            bool generated = style.FindPropertyRelative("generated").boolValue;
+            if (!any) GUILayout.Label("지형의 선 색", EditorStyles.boldLabel);
+            any = true;
+            // 직렬화 사본과 데이터의 스타일 수가 잠깐 다를 수 있다(Undo 직후 등).
+            string label = i < names.Length ? names[i] : $"스타일 {i}";
+            var content = generated
+                ? new GUIContent($"{label} 선 재질(생성 외형)", "끼워지는 동안의 패널 테두리와 맞물림 섬광에만 쓰는 재질입니다. 자리 잡은 뒤의 외곽선·이음매는 생성 발판 Prefab의 선을 그대로 씁니다. 비우면 테두리는 공통 마감 규칙, 섬광은 주황입니다.")
+                : new GUIContent($"{label} 선 재질", "덩어리 외곽선·패널 테두리·이음매·맞물림 섬광에 쓰는 재질입니다. 비우면 공통 마감 규칙의 지형 선 재질을 씁니다.");
+            EditorGUILayout.PropertyField(style.FindPropertyRelative("lineMaterial"), content);
+        }
+        if (any) EditorGUILayout.HelpBox("비우면 공통 마감 규칙(WaveRoomRules)의 지형 선 재질을 씁니다. 훈련마다 선 색을 바꿀 때는 공용 재질을 고치지 말고 사본 재질을 지정하세요. Play 중에 바꾸면 지형 외곽선을 다시 만들 때(Wave 전환 등)부터 반영되고, 방 내용을 새로 만들면 전체에 반영됩니다.", MessageType.None);
     }
     private static void RoomProperties(SerializedProperty room)
     {

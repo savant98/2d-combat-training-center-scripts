@@ -250,6 +250,13 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (own != null && own.kind == cell.kind) return own;
         return cell.kind == WaveCellKind.Platform ? data.cellMap.platformPrefab : data.cellMap.oneWayPrefab;
     }
+    // 기본 지형(생성 외형이 아닌 스타일)의 선 재질. 스타일이 따로 정하지 않았으면 공통 규칙의 지형 선 재질이다.
+    // 훈련마다 지형 선의 색을 다르게 줄 때 쓴다(공통 규칙을 바꾸면 모든 훈련과 Lobby 윤곽선이 함께 바뀐다).
+    private Material TerrainLine(WaveMapCell cell, WaveRoomRulesSO rules)
+    {
+        var own = Style(cell).lineMaterial;
+        return own != null ? own : rules != null ? rules.terrainLineMaterial : null;
+    }
     // 덩어리 외곽선은 묶음(그룹·외형·생성 묶음 번호)마다 따로 기억하고, 요약값이 바뀐 묶음만 다시 만든다.
     // 요약값은 그 묶음의 켜진 칸과 패널로 움직이는 칸으로 정해진다. 수천 칸짜리 기본 지형을 시간별 발판이 생기고 사라질 때마다 다시 만들지 않는다.
     private static ulong OutlineHash(WaveMapCell cell, bool panel, int assembly)
@@ -365,7 +372,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         {
             var owner = shape.owners[i]; var line = pool[owner].edges[0];
             chunk.lines.Add(line);
-            line.sharedMaterial = rules.terrainLineMaterial;
+            line.sharedMaterial = TerrainLine(owner, rules);
             line.widthMultiplier = rules.terrainLineWidth;
             line.sortingOrder = Style(owner).sortingOrder;
             line.transform.SetParent(owners[owner].parent, false);
@@ -578,6 +585,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
         float stagger = Mathf.Max(0f, duration - single);
         float span = far - near;
         float now = panelClock;
+        // 선 재질을 따로 정한 기본 지형의 섬광 색. 같은 재질이 이어지는 동안은 재질에서 다시 읽지 않는다.
+        Material ownLine = null; Color ownFlash = default;
         for (int i = 0; i < cells.Count; i++)
         {
             var cell = cells[i];
@@ -590,14 +599,23 @@ public sealed class WaveCellTerrain : MonoBehaviour
             var view2 = pool[cell];
             // 얇은 판(OneWay)은 수납구도 얇으므로 덜 벗어나고 덜 기운다.
             bool thin = cell.kind == WaveCellKind.OneWayPlatform;
+            var style = Style(cell);
+            Color flash = thin || style.generated ? WaveTerrainPanelRig.GeneratedFlash : WaveTerrainPanelRig.TerrainFlash;
+            // 스타일이 선 재질을 정했으면 섬광도 그 선의 발광색을 따른다(생성 외형·OneWay 포함 — 훈련 테마가 주황 섬광을 흑백 등으로 바꾼다).
+            // 정하지 않았으면 위의 공통 색(기본 지형 초록, 생성 외형·OneWay 주황) 그대로다.
+            if (style.lineMaterial != null)
+            {
+                if (style.lineMaterial != ownLine) { ownLine = style.lineMaterial; ownFlash = WaveTerrainPanelRig.FlashFrom(LineColor(ownLine)); }
+                flash = ownFlash;
+            }
             panels[cell] = new PanelMotion
             {
                 start = now + delay, length = single, install = install, seed = seed, shown = shown,
                 pivot = view2.PanelPivot, half = view2.PanelHalf, reach = thin ? new Vector2(1f, .4f) : Vector2.one, tilt = thin ? .5f : 1f,
-                flash = thin || Style(cell).generated ? WaveTerrainPanelRig.GeneratedFlash : WaveTerrainPanelRig.TerrainFlash,
+                flash = flash,
             };
-            view2.ShowPanelOutline(rules != null ? rules.terrainLineMaterial : null, rules != null ? rules.terrainLineInset : .025f,
-                rules != null ? rules.terrainLineWidth : .05f, Style(cell).sortingOrder);
+            view2.ShowPanelOutline(TerrainLine(cell, rules), rules != null ? rules.terrainLineInset : .025f,
+                rules != null ? rules.terrainLineWidth : .05f, style.sortingOrder);
             if (install) view2.SetVisible(false);
         }
         if (driveSound && shownCount > 0 && rules != null && FeedbackPlayer.Instance != null)
@@ -639,7 +657,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
             }
             int mask = (Joined(Vector2Int.up) ? 1 : 0) | (Joined(Vector2Int.right) ? 2 : 0) | (Joined(Vector2Int.down) ? 4 : 0) | (Joined(Vector2Int.left) ? 8 : 0);
             if (mask == 0) continue;
-            var line = generated && pool[cell].edges.Length > 0 ? pool[cell].edges[0].sharedMaterial : rules != null ? rules.terrainLineMaterial : null;
+            var line = generated && pool[cell].edges.Length > 0 ? pool[cell].edges[0].sharedMaterial : TerrainLine(cell, rules);
             seams.Add(new Seam
             {
                 cell = toRig * owners[cell].parent.localToWorldMatrix * Matrix4x4.Translate(CellCenter(cell)), mask = mask, start = panelClock,

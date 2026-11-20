@@ -43,6 +43,8 @@ public sealed class WaveCellStyle
     public bool generated;
     [Tooltip("이 스타일 전용 셀 Prefab. 셀 종류(kind)가 같을 때만 쓰고, 비우면 cellMap의 기본 Prefab을 쓴다. 충돌은 계속 위 Tile을 쓴다.")]
     public WaveTerrainCellView prefab;
+    [Tooltip("기본 지형은 덩어리 외곽선·패널 테두리·이음매·맞물림 섬광에, 생성 외형은 끼워지는 동안의 패널 테두리·맞물림 섬광에만 쓰는 선 재질. 비우면 공통 규칙(WaveRoomRules)의 지형 선 재질(섬광은 기본 초록·생성 주황)을 쓴다.")]
+    public Material lineMaterial;
 }
 
 [Serializable]

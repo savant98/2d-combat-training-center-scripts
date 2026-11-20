@@ -121,11 +121,20 @@ public class RoomTrigger : MonoBehaviour, IInteractable
         menuController.OnConfirmEnterRoom -= HandleEnterRoom;
         RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest
         {
-            targetRoom = menuController.SelectedRoom != null ? menuController.SelectedRoom : room,
+            targetRoom = room,
             waveData = menuController.SelectedWaveData,
-            teleportPoint = menuController.SelectedSpawnPoint != null ? menuController.SelectedSpawnPoint : teleportPoint,
+            teleportPoint = MenuArrivalPoint(),
             transitionEffect = transitionEffect
         });
+    }
+
+    // 훈련 메뉴로 들어가는 방이 TrainingRoomHost를 쓰면 그 입장 지점(entryPoint)에 도착한다.
+    // RoomManager.ChangeRoom은 host.Load로 입장 지점을 고른 WaveData의 Wave 1 시작 좌표에 옮긴 뒤에 이 Transform의 위치를 읽는다.
+    // 호스트가 없는 방은 이 입구의 도착 지점을 쓴다.
+    private Transform MenuArrivalPoint()
+    {
+        TrainingRoomHost host = room != null ? room.GetComponent<TrainingRoomHost>() : null;
+        return host != null && host.entryPoint != null ? host.entryPoint : teleportPoint;
     }
     private void EnterRoom()
     {
