@@ -38,8 +38,8 @@ public class HandCannonWeaponSO : WeaponBaseSO
     [Tooltip("전방 화염과 연기(HandCannonFan). 최대 3벌을 재사용하며 BlastPlume은 무기가 직접 발사 프레임에 내보낸다")]
     public GameObject fanEffect;
     [Header("Burn Detonation")]
-    [Tooltip("화상 기폭: 직격을 맞은 대상의 화상 스택마다 한 번씩 주는 연속 폭발 피해(2026-11-21 사용자 결정 기폭형, 기본 = 직격 100의 20%). 넉백·기술 게이지 없음")]
-    [Min(0f)] public float detonationDamage = 20f;
+    [Tooltip("화상 기폭: 직격을 맞은 대상의 화상 스택마다 한 번씩 주는 연속 폭발 피해(2026-11-21 사용자 결정 기폭형. 밸런스: 스택당 45 — 5스택 기폭 225가 직격 80보다 큰 핵심 피해, PlayerArmamentBalanceSetup). 넉백·기술 게이지 없음")]
+    [Min(0f)] public float detonationDamage = 45f;
     private const int MaxFanInstances = 3;
     [NonSerialized] private List<GameObject> fanInstances;
 
