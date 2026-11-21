@@ -14,6 +14,13 @@ using UnityEngine;
 //   조준은 aimTime 동안 창끝을 목표(판정 상자 중심) 쪽으로 돌리고 조금 뒤로 당기며, 끝나는 순간 목표까지의 직선 방향으로 Launch한다.
 //   조준 중 목표가 사라지면 가장 가까운 적을 다시 찾고, 없으면(기다릴 시간이 남았을 때) 이 창부터 조준을 멈추고 다시 기다린다.
 // - 끝: 모든 창을 쏜 뒤 발사점 별 문양이 줄어들며 사라지고 풀로 돌아간다. Player가 사라지면 남은 창을 거두고 끝낸다.
+// - 레일건 충전 추가타(2026-11-21 무장 특성 3차 → 4차 개편, 사용자 요청 "별창 발사 시의 추가타도 플레이어 주위에서 시간차로, 별창 이펙트의 미니 사이즈로"
+//   — 사용자 화면 검수 전 시안): 충전 상태(PlayerWeaponTraits.IsRailCharged)로 시작한 일제 사격이면 본 창을 쏠 때마다 본 창 뒤
+//   echoInterval(0.2·0.4초)에 miniSpearCount(2)발의 미니 별창을 RailEcho로 쏜다. 미니 별창은 머리 위 발사점이 아니라 Player 몸 위쪽·아래쪽 바깥에
+//   작은 별 문양(RailgunWeaponSO.miniSpearShotPrefab)과 함께 나타나 본 창의 목표(사라졌으면 Player 둘레의 가장 가까운 적, 없으면 본 창이 날아간 쪽)로
+//   날아간다. 본 창마다 다른 자리부터 써서 겹치지 않는다. 피해 = 별창 × miniSpearDamageScale, 폭발 반경 = 별창 × miniSpearRadiusScale.
+//   미니 별창을 다 쏠 때까지(또는 버려질 때까지) 일제 사격이 남는다(검증 값 MiniLaunchedCount를 읽을 수 있게). Player가 쓰러지거나
+//   무장 특성이 초기화되면 남은 미니 별창은 버린다(RailEchoShot이 스스로 확인).
 // 시간은 고정 단계로 센다(프레임 수와 무관). Player 이동(FixedUpdate) 뒤에 자리를 잡도록 실행 순서를 탄(100)보다 늦춘다.
 [DefaultExecutionOrder(110)]
 [UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "StarCannonVolley")]
@@ -47,6 +54,10 @@ public class StarSpearVolley : WorldEntityBase
     }
 
     private readonly List<Slot> slots = new List<Slot>(8);
+    private RailgunWeaponSO rail;
+    private int miniSerial;          // 풀에서 다시 쓰일 때 늦게 온 미니 별창 알림을 버리기 위한 번호
+    private int pendingMinis;        // 아직 쏘지 않은(버려지지도 않은) 미니 별창
+    private float lastMiniQueuedAt = -10f;
     private StarSpearWeaponSO weapon;
     private Action<CharacterController2D, Vector2> onHitEnemy;
     private float age, finishedAt = -1f, lastSummonAt = -10f, nextAimAt, waited;
@@ -63,6 +74,9 @@ public class StarSpearVolley : WorldEntityBase
     public float WaitedTime => waited;              // 적이 없어 기다린 시간(누적)
     public Vector2 AnchorPosition => anchor;        // 지금 발사점(부채꼴 중심, Player를 늦게 따라감)
     public int SlotCount => slots.Count;
+    public bool IsRailCharged => railCharged;               // 레일건 충전 상태로 시작했는가
+    public int MiniLaunchedCount { get; private set; }      // 쏜 미니 별창 수
+    public int PendingMiniCount => pendingMinis;            // 아직 쏘지 않은 미니 별창 수
     public StarSpear SpearAt(int index) => index >= 0 && index < slots.Count ? slots[index].spear : null;
     public float SlotAngle(int index) => index >= 0 && index < slots.Count ? slots[index].angle : 0f;
     // 검증·디버그용 읽기 전용 기록: 소환·발사 시각(초, 아직이면 -1), 발사 방향, 발사 순간 목표 판정 상자 중심(목표가 없으면 NaN)
@@ -86,6 +100,11 @@ public class StarSpearVolley : WorldEntityBase
         base.OnSpawnedFromPool();
         running = false;
         slots.Clear();
+        rail = null;
+        miniSerial++;
+        pendingMinis = 0;
+        lastMiniQueuedAt = -10f;
+        MiniLaunchedCount = 0;
         age = waited = 0f;
         finishedAt = -1f;
         lastSummonAt = -10f;
@@ -97,7 +116,13 @@ public class StarSpearVolley : WorldEntityBase
     public void Begin(CharacterController2D owner, StarSpearWeaponSO weapon, WeaponBaseSO.DamageInfo damageInfo,
         Action<CharacterController2D, Vector2> onHitEnemy)
     {
-        railCharged = WeaponTraitEffects.Attack(owner)?.Traits.IsRailCharged == true;
+        var traits = WeaponTraitEffects.Attack(owner)?.Traits;
+        railCharged = traits != null && traits.IsRailCharged;
+        rail = railCharged ? RailgunWeaponSO.FindFor(owner) : null;
+        miniSerial++;
+        pendingMinis = 0;
+        lastMiniQueuedAt = -10f;
+        MiniLaunchedCount = 0;
         Initialize(owner, damageInfo);   // 발사점 등장 피드백
         this.weapon = weapon;
         this.onHitEnemy = onHitEnemy;
@@ -156,7 +181,7 @@ public class StarSpearVolley : WorldEntityBase
             if (slot.summoned) UpdateHeld(slot, i, dt);
             if (!slot.launched) allLaunched = false;
         }
-        if (!allLaunched) return;
+        if (!allLaunched || WaitingForMinis()) return;   // 미니 별창을 다 쏠 때까지 남는다
         if (finishedAt < 0f) finishedAt = age;
         if (age - finishedAt >= sigilFade)
         {
@@ -247,6 +272,60 @@ public class StarSpearVolley : WorldEntityBase
         slot.spear.Launch(slot.launchDirection, target);
         slot.launched = true;
         LaunchedCount++;
+        QueueMinis(index, target, slot.launchPosition, slot.launchDirection);
+    }
+
+    // ===== 레일건 충전 추가타: 미니 별창(4차 — Player 둘레에서 시간차로) =====
+    private void QueueMinis(int index, Collider2D target, Vector2 launchPosition, Vector2 direction)
+    {
+        if (!railCharged || rail == null || rail.miniSpearPrefab == null || rail.miniSpearShotPrefab == null || rail.miniSpearCount <= 0) return;
+        if (owner is not PlayerController player) return;
+        var info = damageInfo;
+        info.damage *= rail.miniSpearDamageScale;
+        info.knockbackFacing = 0;
+        int serial = miniSerial;
+        int queued = RailEcho.Begin(new RailEchoRequest
+        {
+            owner = player,
+            rail = rail,
+            kind = RailEchoKind.Spear,
+            prefab = rail.miniSpearShotPrefab,
+            damage = info,
+            count = rail.miniSpearCount,
+            interval = rail.echoInterval,
+            slotBase = index * rail.miniSpearCount,
+            facing = player.Facing,
+            target = target,
+            // 목표가 사라졌고 Player 둘레에도 적이 없으면 본 창이 날아간 쪽(최대 비행 거리의 절반 지점)으로
+            fallbackPoint = launchPosition + direction * (weapon.spearSpeed * weapon.maxFlightTime * 0.5f),
+            searchDirection = Vector2.zero,
+            searchRange = weapon.targetSearchRadius,
+            platformLayer = weapon.platformLayer,
+            damageMask = rail.damageMask,
+            spearWeapon = weapon,
+            spearPrefab = rail.miniSpearPrefab,
+            spearRadiusScale = rail.miniSpearRadiusScale,
+            spearIndex = index,
+            onFired = (shot, hits) =>
+            {
+                if (serial != miniSerial) return;
+                MiniLaunchedCount++;
+                pendingMinis = Mathf.Max(0, pendingMinis - 1);
+            },
+            onDropped = shot =>
+            {
+                if (serial == miniSerial) pendingMinis = Mathf.Max(0, pendingMinis - 1);
+            },
+        });
+        pendingMinis += queued;
+        if (queued > 0) lastMiniQueuedAt = age;
+    }
+
+    // 미니 별창을 아직 기다리는가. 알림이 끊겨도 영영 남지 않도록 마지막 예약 뒤 (발 수 + 1) × 간격 + 0.5초가 지나면 그만 기다린다.
+    private bool WaitingForMinis()
+    {
+        if (pendingMinis <= 0 || rail == null) return false;
+        return age - lastMiniQueuedAt < (rail.miniSpearCount + 1) * rail.echoInterval + 0.5f;
     }
 
     // index 창부터 조준을 멈추고(부채꼴 자리로 천천히 돌아감) 다음 단계에 다시 적을 찾는다.
@@ -277,6 +356,8 @@ public class StarSpearVolley : WorldEntityBase
     {
         foreach (var slot in slots)
             if (slot.spear != null && slot.spear.IsHeld) slot.spear.ForceReturnToPool();
+        miniSerial++;   // 남은 미니 별창은 RailEchoShot이 Player 상태를 보고 스스로 버린다
+        pendingMinis = 0;
         running = false;
         ReturnToPool();
     }

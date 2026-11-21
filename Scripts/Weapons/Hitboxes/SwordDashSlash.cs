@@ -16,6 +16,8 @@ using UnityEngine;
 // - 모양은 Player/SwordDashSlash 셰이더가 사각형 하나에 그리고, 이 스크립트는 값만 MaterialPropertyBlock으로 넘긴다.
 //   궤적의 머리는 화면에 보이는 Player(FixedMotionBody의 보간 자세)를 따라간다. 시간은 게임 시간(Time.time)이라 히트스톱 동안 멈춘다.
 //   셰이더의 _Age는 '베는 순간부터의 시간'(음수 = 돌진·납도 중)이고, _CutClock은 베는 순간의 _Clock이다.
+// - 2026-11-21 무장 특성 3차 사용자 지시 "돌진 베기의 돌진에는 이제 무적": 돌진이 시작되는 Begin부터 도착(Finish)까지 Player 무적을 쥔다
+//   (SwordSkillInvulnerability — 기존 IsInvincible을 쓰고 반격 성공 무적과 겹쳐도 안전). 공격이 끊겨 Track이 멈추면 스스로 Finish하며 풀고, 꺼질 때도 푼다.
 [DefaultExecutionOrder(110)]   // FixedMotionPresentation(99)이 이 프레임의 보간 자세를 계산한 뒤에 읽는다
 public class SwordDashSlash : WorldEntityBase
 {
@@ -65,6 +67,7 @@ public class SwordDashSlash : WorldEntityBase
 
     private readonly List<Target> targets = new();
     private readonly HashSet<HealthBase> seen = new();
+    private readonly SwordSkillInvulnerability invulnerability = new();   // 돌진하는 동안의 Player 무적
     private MaterialPropertyBlock block;
     private BoxCollider2D box;
     private FeedbackDataSO hitFeedback, finalHitFeedback, sheatheFeedback, cutFeedback;
@@ -96,6 +99,7 @@ public class SwordDashSlash : WorldEntityBase
     public float MarkGap => hitInterval / Mathf.Max(1, marksPerHit);
     public float LifeAfterDash => lifeAfterDash;
     public bool IsCollecting => box != null && box.enabled;
+    public bool IsInvulnerable => invulnerability.Active;   // 돌진 무적을 쥐고 있는지(돌진 중 = true, 도착·끊김 뒤 = false)
     public Bounds HitBounds => box != null ? box.bounds : default;
 
     protected override void Awake()
@@ -119,6 +123,7 @@ public class SwordDashSlash : WorldEntityBase
         length = head = dashAge = 0f;
         firstHitTime = -1f;
         hitsGiven = collectTicks = 0;
+        invulnerability.End();
         if (box != null) box.enabled = false;
         if (trail != null) trail.enabled = false;
     }
@@ -146,6 +151,7 @@ public class SwordDashSlash : WorldEntityBase
         hitsGiven = 0;
         beginTime = Time.time;
         lastTrackFrame = Time.frameCount;
+        if (owner is PlayerController player) invulnerability.Begin(player);   // 돌진하는 동안 무적(도착·끊김에 푼다)
         transform.localScale = new Vector3(this.facing, 1f, 1f);   // 왼쪽으로 돌진하면 그림과 판정을 함께 뒤집는다
 
         float width = this.plannedLength + padBack + padFront;
@@ -165,6 +171,7 @@ public class SwordDashSlash : WorldEntityBase
     {
         if (!running || finished) return;
         lastTrackFrame = Time.frameCount;
+        invulnerability.Hold();
         Advance(ownerPosition);
     }
 
@@ -172,6 +179,7 @@ public class SwordDashSlash : WorldEntityBase
     public void Finish(Vector3 ownerPosition)
     {
         if (!running || finished) return;
+        invulnerability.End();   // 도착(또는 끊김) = 돌진 끝. 납도·베기 동안은 무적이 아니다
         Advance(ownerPosition);
         finished = true;
         finishTime = Time.time;
@@ -197,6 +205,7 @@ public class SwordDashSlash : WorldEntityBase
     {
         // FixedUpdate는 그 틱의 물리 계산보다 먼저 온다. 켠 뒤 물리 계산을 CollectTicks번 지나면 끈다.
         if (box != null && box.enabled && ++collectTicks > CollectTicks) box.enabled = false;
+        if (running && !finished) invulnerability.Hold();   // 물리 틱 사이에 반격 무적이 끝났어도 판정 전에 다시 켠다
     }
 
     private void OnTriggerEnter2D(Collider2D other)
@@ -312,6 +321,7 @@ public class SwordDashSlash : WorldEntityBase
     private void OnDisable()
     {
         running = false;
+        invulnerability.End();
         if (box != null) box.enabled = false;
         targets.Clear();
         seen.Clear();

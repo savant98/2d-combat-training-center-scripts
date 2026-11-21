@@ -127,35 +127,4 @@ public static class WeaponTraitEffects
 
     public static PlayerWeaponAbility Attack(CharacterController2D owner) =>
         (owner as PlayerController)?.AbilityManager?.AttackAbility;
-
-    public static void RailFollowUp(CharacterController2D owner, Vector2 origin, EnemyHealth enemy,
-        Vector2 point, WeaponBaseSO.DamageInfo info)
-    {
-        Vector2 heading = (point - origin).normalized;
-        Vector2 offset = Vector2.Perpendicular(heading) * 0.55f;
-        info.damage *= 0.45f;
-        info.knockbackFacing = 0;
-        var attack = Attack(owner);
-        var rail = info.sourceWeapon as RailgunWeaponSO
-            ?? attack?.GetWeaponSet(attack.ExecutingSetIndex)?.normal as RailgunWeaponSO;
-        WeaponTraitFeedbackSO.Play(WeaponTraitCue.RailEcho, origin, heading);
-        for (int i = -1; i <= 1; i += 2)
-        {
-            Vector2 muzzle = origin + offset * i;
-            Vector2 axis = (point - muzzle).normalized;
-            if (rail != null && rail.tracerPrefab != null && WorldEntityPool.Instance != null)
-            {
-                var angle = Quaternion.Euler(0f, 0f, Vector2.SignedAngle(Vector2.right, axis));
-                var tracer = WorldEntityPool.Instance.Spawn(rail.tracerPrefab, muzzle, angle);
-                tracer.Play(muzzle, axis, Vector2.Distance(muzzle, point), false);
-            }
-            else
-            {
-                var line = MakeLine("RailgunFollowUp");
-                SetLine(line, muzzle, point, 0.10f, RailColor);
-                Object.Destroy(line.gameObject, 0.16f);
-            }
-            ApplyEnemyHit(enemy, info, point);
-        }
-    }
 }

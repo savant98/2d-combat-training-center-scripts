@@ -9,11 +9,15 @@ public class PlayerWeaponAbility : PlayerAbility
     public PlayerWeaponTraits Traits { get; private set; }
     public string ActiveArmamentId => GetEquippedArmament(currentSetIndex)?.armamentId;
     public bool IsMachineGunAttacking => IsNormalAttackRunning && selectedWeapon is MachineGunWeaponSO;
+    // 점프가 지금 공격을 끊고 나갈 수 있는지(2026-11-21 사용자 지시 "공격 중 점프도 대시와 똑같이", JumpAbility.TryJump).
+    // 대시와 같은 범위다: 회수 단계(PlayerStateMachine.CanPerform의 대시 조건)와 기술 저장 중. 기관총 연사는 끊지 않고 쏘면서 뛰므로 제외한다.
+    public bool CanJumpCancel => IsActive && !IsMachineGunAttacking && (isStoringSkill || abilityState == AbilityState.Recover);
     public Vector2 PrimaryFireDirection { get; private set; } = Vector2.right;
     public bool IsStarShotActive => !isStoringSkill && IsActive && selectedWeapon == normalWeapon
         && normalWeapon is RangedWeaponSO ranged && ranged.projectilePrefab is StarShot;
     private PlayerStarShotAim starAim;
-    private bool ownsMachineGunFacingLock;
+    // 라이플 실행·회수 중에 새로 누른 공격(연타). 회수가 끝나는 순간 다음 한 발로 잇는다(TryContinueRifleFire, 2026-11-21).
+    private bool rifleShotQueued;
     private bool restoreStorageIdle;
     public bool QueuePrimaryStarShot(RangedWeaponSO weapon, WeaponBaseSO.DamageInfo damage, Vector2 direction)
         => starAim != null && starAim.Queue(weapon, damage, direction);
@@ -163,6 +167,8 @@ public class PlayerWeaponAbility : PlayerAbility
         base.Initialize(manager);
 
         Traits = new PlayerWeaponTraits(controller);
+        // 장전이 끝날 때의 재장전 소리는 라이플 자리를 든 동안만 낸다(기관총 장착 중에는 라이플 탄창을 쓰지 않는다).
+        Traits.IsRifleHeld = () => IsRifleSlotHeld;
         EnemyHealth.DamageApplied += OnEnemyDamageApplied;
         EnemyShieldSystem.ShieldDamageApplied += OnEnemyDamageApplied;
         if (controller.Health != null) controller.Health.OnDamageApplied += OnPlayerDamageApplied;
@@ -294,9 +300,9 @@ public class PlayerWeaponAbility : PlayerAbility
         { secondaryWeaponBuffer.Reset(); return; }
         secondaryWeaponBuffer.RegisterInput();
     }
+    // 작열탄도 누르고 있으면 반복한다(2026-11-21 사용자 지시: 레일건과 같은 조작, 매번 준비 단계부터).
     private bool CanRepeatPrimary => !suppressHeldPrimaryUntilRelease && gearState == GearState.Inactive && controller.CanReceiveInput
-        && InputManager.Held(Button.Attack) && normalWeapon is not IncendiaryRifleWeaponSO
-        && (!IsActive || selectedWeapon == normalWeapon);
+        && InputManager.Held(Button.Attack) && (!IsActive || selectedWeapon == normalWeapon);
     private void RepeatPrimaryInput()
     {
         // 유지 입력은 실제 선입력 버퍼에 남기지 않아 키를 놓으면 다음 자동 타격이 취소된다.
@@ -350,8 +356,13 @@ public class PlayerWeaponAbility : PlayerAbility
             StartNormalWeapon();
             return;
         }
-        if (CanRepeatPrimary) StartNormalWeapon();
+        if (CanRepeatPrimary && !WaitsForJumpRise) StartNormalWeapon();
     }
+    // 누르고 있어 이어지는 공격이 막 뛴 점프를 그 자리에서 멈추지 않게 한다(2026-11-21 "공격 중 점프").
+    // 시작할 때 세로 속도를 지우고 중력을 끄는 기본 무기(해머·칼·레일건·작열탄, StartWindup)는 점프 상승이 끝날 때(최고점)까지 반복을 미룬다.
+    // 라이플·기관총은 세로 속도를 유지하므로 바로 잇는다. 새로 누른 공격은 예전처럼 바로 나간다(공중 공격).
+    private bool WaitsForJumpRise => manager.JumpAbility != null && manager.JumpAbility.IsJumpRising
+        && !(normalWeapon is MachineGunWeaponSO || IsRifle(normalWeapon));
     // 피격 경직(0.3초) 동안은 행동할 수 없는데 입력 버퍼(0.15초)가 그보다 먼저 만료되어, 피격 직후에 누른 공격은 버려지고
     // 경직 끝 무렵에 누른 공격만 나갔다. 같은 조작에도 1타가 나가거나 안 나가는 원인이었다. 경직 동안 입력을 붙잡아 두고,
     // 판정 전에 피격으로 끊긴 첫 타격도 다시 맡겨, 경직이 끝난 첫 행동 가능 프레임에 1타부터 시작한다(피격이 공격을 끊는 규칙은 그대로).
@@ -674,13 +685,19 @@ public class PlayerWeaponAbility : PlayerAbility
                 UpdateGearStageCooldownUI();
                 return;
             }
+            // 기관총 연사 중에는 몸이 이동·대시 방향으로 돌아선다(2026-11-21 방향 전환 제한 해제). 좌우는 지금 보는 방향, 위 입력은 매 프레임 반영한다.
+            // 대시가 방향만 바꾼 프레임에도 총구가 반대쪽에 남지 않게 모형 좌우를 함께 맞춘다.
             if (IsMachineGunAttacking)
-                PrimaryFireDirection = ReadPrimaryAim(PrimaryFireDirection.x > 0f ? 1 : -1);
+            {
+                SnapFacingModel();
+                PrimaryFireDirection = ReadPrimaryAim(controller.Facing);
+            }
 
             if (abilityState == AbilityState.Recover && !IsNormalAttackRunning && controller.CanReceiveInput) storedSkillBuffer.Hold();
             if (abilityState == AbilityState.Execute && !currentHitboxOpened && IsCurrentHitboxOpen())
                 currentHitboxOpened = true;
             TryQueueComboInput();
+            TryQueueRifleShot();
             timer -= SwordFinisherCinematic.DeltaFor(controller);
 
             // 빠르게 잇는 무기(칼)는 후속 입력이 회수 중 들어와도 남은 회수 시간을 기다리지 않는다.
@@ -713,7 +730,7 @@ public class PlayerWeaponAbility : PlayerAbility
                     break;
 
                 case AbilityState.Recover:
-                    if (TryContinueMachineGunBurst() || CancelAttack())
+                    if (TryContinueMachineGunBurst() || TryContinueRifleFire() || CancelAttack())
                         break;
 
                     EndAttack();
@@ -740,7 +757,7 @@ public class PlayerWeaponAbility : PlayerAbility
             || !IsWeaponCooldownReady(selectedWeapon))
             return false;
 
-        // 처음 잡은 좌우 방향으로 계속 연사하며 위 입력은 발사마다 반영한다.
+        // 지금 보는 방향(이동 방향을 따라 돈다)으로 계속 연사하며 위 입력은 발사마다 반영한다.
         skillGauge -= selectedWeapon.skillGauge;
         MarkWeaponUsed(selectedWeapon);
         PublishSkillGauge();
@@ -748,6 +765,50 @@ public class PlayerWeaponAbility : PlayerAbility
         StartExecute();
         if (!manager.DashAbility.IsActive) controller.animator.Play("WeaponExecute", 0, 0f);
         return true;
+    }
+
+    // 라이플 단발 연사(2026-11-21 사용자 지시 "3점사 → 지속 공격: 한 번 누르면 1발, 연타·누르고 있으면 계속").
+    // 회수가 끝나는 순간 공격 키를 누르고 있거나(CanRepeatPrimary) 실행·회수 중에 다시 눌렀으면(rifleShotQueued)
+    // 준비 단계 없이 다음 한 발의 실행으로 바로 잇는다(TryContinueMachineGunBurst와 같은 자리). 회수 단계를 거치므로 그동안 대시할 수 있다.
+    // 탄이 없거나 장전 중이면 잇지 않고 끝낸다. 누르고 있으면 장전이 끝나는 대로 TryAttack이 다시 쏜다.
+    private bool TryContinueRifleFire()
+    {
+        bool queued = rifleShotQueued;
+        rifleShotQueued = false;
+        if (!IsNormalAttackRunning || !IsRifle(selectedWeapon)) return false;
+        // 공격 중에 누른 Gear 키는 공격이 끝나야 충전을 시작한다(StartQueuedGearCharge). 이어 쏘면 Gear를 쓸 수 없으므로 여기서 끊는다.
+        if (gearPressQueued && gearKeyDown) return false;
+        bool wantsShot = CanRepeatPrimary || (queued && gearState == GearState.Inactive && controller.CanReceiveInput);
+        if (!wantsShot || skillGauge < selectedWeapon.skillGauge || !IsWeaponCooldownReady(selectedWeapon)
+            || !CanFirePrimary(selectedWeapon))
+            return false;
+
+        if (selectedWeapon.skillGauge > 0f)
+        {
+            skillGauge -= selectedWeapon.skillGauge;
+            PublishSkillGauge();
+        }
+        MarkWeaponUsed(selectedWeapon);
+        // 이어 쏠 때마다 좌우 입력이 있으면 그쪽으로 돌아서고(모형도 바로 맞춘다), 위 입력이면 위 30도로 쏜다.
+        int inputDir = (int)controller.MoveInput.x;
+        if (inputDir != 0 && inputDir != controller.Facing)
+        {
+            controller.FacingUpdate(inputDir);
+            SnapFacingModel();
+        }
+        PrimaryFireDirection = ReadPrimaryAim(controller.Facing);
+        StopAllCoroutines();
+        StartExecute();
+        if (!manager.DashAbility.IsActive) controller.animator.Play("WeaponExecute", 0, 0f);
+        return true;
+    }
+
+    // 라이플 기본 공격의 실행·회수 중에 새로 누른 공격을 다음 한 발로 남긴다.
+    // 입력 버퍼(0.15초)가 회수 끝보다 먼저 지나도 잃지 않게 여기서 꺼내 둔다. 연타가 누르고 있기보다 빨라지지는 않는다(한 번에 하나만 남긴다).
+    private void TryQueueRifleShot()
+    {
+        if (!IsNormalAttackRunning || !IsRifle(selectedWeapon)) return;
+        if (normalWeaponBuffer.ConsumeIfValid()) rifleShotQueued = true;
     }
 
     // 지금 기본 공격(기본 공격 자리의 무기)을 쓰는 중인지. Gear·보조 무기·저장 기술은 아니다.
@@ -851,7 +912,7 @@ public class PlayerWeaponAbility : PlayerAbility
         // 바꾸기 전 세트의 기본 무기(교체 아이콘에 나가는 쪽으로 표시)
         WeaponBaseSO previousWeapon = firstInit ? null : normalWeapon;
 
-        if (setIndex != currentSetIndex && IsRifle(GetWeaponSet(currentSetIndex)?.normal)) Traits.StartReload();
+        // 2026-11-21 사용자 지시 3차: 무기 교체는 장전 조건이 아니다(탄창 소진 또는 3.5초 무발사: PlayerWeaponTraits.Tick).
         currentSetIndex = setIndex;
 
         var set = weaponData.weaponSets[currentSetIndex];
@@ -958,6 +1019,18 @@ public class PlayerWeaponAbility : PlayerAbility
 
     private static bool IsRifle(WeaponBaseSO weapon) =>
         weapon is RangedWeaponSO && weapon.weaponName == "StarShot";
+
+    // 지금 든 자리가 라이플 무장인지(그 자리에 기관총을 장착한 동안은 아니다). PlayerWeaponTraits.IsRifleHeld가 쓴다.
+    private bool IsRifleSlotHeld
+    {
+        get
+        {
+            if (weaponData == null || weaponData.weaponSets == null) return true;
+            bool rifle = ActiveArmamentId == "Rifle" || IsRifle(GetWeaponSet(currentSetIndex)?.normal);
+            bool machineGunMounted = primaryOverride is MachineGunWeaponSO && primaryOverrideSet == currentSetIndex;
+            return rifle && !machineGunMounted;
+        }
+    }
 
     private bool CanFirePrimary(WeaponBaseSO weapon)
     {
@@ -1349,9 +1422,18 @@ public class PlayerWeaponAbility : PlayerAbility
         normalWeaponBuffer.Reset(); secondaryWeaponBuffer.Reset();
         restartAfterHit = false;
     }
+    // 점프로 공격을 끊는다(JumpAbility.TryJump, CanJumpCancel일 때). 대시처럼 공격을 정리한 뒤 Animator를 대기 자세로 바로 돌려 놓는다.
+    // 회수 → 대기 전이(0.1초)가 섞이는 동안에는 점프 Trigger 전이를 보지 않아 점프 자세가 늦게 나오기 때문이다(대시는 Any State 전이라 필요 없다).
+    public void CancelForJump()
+    {
+        Interrupt();
+        if (!controller.animator.isActiveAndEnabled) return;
+        controller.animator.Play("Idle", 0, 0f);
+        controller.animator.Update(0f);
+    }
     public override void Interrupt()
     {
-        ReleaseMachineGunFacing();
+        rifleShotQueued = false;
         SwordFinisherCinematic.End(controller);
         FinishModelReturn();
         storedSkillBuffer.Reset();
@@ -1404,8 +1486,9 @@ public class PlayerWeaponAbility : PlayerAbility
         if (selectedWeapon is SwordFinisherWeaponSO) Traits.ChangeResolve(-PlayerWeaponTraits.ResolveCapacity);
         FinishModelReturn();
         attackRun++;
+        rifleShotQueued = false;
         bool machineGun = selectedWeapon == normalWeapon && selectedWeapon is MachineGunWeaponSO;
-        if (!machineGun) ReleaseMachineGunFacing();
+        bool rifle = selectedWeapon == normalWeapon && IsRifle(selectedWeapon);
         // 기관총은 사격을 시작할 때 대각선 입력의 좌우 방향까지 함께 잡는다.
         float horizontal = controller.MoveInput.x;
         int inputDir = machineGun && Mathf.Abs(horizontal) > .01f ? (horizontal > 0f ? 1 : -1) : (int)horizontal;
@@ -1454,9 +1537,17 @@ public class PlayerWeaponAbility : PlayerAbility
         else feedbackPlayer.Play(selectedWeapon.windupFeedback, transform);
         if (machineGun)
         {
-            LockMachineGunFacing();
+            // 기관총 장착은 이동 속도 감소·방향 고정이 없다(2026-11-21 사용자 지시 "제한 완전 해제"). 몸은 모터가 이동 방향으로 돌린다.
+            // 다음 물리 틱까지 기다리면 쏘기 시작한 순간 총이 1~2프레임 뒤집혀 보이므로 모형 좌우만 지금 맞춘다. 쏘면서 떨어지고 뛸 수 있게 중력은 켠다.
+            SnapFacingModel();
             controller.GravityOn = true;
-            controller.Velocity.x *= .5f;
+        }
+        else if (rifle)
+        {
+            // 라이플 단발 연사(2026-11-21 사용자 결정): 좌우 이동은 막고(공격 상태) 중력은 그대로 받아 공중에서는 떨어지며 쏜다(세로 속도 유지).
+            SnapFacingModel();
+            controller.GravityOn = true;
+            controller.Velocity.x = 0f;
         }
         else
         {
@@ -1471,29 +1562,27 @@ public class PlayerWeaponAbility : PlayerAbility
             controller.animator.Play("WeaponWindup", 0, 0f);
             controller.animator.Update(0f);
         }
+        // 준비 시간이 0인 기관총(2026-11-21 사용자 지시 "기관총 공격 시작 선딜레이 삭제")은 다음 프레임을 기다리지 않고 누른 프레임에 첫 발을 쏜다.
+        // 준비 Clip(Player_MachineGun_Windup)은 실행 Clip 첫 자세와 같은 정지 자세라 건너뛰어도 모습이 같다.
+        // 준비 값(1)을 Animator가 보지 못하므로 Any State 전이 대신 실행 상태를 바로 재생한다(TryContinueMachineGunBurst와 같다).
+        if (machineGun && timer <= 0f)
+        {
+            StartExecute();
+            if (!manager.DashAbility.IsActive) controller.animator.Play("WeaponExecute", 0, 0f);
+        }
     }
     private Vector2 ReadPrimaryAim(int horizontalFacing)
         => controller.MoveInput.y > .5f ? new Vector2(horizontalFacing * .8660254f, .5f) : new Vector2(horizontalFacing, 0f);
 
-    private void LockMachineGunFacing()
+    // 방금 바꾼 보는 방향에 모형 좌우를 바로 맞춘다. 모터는 다음 FixedUpdate에서야 맞추므로(CharacterController2D.HandleCollisionResult)
+    // 그사이 총구·탄이 반대쪽에서 나가거나 총이 뒤집혀 보이지 않게 한다. 다른 곳이 방향을 잠근 동안에는 건드리지 않는다.
+    private void SnapFacingModel()
     {
-        if (controller.LockFacing) return;
-
-        controller.LockFacing = true;
-        ownsMachineGunFacingLock = true;
-        if (controller.facingModel == null) return;
+        if (controller.LockFacing || controller.facingModel == null) return;
         var facing = controller.facingModel.transform;
         Vector3 scale = facing.localScale;
         scale.x = Mathf.Abs(scale.x) * controller.Facing;
         facing.localScale = scale;
-    }
-
-    private void ReleaseMachineGunFacing()
-    {
-        if (!ownsMachineGunFacingLock) return;
-
-        controller.LockFacing = false;
-        ownsMachineGunFacingLock = false;
     }
 
     private System.Collections.IEnumerator PlayFinisherPreparation(int run, FeedbackDataSO feedback)
@@ -1697,7 +1786,7 @@ public class PlayerWeaponAbility : PlayerAbility
     }
     private void EndAttack()
     {
-        ReleaseMachineGunFacing();
+        rifleShotQueued = false;
         SwordFinisherCinematic.End(controller);
         // 끝난 동작이 남긴 모습을 먼저 본다(아래 정리가 기본값을 다시 쓰기 전에).
         // endsAtIdle: 회수 Clip이 대기 자세에서 끝난 단계(해머 3타, 칼, 칼로 연출하는 기술). hammerShown: 공격용 해머가 아직 보인다.
@@ -1774,7 +1863,6 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (!CanEquipArmament(setIndex, armament)) return false;
         if (GetEquippedArmament(setIndex) == armament) return true;
-        if (IsRifle(GetWeaponSet(setIndex)?.normal)) Traits.StartReload();
         EndPrimaryOverride(setIndex);   // 그 자리의 머신건 장착은 풀린다
         WriteArmament(weaponData.weaponSets[setIndex], armament);
         FilterLockedGear(setIndex);
@@ -2007,7 +2095,11 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (primaryOverride == null) return;
         bool empty = primaryOverride is IncendiaryRifleWeaponSO && Traits.IncendiaryAmmo == 0;
-        if (!empty && Time.time < primaryOverrideEnd) return;
+        bool expired = Time.time >= primaryOverrideEnd;
+        if (!empty && !expired) return;
+        // 마지막 작열탄을 쏜 공격은 그 공격이 끝날 때까지 장착 종료를 미룬다. 바로 끝내면 Tick의 mountEnded가 공격을 끊어
+        // 마지막 발의 반동 Animation이 잘린다(2026-11-21). 장착 시간 만료는 지금처럼 바로 끊는다.
+        if (!expired && IsNormalAttackRunning && selectedWeapon == primaryOverride) return;
         FeedbackDataSO expiredFeedback = primaryOverrideExpirationFeedback;
         EndPrimaryOverride();   // 먼저 상태를 지워 다음 Tick과 종료 이벤트에서 중복 재생하지 않게 한다.
         if (expiredFeedback != null && feedbackPlayer != null) feedbackPlayer.Play(expiredFeedback, transform);

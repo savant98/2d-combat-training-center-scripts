@@ -38,6 +38,7 @@ public class MoveAbility : PlayerAbility
     {
         if (manager.DashAbility.IsActive) return;
 
+        // 기관총 연사 중에는 공격 상태여도 평소 속도로 움직인다(2026-11-21 사용자 지시: 이동 속도 감소·방향 전환 제한 완전 해제).
         bool firingMachineGun = manager.StateMachine.CurrentState == PlayerState.Attack
             && manager.AttackAbility.IsMachineGunAttacking;
         if (!CanDo() && !firingMachineGun)
@@ -46,6 +47,6 @@ public class MoveAbility : PlayerAbility
             return;
         }
 
-        controller.Velocity.x = x * moveSpeed * (firingMachineGun ? .5f : 1f);
+        controller.Velocity.x = x * moveSpeed;
     }
 }

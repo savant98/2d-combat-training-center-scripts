@@ -6,6 +6,10 @@ using UnityEngine;
 //   부모의 좌우 반전(FacingModel 배율 -1)은 InverseTransformVector가 함께 맞춘다(PlayerStarShotAim과 같은 방식).
 // - Animator는 이 모형의 회전을 기록하지 않는다(레일건 Clip은 WeaponModel·코어만 움직인다). 그래서 공격이 끝나면 직접 원래 회전으로 되돌린다.
 //   키를 누르고 있어 다음 사격이 곧바로 이어질 때 한 프레임 수평으로 돌아갔다가 다시 드는 깜빡임이 없도록, 공격이 끝나고 releaseDelay 뒤에 되돌린다.
+// - 총열 과열·충전 표시(2026-11-21 무장 특성 3차): 옛 총신 축 위 LineRenderer 한 줄(DrawHeat)을 지우고, 같은 모형에 RailgunBarrelVisual을
+//   실행 중에 붙인다(Player.prefab 무수정). 총이 실제로 달아오르는 덧그림·증기·연기·불티·충전 전류는 그 컴포넌트가 그린다.
+// - 4차(2026-11-21): 충전 추가타가 총구가 아니라 Player 둘레의 소환 문양(RailEchoShot)에서 나가게 바뀌어, 추가 사격을 위해 공격 사이에도
+//   총을 들고 있게 하던 처리(HoldForEcho·IsEchoHold)를 지웠다. 이제 총은 실제 공격의 조준만 따른다.
 // Animator 적용 뒤에 돌리도록 실행 순서를 늦춘다(PlayerStarShotAim과 같다).
 [DefaultExecutionOrder(120)]
 public sealed class PlayerRailgunAim : MonoBehaviour
@@ -14,7 +18,7 @@ public sealed class PlayerRailgunAim : MonoBehaviour
     [SerializeField, Min(0f)] private float releaseDelay = 0.08f;    // 공격이 끝난 뒤 수평으로 되돌리기까지(초)
 
     private PlayerWeaponAbility ability;
-    private LineRenderer heatLine;
+    private RailgunBarrelVisual barrel;
     private Quaternion restRotation = Quaternion.identity;
     private bool hasRest, aiming;
     private float idleSince = -1f;
@@ -31,6 +35,20 @@ public sealed class PlayerRailgunAim : MonoBehaviour
     public bool IsAiming => aiming;
     public Vector2 Direction => direction;
 
+    /// <summary>이 모형의 총열 과열·충전 표시(없으면 지금 붙인다 — 꺼진 모형이어도 된다).</summary>
+    public RailgunBarrelVisual Barrel
+    {
+        get
+        {
+            if (barrel == null)
+            {
+                barrel = GetComponent<RailgunBarrelVisual>();
+                if (barrel == null) barrel = gameObject.AddComponent<RailgunBarrelVisual>();
+            }
+            return barrel;
+        }
+    }
+
     private void Awake()
     {
         if (!hasRest)
@@ -38,6 +56,7 @@ public sealed class PlayerRailgunAim : MonoBehaviour
             restRotation = transform.localRotation;
             hasRest = true;
         }
+        _ = Barrel;
     }
 
     // 조준 방향(월드)을 정하고 그 자리에서 총신을 돌린다. 모형이 꺼져 있어도 회전은 적용된다.
@@ -57,35 +76,15 @@ public sealed class PlayerRailgunAim : MonoBehaviour
 
     private void LateUpdate()
     {
+        if (!aiming) return;
         var attack = Ability;
-        if (aiming)
+        if (attack == null || attack.AttackPhase == AbilityState.None)
         {
-            if (attack == null || attack.AttackPhase == AbilityState.None)
-            {
-                if (idleSince < 0f) idleSince = Time.time;
-                if (Time.time - idleSince >= releaseDelay) Restore();
-            }
-            else idleSince = -1f;
-            if (aiming) Apply();
+            if (idleSince < 0f) idleSince = Time.time;
+            if (Time.time - idleSince >= releaseDelay) Restore();
         }
-        DrawHeat(attack?.Traits);
-    }
-
-    private void DrawHeat(PlayerWeaponTraits traits)
-    {
-        float heat = traits?.Heat ?? 0f;
-        if (heat <= 0f || Muzzle == null)
-        {
-            if (heatLine != null) heatLine.enabled = false;
-            return;
-        }
-        heatLine ??= WeaponTraitEffects.MakeLine("RailgunBarrelHeat", transform);
-        heatLine.enabled = true;
-        Vector3 axis = transform.TransformVector(Vector3.right).normalized;
-        Color color = Color.Lerp(new Color(0.54f, 0.15f, 0.05f), WeaponTraitEffects.HeatColor, heat);
-        if (traits.IsRailCharged) color = Color.Lerp(color, WeaponTraitEffects.RailColor, 0.55f);
-        WeaponTraitEffects.SetLine(heatLine, Muzzle.position - axis * (0.2f + heat * 0.75f),
-            Muzzle.position - axis * 0.08f, 0.07f + 0.07f * heat, color);
+        else idleSince = -1f;
+        if (aiming) Apply();
     }
 
     private void Apply()

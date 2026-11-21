@@ -9,7 +9,9 @@ using UnityEngine;
 //   3차(2026-11-18): "돌진 베기 속도도 지금보다 더 빨라야 해", Sephiria '일섬' 참고 — 거의 순간이동 같은 직선 돌진(135칸/초), 도착 뒤 납도하고 지나간 길이 한꺼번에 베인다(SwordDashSlash.cutDelay).
 // - 준비(windupTime)가 끝나면 보던 방향으로 dashDistance만큼 dashSpeed로 나아간다. 대시(DashAbility)처럼 Velocity만 주고,
 //   실제 이동은 CharacterController2D.FixedUpdate → RaycastMotor2D.Move가 한다(위치를 직접 바꾸지 않는다). 벽에 막히면 그 자리에서 끝난다.
-// - 나아가는 동안에는 대시처럼 중력과 외부 힘(넉백·반동·점프대)을 받지 않는다. 대시처럼 무적은 아니다.
+// - 나아가는 동안에는 대시처럼 중력과 외부 힘(넉백·반동·점프대)을 받지 않는다.
+//   2026-11-21 무장 특성 3차 사용자 지시 "돌진 베기의 돌진에는 이제 무적": 나아가는 동안(돌진 시작 → 도착·끊김) 무적이다.
+//   무적은 길 개체(SwordDashSlash.Begin ~ Finish)가 쥐어, 공격이 끊겨 이 코루틴이 멈춰도 길 개체가 스스로 마무리하며 푼다.
 // - 지나간 길의 판정·납도·4타·궤적은 SwordDashSlash(풀 개체)가 맡는다. 돌진이 끝나면 길을 넘겨주고 바로 회수(납도 자세)로 넘어간다.
 // - 연출은 칼 모형으로 한다(해머 세트에 넣어도 칼을 뽑아 든다).
 [CreateAssetMenu(menuName = "Weapon/SwordDash")]

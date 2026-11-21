@@ -15,6 +15,8 @@ using UnityEngine;
 //   (옛 산탄 탄과 같은 값. 꼭짓점을 출처로 삼으면 총구에 겹친 적이 Player 쪽으로 끌려온다).
 // - 화면의 전방 화염은 꼭짓점에서 보는 방향으로 즉시 내보내고 같은 프레임에 피해를 적용한다.
 //   총구 섬광·발사음은 실행 피드백이 낸다. 연결된 적중 피드백은 맞은 자리에서 재생한다.
+// - 화상 기폭(2026-11-21 사용자 결정): 화상을 부여하지 않는다. 직격을 맞은 대상의 화상 스택 n을 모두 소모하고, 그 대상에게
+//   detonationDamage 피해의 폭발을 n번(첫 폭발 약 0.067초 뒤, 이후 1/9초 간격 — 2026-11-21 3차에 1.5배 빠르게) 준다(BurnDetonation, 물리 질의 없음).
 [CreateAssetMenu(menuName = "Weapon/Hand Cannon")]
 public class HandCannonWeaponSO : WeaponBaseSO
 {
@@ -35,6 +37,9 @@ public class HandCannonWeaponSO : WeaponBaseSO
     public FeedbackDataSO hitFeedback;
     [Tooltip("전방 화염과 연기(HandCannonFan). 최대 3벌을 재사용하며 BlastPlume은 무기가 직접 발사 프레임에 내보낸다")]
     public GameObject fanEffect;
+    [Header("Burn Detonation")]
+    [Tooltip("화상 기폭: 직격을 맞은 대상의 화상 스택마다 한 번씩 주는 연속 폭발 피해(2026-11-21 사용자 결정 기폭형, 기본 = 직격 100의 20%). 넉백·기술 게이지 없음")]
+    [Min(0f)] public float detonationDamage = 20f;
     private const int MaxFanInstances = 3;
     [NonSerialized] private List<GameObject> fanInstances;
 
@@ -49,6 +54,8 @@ public class HandCannonWeaponSO : WeaponBaseSO
     public Vector2 LastApex { get; private set; }
     public int LastFacing { get; private set; }
     public int LastHitCount { get; private set; }
+    /// <summary>마지막 폭발에서 기폭한 화상 스택 합(대상마다 그 수만큼 연속 폭발).</summary>
+    public int LastDetonatedStacks { get; private set; }
 
     public override IEnumerator WeaponUseSequence(CharacterController2D controller, Action forceRecover = null)
     {
@@ -71,6 +78,7 @@ public class HandCannonWeaponSO : WeaponBaseSO
 
         LastApex = apex;
         LastFacing = facing;
+        LastDetonatedStacks = 0;
         var rotation = Quaternion.Euler(0f, 0f, facing < 0 ? 180f : 0f);
         PlayBlast(apex, rotation);
         LastHitCount = ApplyDamage(controller, apex, axis);
@@ -171,7 +179,21 @@ public class HandCannonWeaponSO : WeaponBaseSO
             if (!InFan(hit, apex, axis, halfAngle, out Vector2 hitPoint)) continue;   // 이 Collider는 밖이어도 같은 대상의 다른 Collider는 볼 수 있다
             damagedTargets.Add(health);
 
-            if (WeaponTraitEffects.ApplyEnemyHit(enemy, info, hitPoint)) EnemyBurn.Apply(enemy);
+            // 화상 스택은 직격 전에 읽어 둔다. 직격으로 죽으면 풀 반환 → EnemyBurn.OnDisable이 스택을 0으로 지운다.
+            var burn = enemy.GetComponent<EnemyBurn>();
+            int burnStacks = burn != null ? burn.Stacks : 0;
+            Bounds bodyBounds = burnStacks > 0 ? hit.bounds : default;   // 직격으로 죽어 꺼져도 기폭 연출을 이 자리에서 낸다
+            // 핸드캐논은 더 이상 화상을 부여하지 않는다(2026-11-21). 화상에 걸린 대상이면 그 스택을 모두 소모해 스택 수만큼 연속 폭발한다(기폭).
+            if (WeaponTraitEffects.ApplyEnemyHit(enemy, info, hitPoint) && burnStacks > 0)
+            {
+                if (burn != null) burn.Detonate();
+                var blast = info;
+                blast.damage = detonationDamage;
+                blast.damageType = DamageType.Normal;
+                blast.knockbackFacing = 0;
+                BurnDetonation.Begin(controller, enemy, hit, burnStacks, blast, bodyBounds);
+                LastDetonatedStacks += burnStacks;
+            }
             OnHitEnemy?.Invoke(controller, hitPoint);
             if (hitFeedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(hitFeedback, hitPoint);
             hits++;

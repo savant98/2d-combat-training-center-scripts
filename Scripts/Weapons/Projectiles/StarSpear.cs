@@ -16,6 +16,11 @@ using UnityEngine;
 //   Smoke(연기 자국)·Sparks(불꽃)는 ProjectileBase가 풀로 돌아갈 때 Trail과 함께 떼어 두므로 폭발 뒤에도 남았다가 사라진다.
 //   TrailRenderer는 emitting이 꺼진 동안 들어온 점을 끊긴 구간으로 보고 그리지 않으므로 비행 중에는 emitting을 켜 두고,
 //   자동 점 생성은 Prefab의 minVertexDistance를 아주 크게 해 막는다(점은 모두 RecordPath가 넣음). 폭발 지점을 넣은 뒤 emitting을 끄면 남은 선은 그대로 보인다.
+// - 레일건 충전 추가타(2026-11-21 무장 특성 3차, 4차에서 쏘는 자리를 바꿈 — 사용자 화면 검수 전 시안):
+//   옛 즉발 추가타(직접 맞은 적에게 그 자리에서 0.45배 × 2)를 없앴다. 충전 상태에서는 StarSpearVolley가 본 창마다 0.2·0.4초 뒤
+//   미니 별창(RailMiniSpear.prefab = 이 Prefab의 Variant, 작은 창·작은 폭발)을 쏜다. 4차부터는 Player 몸 위쪽·아래쪽 바깥의 별 문양
+//   (RailEchoShot)이 이 창을 꺼내 소환하는 동안 Hold로 들고 있다가 목표로 Launch한다(이 스크립트의 비행·폭발은 그대로).
+//   미니 별창은 RailEcho가 켜져 있어 폭발에 피해가 들어간 적마다 RailEchoHit 큐를 낸다(기술 게이지는 주지 않는다 — OnHitEnemy를 잇지 않는다).
 [UnityEngine.Scripting.APIUpdating.MovedFrom(false, sourceNamespace: "", sourceAssembly: "Assembly-CSharp", sourceClassName: "StarCannon")]
 public class StarSpear : ProjectileBase
 {
@@ -44,7 +49,19 @@ public class StarSpear : ProjectileBase
     [SerializeField, Min(0.05f)] private float sparkSpacing = 0.9f;
     [SerializeField] private Vector2 sparkSpeed = new Vector2(2f, 6f);        // 불꽃이 옆으로 튀는 속도(칸/초) 범위
 
-    public bool RailCharged { get; set; }
+    public bool RailCharged { get; set; }   // 검증용: 레일건 충전 상태에서 소환된 창인가(피해에는 쓰지 않는다)
+    // 레일건 충전 추가타(미니 별창): 피해가 들어간 적마다 RailEchoHit 큐. 켜면 넉백을 없앤다(추가 레일 사격·미니 레이저와 같은 '추가타는 넉백 없음' 규칙).
+    // Initialize가 Player 탄의 넉백 방향을 다시 채우므로 Initialize 뒤에 켠다(StarSpearVolley.LaunchMini).
+    public bool RailEcho
+    {
+        get => railEcho;
+        set
+        {
+            railEcho = value;
+            if (value) damageInfo.knockbackFacing = 0;
+        }
+    }
+    private bool railEcho;
     public SpearState State { get; private set; } = SpearState.Held;
     public DetonationCause LastCause { get; private set; }
     public Vector2 LastDetonationPoint { get; private set; }
@@ -109,6 +126,7 @@ public class StarSpear : ProjectileBase
     {
         base.Initialize(owner, damageInfo, speed, count, collideLayer);
         RailCharged = false;
+        RailEcho = false;
         enemyFilter = new ContactFilter2D();
         enemyFilter.SetLayerMask(1 << LayerMask.NameToLayer(ownerFaction == Faction.Player ? "Enemy" : "Player"));
         enemyFilter.useTriggers = true;
@@ -264,7 +282,7 @@ public class StarSpear : ProjectileBase
         if (direct != null)
         {
             damagedTargets.Add(direct);
-            DamageTarget(direct, center, RailCharged);
+            DamageTarget(direct, center);
         }
         if (motor != null && explosionRadius > 0f && damageInfo.damage > 0f)
         {
@@ -286,16 +304,15 @@ public class StarSpear : ProjectileBase
         ReturnToPool();
     }
 
-    private void DamageTarget(HealthBase health, Vector2 hitPoint, bool charged = false)
+    private void DamageTarget(HealthBase health, Vector2 hitPoint)
     {
         if (health.IsInvincible) return;
         if (owner != null && (health == owner.GetComponentInParent<HealthBase>() || health.transform.IsChildOf(owner.transform))) return;
         if (ownerFaction == Faction.Player && health is EnemyHealth enemy)
         {
             if (enemy.enemyShieldSystem != null && enemy.enemyShieldSystem.IsSpawnLocked) return;
-            if (WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint) && charged)
-                WeaponTraitEffects.RailFollowUp(owner, (Vector2)owner.transform.position + Vector2.up * 0.65f,
-                    enemy, enemy.transform.position, damageInfo);
+            if (WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint) && RailEcho)
+                WeaponTraitFeedbackSO.Play(WeaponTraitCue.RailEchoHit, hitPoint, flightDirection);
             OnHitEnemy?.Invoke(owner, hitPoint);
         }
         else if (ownerFaction == Faction.Enemy && health is PlayerHealth player)

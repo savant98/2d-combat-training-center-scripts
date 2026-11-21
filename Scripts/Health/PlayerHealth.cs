@@ -28,6 +28,9 @@ public class PlayerHealth : HealthBase
     // 회복 순간 본체가 빛나는 색과 원래 발광색으로 돌아오는 시간
     private static readonly Color HealFlashColor = new Color(0.25f, 1f, 0.45f) * 3.4f;
     private const float HealFlashTime = 0.45f;
+    // 해머 방어막이 피해를 전부 막았을 때 본체가 번쩍이는 색(빨간 피격 번쩍임 대신, 같은 세기 곡선 3 -> 0)과 막은 양 숫자의 색(방어막 청록)
+    private static readonly Color ShieldFlashColor = new Color(0.12f, 0.5f, 0.65f);
+    private static readonly Color ShieldNumberColor = new Color(0.45f, 0.92f, 1f);
     protected override void Awake()
     {
         base.Awake();
@@ -61,7 +64,13 @@ public class PlayerHealth : HealthBase
     {
         float before = currentHP;
         var traits = GetComponentInParent<PlayerController>()?.AbilityManager?.AttackAbility?.Traits;
+        // 해머 방어막이 방어막 양만큼 먼저 막고 남은 피해만 체력에 들어간다(2026-11-21 4차 사용자 지시). 이 뒤의 damageInfo.damage = 체력 피해.
+        float incoming = damageInfo.damage;
         if (traits != null) damageInfo.damage = traits.Absorb(damageInfo.damage, hitPosition);
+        float absorbed = Mathf.Max(0f, incoming - damageInfo.damage);
+        // 방어막이 전부 막았다(체력 피해 0). 피격 이벤트(훈련 피격 횟수·코스 되돌림)·피격 경직·무적 시간은 그대로 두고,
+        // 피해 숫자와 본체 번쩍임만 방어막 색으로 바꾼다. 실제 체력 피해가 0이라 필살 감소(OnDamageApplied 양 > 0)는 걸리지 않는다.
+        bool shielded = absorbed > 0f && damageInfo.damage <= 0f;
         currentHP -= damageInfo.damage;
         applyingDamage = true;
         try
@@ -77,7 +86,11 @@ public class PlayerHealth : HealthBase
         if (forced) currentHP = 0;
         if (UIManager.Instance != null) UIManager.Instance.UpdateHP(currentHP, maxHP);
         if (FloatingTextManager.Instance != null)
-            FloatingTextManager.Instance.ShowDamage(damageInfo, transform.position + Vector3.up * .5f, Color.red);
+        {
+            if (absorbed > 0f) ShowAbsorbed(damageInfo, absorbed, shielded);
+            // 전부 막았으면 빨간 '0'을 띄우지 않는다.
+            if (!shielded) FloatingTextManager.Instance.ShowDamage(damageInfo, transform.position + Vector3.up * .5f, Color.red);
+        }
         if (currentHP <= 0)
         {
             currentHP = 0;
@@ -88,8 +101,18 @@ public class PlayerHealth : HealthBase
         if (hitSprite != null)
         {
             if (coroutine != null) StopCoroutine(coroutine);
-            coroutine = StartCoroutine(HitSpriteFeedback());
+            coroutine = StartCoroutine(HitSpriteFeedback(shielded ? ShieldFlashColor : Color.red));
         }
+    }
+    // 방어막이 막은 양을 방어막 색 숫자로 띄운다. 체력 피해와 함께 나면(방어막이 부서진 피격) 왼쪽 위로 비켜 빨간 체력 피해 숫자와 겹치지 않게 한다.
+    // 숫자 색 덮어쓰기는 일반 피해 모양에만 적용되므로(FloatingText.Show) 막은 양은 일반 피해 크기·모양으로 띄운다.
+    private void ShowAbsorbed(WeaponBaseSO.DamageInfo damageInfo, float absorbed, bool shielded)
+    {
+        var shown = damageInfo;
+        shown.damage = absorbed;
+        shown.damageType = DamageType.Normal;
+        Vector3 offset = shielded ? Vector3.up * .5f : new Vector3(-.55f, .8f, 0f);
+        FloatingTextManager.Instance.ShowDamage(shown, transform.position + offset, ShieldNumberColor);
     }
     // 회복 순간 본체 톱니가 초록빛으로 번쩍였다가 원래 발광색으로 돌아온다. 피격 번쩍임과 같은 경로라 서로 끊어 준다.
     public override void Heal(WeaponBaseSO.DamageInfo damageInfo)
@@ -108,14 +131,15 @@ public class PlayerHealth : HealthBase
 
         return counter.TryCounter(hitPosition);
     }
-    private IEnumerator HitSpriteFeedback()
+    // 피격 번쩍임: color × 3에서 0.6초 동안 0으로(체력 피해 = 빨강, 방어막이 전부 막음 = 청록).
+    private IEnumerator HitSpriteFeedback(Color color)
     {
-        hitMaterial.SetColor("_EmissionColor", Color.red * 3f);
+        hitMaterial.SetColor("_EmissionColor", color * 3f);
         float intensityValue = 3f;
 
         while (intensityValue > 0)
         {
-            hitMaterial.SetColor("_EmissionColor", Color.red * intensityValue);
+            hitMaterial.SetColor("_EmissionColor", color * intensityValue);
             intensityValue -= Time.deltaTime * 5f;
             yield return null;
         }

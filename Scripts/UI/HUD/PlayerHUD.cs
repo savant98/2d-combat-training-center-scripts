@@ -155,6 +155,9 @@ public class PlayerHUD : MonoBehaviour
 
     private readonly Color[] gearStageColors = { Color.white, Color.white, Color.white };
 
+    /// <summary>체력 바 바로 위의 해머 방어막 바(Start에서 Resources/UI/PlayerShieldBar로 만든다, 없으면 null). 검증이 읽기만 한다.</summary>
+    public PlayerShieldBar ShieldBar { get; private set; }
+
     private Material hpBarMaterial;
     private Material skillGaugeBarMaterial;
     private Material[] skillIconMaterials;
@@ -184,6 +187,14 @@ public class PlayerHUD : MonoBehaviour
         var prefab = Resources.Load<GameObject>("UI/WeaponTraitHud");
         if (prefab != null)
             Instantiate(prefab, transform).GetComponent<WeaponTraitHud>().Configure(gearStage1Slot?.cooldownText?.font, hpBar.rectTransform);
+
+        // 체력 바 바로 위의 해머 방어막 바(2026-11-21 4차 사용자 요청 "체력 위에 쉴드 바"). 체력 바 바로 다음 형제로 들어간다(MainScene 무수정).
+        var shieldPrefab = Resources.Load<GameObject>(PlayerShieldBar.ResourcePath);
+        if (shieldPrefab != null && Instantiate(shieldPrefab, transform).TryGetComponent<PlayerShieldBar>(out var shieldBar))
+        {
+            ShieldBar = shieldBar;
+            shieldBar.Configure(hpBar.rectTransform);
+        }
     }
 
     private void OnDestroy()

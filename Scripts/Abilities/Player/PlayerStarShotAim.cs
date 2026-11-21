@@ -3,6 +3,7 @@ using UnityEngine;
 
 // Animator의 반동 뒤 총신을 조준하고 같은 총구에서 탄과 섬광을 함께 내보낸다.
 // 머신건(MachineGunWeaponSO, 2026-11-18 2차): 총신은 조준 방향에 둔 채 탄 방향만 흩뜨리고(탄착군), 섬광은 무기의 청록 섬광(muzzleFlash)을 쓴다.
+// 작열탄(IncendiaryRifleWeaponSO, 2026-11-21): 레일건과 같은 총구 들림 반동이 보이도록 총신 기준을 조부모(Model)로 둔다(raisedFrame).
 [DefaultExecutionOrder(120)]
 public sealed class PlayerStarShotAim : MonoBehaviour
 {
@@ -20,6 +21,10 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     private Vector3 tip, muzzleRestPosition;
     private Quaternion gunRestRotation, muzzleRestRotation;
     private bool aimed;
+    // 작열탄(IncendiaryRifleWeaponSO) 사격 중이면 총신 회전을 조부모(Model) 기준으로 정해 Clip의 총구 들림 반동(WeaponModel 회전)이 보이게 한다
+    // (PlayerRailgunAim과 같은 방식, 2026-11-21 "레일건과 똑같은 반동"). 라이플·머신건은 지금처럼 부모(WeaponModel) 기준으로 반동 회전을 상쇄한다.
+    // 실제로 쏜 탄의 무기로 정하고 공격이 끝날 때(Restore)까지 유지한다 — 장착이 끝나는 마지막 발의 회수 동안에도 기준이 바뀌지 않게.
+    private bool raisedFrame;
     private int nextMachineGunSound;
     private float scatterStreakStart, lastScatterShot = float.NegativeInfinity;   // 머신건 연사를 이어 온 시간(흩어짐이 커지는 정도)
     public Transform Muzzle => muzzle;
@@ -47,7 +52,9 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     private void Apply(Vector2 direction)
     {
         // 부모의 좌우 반전과 2.5도 반동까지 포함해 실제 총신 축을 맞춘다.
-        Vector3 local = gun.parent.InverseTransformVector(direction);
+        // 작열탄은 조부모 기준이라 부모(WeaponModel)의 반동 회전이 그 위에 더해져 보인다(좌우 반전은 InverseTransformVector가 함께 맞춘다).
+        Transform reference = raisedFrame && gun.parent.parent != null ? gun.parent.parent : gun.parent;
+        Vector3 local = reference.InverseTransformVector(direction);
         gun.localRotation = Quaternion.Euler(0, 0, Mathf.Atan2(local.y, local.x) * Mathf.Rad2Deg);
         muzzle.SetPositionAndRotation(gun.TransformPoint(tip), Quaternion.Euler(0, 0, Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg));
         aimed = true;
@@ -59,6 +66,7 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         if (ability.AttackPhase != AbilityState.Execute) { pending.Clear(); return; }
         foreach (var shot in pending)
         {
+            raisedFrame = shot.weapon is IncendiaryRifleWeaponSO;
             Apply(shot.direction);
             var machineGun = shot.weapon as MachineGunWeaponSO;
             Vector2 fire = shot.direction;
@@ -105,6 +113,7 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     public void Restore()
     {
         pending.Clear();
+        raisedFrame = false;
         if (!aimed) return;
         if (gun != null) gun.localRotation = gunRestRotation;
         if (muzzle != null) { muzzle.localPosition = muzzleRestPosition; muzzle.localRotation = muzzleRestRotation; }

@@ -44,6 +44,8 @@ public class CounterWeaponSO : WeaponBaseSO
             }
 
             counterSucceeded = true;
+            // 반격 성공: 지금 든 무장과 관계없이 해머 방어막을 남은 양·충전량과 상관없이 100%로 채운다(2026-11-21 사용자 지시).
+            playerController.AbilityManager?.AttackAbility?.Traits?.FillBarrier();
             // 이 순간부터 무적 시간을 잰다. 끝내는 일은 PlayerCounterState가 맡으므로 공격 상태가 먼저 끝나도 이어진다.
             counter.BeginInvulnerability(health, successInvincibleTime);
             if (shield != null) shield.Parry(hitPosition, counterHitboxDelay);

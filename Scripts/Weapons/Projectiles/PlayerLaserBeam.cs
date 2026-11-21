@@ -18,6 +18,12 @@ using UnityEngine;
 // - 화면 흔들림: 레이저가 나오는 순간 시작해 꺼지는 순간(끝이든 취소든) 잦아든다. 길이를 미리 정하지 않아 지속시간을 바꿔도 어긋나지 않는다.
 // - 취소: Player가 맞거나 대시·잡기 등으로 공격 상태에서 벗어나면 그 자리에서 빠르게 꺼진다. 코루틴에 기대지 않고 공격 상태를 직접 본다.
 // - 외형: 값은 MaterialPropertyBlock으로 셰이더(Player/Laser, Player/LaserPreview)에 넘긴다. 시간은 Time 기준이라 히트스톱 때 함께 멈춘다.
+// - 레일건 충전 추가타(2026-11-21 무장 특성 3차 → 4차 개편, 사용자 요청 "레이저 발사 시의 추가타도 플레이어 주위에서 시간차로, 레이저 이펙트의 미니 사이즈로"
+//   — 사용자 화면 검수 전 시안): 충전 상태로 쏘면 발사 echoInterval(0.2·0.4초)에 miniLaserCount(2)발의 미니 레이저를 RailEcho로 쏜다.
+//   미니 레이저는 본 레이저 안이 아니라 Player 몸 위쪽·아래쪽 바깥(굵은 본 레이저 밖)의 작은 별 문양(RailgunWeaponSO.miniLaserShotPrefab)에서
+//   조준선을 먼저 그은 뒤, 본 레이저가 지금 맞히는 적(가장 앞, 없으면 조준 방향의 가장 가까운 적, 없으면 본 레이저 끝)으로 모이듯 쏜다.
+//   판정은 RailEcho.Cast(모터 경로, 관통, 쏘는 순간 적마다 한 번), 피해 = 한 틱 피해 × miniLaserDamageScale, 쏠 때 RailCross 큐, 맞으면 RailEchoHit 큐.
+//   본 레이저가 꺼지면(끝·취소) 남은 미니 레이저는 쏘지 않는다.
 // Player 이동(FixedUpdate) 뒤에 자리를 잡도록 실행 순서를 늦춘다.
 [DefaultExecutionOrder(110)]
 public class PlayerLaserBeam : WorldEntityBase
@@ -95,9 +101,10 @@ public class PlayerLaserBeam : WorldEntityBase
 
     private readonly Collider2D[] overlapResults = new Collider2D[64];
     private readonly HashSet<HealthBase> damagedTargets = new HashSet<HealthBase>();
-    private readonly HashSet<EnemyHealth> chargedTargets = new();
     private bool railCharged;
-    private static readonly int ChargedId = Shader.PropertyToID("_Charged");
+    private RailgunWeaponSO rail;          // 충전 상태로 쏠 때만: 미니 레이저 값
+    private int fireSerial;                // 풀에서 다시 쓰일 때 늦게 온 미니 레이저 알림을 버리기 위한 번호
+    private Collider2D lastTarget;         // 가장 최근 틱에 맞힌 적 가운데 포구에서 가장 가까운 것(미니 레이저의 목표)
 
     private MaterialPropertyBlock block;
     private LaserWeaponSO weapon;
@@ -135,6 +142,10 @@ public class PlayerLaserBeam : WorldEntityBase
     public float HalfWidth => halfWidth;              // 보이는 반폭
     public float JudgeHalfWidth => judgeHalfWidth;    // 판정 반폭(터지는 폭은 뺀다)
     public int TickCount { get; private set; }
+    public bool IsRailCharged => railCharged;           // 레일건 충전 상태로 쏜 레이저인가
+    public int MiniLaserCount { get; private set; }     // 쏜 미니 레이저 수
+    public int MiniLaserHits { get; private set; }      // 미니 레이저가 피해를 준 적 수(발마다 더함)
+    public Collider2D LastTarget => lastTarget;         // 가장 최근 틱의 가장 앞 적중 대상(검증용)
 
     protected override void Awake()
     {
@@ -175,6 +186,11 @@ public class PlayerLaserBeam : WorldEntityBase
         halfWidth = judgeHalfWidth = 0f;
         flash = 0f;
         TickCount = 0;
+        railCharged = false;
+        rail = null;
+        fireSerial++;
+        lastTarget = null;
+        MiniLaserCount = MiniLaserHits = 0;
         onHitEnemy = null;
         SetRenderers(false, false);
         if (reticle != null) reticle.gameObject.SetActive(false);
@@ -218,8 +234,12 @@ public class PlayerLaserBeam : WorldEntityBase
     {
         if (phase != Phase.Charge || weapon == null) return;
         ClearParticles(chargeMotes);
-        railCharged = WeaponTraitEffects.Attack(owner)?.Traits.IsRailCharged == true;
-        chargedTargets.Clear();
+        var traits = WeaponTraitEffects.Attack(owner)?.Traits;
+        railCharged = traits != null && traits.IsRailCharged;
+        rail = railCharged ? RailgunWeaponSO.FindFor(owner) : null;
+        fireSerial++;
+        lastTarget = null;
+        MiniLaserCount = MiniLaserHits = 0;
         phase = Phase.Fire;
         phaseAge = 0f;
         beamTime = 0f;
@@ -231,7 +251,6 @@ public class PlayerLaserBeam : WorldEntityBase
         owner.AddRecoil(weapon.recoilPower, owner.Facing);
         UpdateOrigin();
         UpdateBlock();
-        if (railCharged) WeaponTraitFeedbackSO.Play(WeaponTraitCue.RailCross, origin, direction);
         SetRenderers(false, true);
         if (reticle != null) reticle.gameObject.SetActive(false);
         if (muzzle != null) muzzle.gameObject.SetActive(true);
@@ -242,6 +261,7 @@ public class PlayerLaserBeam : WorldEntityBase
         StartHeldShake();
         PlayImpact();
         ApplyVisuals();
+        BeginMiniLasers();
     }
 
     private void FixedUpdate()
@@ -371,6 +391,8 @@ public class PlayerLaserBeam : WorldEntityBase
         if (count <= 0) return;
 
         damagedTargets.Clear();
+        Collider2D nearest = null;
+        float nearestAlong = float.MaxValue;
         for (int i = 0; i < count; i++)
         {
             Collider2D hit = overlapResults[i];
@@ -383,20 +405,55 @@ public class PlayerLaserBeam : WorldEntityBase
             // 맞은 위치: 표적 중심을 레이저 중심선에 내린 점(효과가 레이저 위에서 난다)
             float along = Mathf.Clamp(Vector2.Dot((Vector2)hit.bounds.center - origin, direction), 0f, reach);
             Vector2 hitPoint = origin + direction * along;
-
-            bool hitApplied = WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint);
-            if (hitApplied && railCharged && chargedTargets.Add(enemy))
+            if (along < nearestAlong)
             {
-                var followUp = damageInfo;
-                followUp.knockbackFacing = 0;
-                followUp.damage *= 0.65f;
-                WeaponTraitEffects.ApplyEnemyHit(enemy, followUp, hitPoint);
-                WeaponTraitEffects.ApplyEnemyHit(enemy, followUp, hitPoint);
-                WeaponTraitFeedbackSO.Play(WeaponTraitCue.RailEcho, hitPoint, direction, 0.85f);
+                nearestAlong = along;
+                nearest = hit;
             }
+
+            WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint);
             onHitEnemy?.Invoke(owner, hitPoint);
             if (hitFeedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(hitFeedback, hitPoint);
         }
+        lastTarget = nearest;
+    }
+
+    // ===== 레일건 충전 추가타: 미니 레이저(4차 — Player 둘레에서 시간차로) =====
+    // 발사 순간 miniLaserCount발을 예약한다. 각 발은 본 레이저가 꺼지면(끝·취소) 쏘지 않고 버려진다.
+    private void BeginMiniLasers()
+    {
+        if (rail == null || rail.miniLaserShotPrefab == null || rail.miniLaserCount <= 0 || player == null) return;
+        int serial = fireSerial;
+        var info = damageInfo;
+        info.damage *= rail.miniLaserDamageScale;
+        info.knockbackFacing = 0;
+        RailEcho.Begin(new RailEchoRequest
+        {
+            owner = player,
+            rail = rail,
+            kind = RailEchoKind.Laser,
+            prefab = rail.miniLaserShotPrefab,
+            damage = info,
+            count = rail.miniLaserCount,
+            interval = rail.echoInterval,
+            facing = direction.x < 0f ? -1f : 1f,
+            liveTarget = () => serial == fireSerial && phase == Phase.Fire ? lastTarget : null,
+            fallbackPoint = origin + direction * blockedDistance,
+            searchDirection = direction,
+            searchRange = weapon.laserLength,
+            searchHalfWidth = Mathf.Max(weapon.laserWidth * 0.5f, rail.echoSearchHalfWidth),
+            range = weapon.laserLength,
+            halfWidth = rail.miniLaserHalfWidth,
+            platformLayer = weapon.platformLayer,
+            damageMask = weapon.damageMask,
+            guard = () => serial == fireSerial && phase == Phase.Fire && !isReturning,
+            onFired = (shot, hits) =>
+            {
+                if (serial != fireSerial) return;
+                MiniLaserCount++;
+                MiniLaserHits += hits;
+            },
+        });
     }
 
     // ===== 외형 값 =====
@@ -572,7 +629,6 @@ public class PlayerLaserBeam : WorldEntityBase
         block.SetFloat(FlowId, beamTime);
         block.SetFloat(FlashId, flashValue);
         block.SetFloat(AlphaId, alpha);
-        block.SetFloat(ChargedId, railCharged ? 1f : 0f);
         beamBody.SetPropertyBlock(block);
     }
 
