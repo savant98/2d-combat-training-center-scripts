@@ -104,6 +104,7 @@ public class PlayerLaserBeam : WorldEntityBase
     private bool railCharged;
     private RailgunWeaponSO rail;          // 충전 상태로 쏠 때만: 미니 레이저 값
     private int fireSerial;                // 풀에서 다시 쓰일 때 늦게 온 미니 레이저 알림을 버리기 위한 번호
+    private int miniVolleysFired;          // 이번 발사에서 시작한 미니 레이저 묶음 수
     private Collider2D lastTarget;         // 가장 최근 틱에 맞힌 적 가운데 포구에서 가장 가까운 것(미니 레이저의 목표)
 
     private MaterialPropertyBlock block;
@@ -261,7 +262,8 @@ public class PlayerLaserBeam : WorldEntityBase
         StartHeldShake();
         PlayImpact();
         ApplyVisuals();
-        BeginMiniLasers();
+        miniVolleysFired = 0;
+        UpdateMiniLaserVolleys();
     }
 
     private void FixedUpdate()
@@ -294,6 +296,7 @@ public class PlayerLaserBeam : WorldEntityBase
                 UpdateBlock();
                 EvaluateBeam();
                 UpdateDamage();
+                UpdateMiniLaserVolleys();
                 EmitSparks(dt);
                 if (!endImpactPlayed && phaseAge >= weapon.executeTime - fadeOutDuration - Epsilon)
                 {
@@ -418,7 +421,22 @@ public class PlayerLaserBeam : WorldEntityBase
         lastTarget = nearest;
     }
 
-    // ===== 레일건 충전 추가타: 미니 레이저(4차 — Player 둘레에서 시간차로) =====
+    // ===== 레일건 충전 추가타: 미니 레이저(4차 — Player 둘레에서 시간차로, 5차 — 지속 시간 동안 묶음 miniLaserVolleys번) =====
+    // 묶음 i는 발사 뒤 i × 간격에 시작하고, 그 안의 k번째 발은 묶음 시작 (k + 1) × echoInterval 뒤에 나간다.
+    // 간격은 마지막 묶음의 마지막 발이 광선이 꺼지기 조금 전(0.05초)에 나가도록 지속 시간에 고르게 나눈다.
+    private void UpdateMiniLaserVolleys()
+    {
+        if (rail == null || rail.miniLaserCount <= 0 || miniVolleysFired >= rail.miniLaserVolleys) return;
+        int volleys = Mathf.Max(1, rail.miniLaserVolleys);
+        float span = weapon.executeTime - rail.echoInterval * rail.miniLaserCount - 0.05f;
+        float period = volleys > 1 ? Mathf.Max(rail.echoInterval, span / (volleys - 1)) : 0f;
+        while (miniVolleysFired < volleys && phaseAge + Epsilon >= miniVolleysFired * period)
+        {
+            miniVolleysFired++;
+            BeginMiniLasers();
+        }
+    }
+
     // 발사 순간 miniLaserCount발을 예약한다. 각 발은 본 레이저가 꺼지면(끝·취소) 쏘지 않고 버려진다.
     private void BeginMiniLasers()
     {

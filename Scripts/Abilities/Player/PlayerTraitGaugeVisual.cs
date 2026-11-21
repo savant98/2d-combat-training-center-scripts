@@ -407,7 +407,7 @@ public sealed class TraitGaugeModel
     private bool wasIncendiary;
     private int lastResolve = -1, resolveFrom;
     private float resolveChange = -10f;
-    private float chargeTotal = 5f, lastChargeRemaining;
+    private float chargeTotal = PlayerWeaponTraits.ChargeDuration, lastChargeRemaining;
     private float lastHeat = -1f, heatFrom, heatRise = -10f, railActivity = -10f;
     private float machineGunMount = -10f;
     private bool wasMachineGun;
@@ -620,7 +620,7 @@ public sealed class TraitGaugeModel
         wasIncendiary = false;
         lastResolve = -1;
         resolveChange = -10f;
-        chargeTotal = 5f;
+        chargeTotal = PlayerWeaponTraits.ChargeDuration;
         lastChargeRemaining = 0f;
         lastHeat = -1f;
         heatFrom = 0f;

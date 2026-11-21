@@ -17,9 +17,10 @@ public sealed class PlayerWeaponTraits
     public const float CoolingDelay = 0.5f;
     public const float CoolingRate = 1f / 3f;
     /// <summary>레일건 충전(Gear 1) 지속 시간(초).</summary>
-    public const float ChargeDuration = 5f;
+    public const float ChargeDuration = 10f;   // 5차 사용자 지시: 5 → 10초
     // 2026-11-21 사용자 지시 3차: 쉴드 충전에 필요한 수급량을 1/3로(준 피해의 3배가 충전된다). 방어막 내구도(BarrierCapacity)는 그대로.
-    public const float BarrierChargeRate = 3f;
+    /// <summary>방어막이 가득 차는 평타 환산 횟수(2026-11-21 5차 사용자 지시: 평타 10번, 회전 망치 3틱 = 평타 1번, 지면 평탄화 적중 = 평타 5번, 반격 성공 = 즉시).</summary>
+    public const int BarrierHitsToFull = 10;
     // 2026-11-21 사용자 지시 3차: 탄창을 다 쓰거나, 마지막 라이플 탄 뒤 이 시간 동안 쏘지 않으면 장전한다(무기 교체는 장전 조건이 아니다).
     public const float IdleReloadDelay = 3.5f;
     /// <summary>방어막 외피 반지름(칸). 피격 연출을 외피 위에서 낸다 — HammerBarrierVisual의 막 반지름과 같은 값으로 둔다.</summary>
@@ -72,7 +73,7 @@ public sealed class PlayerWeaponTraits
     public void AddBarrierCharge(float amount)
     {
         if (Barrier > 0f || amount <= 0f) return;
-        BarrierCharge = Mathf.Min(BarrierCapacity, BarrierCharge + amount * BarrierChargeRate);
+        BarrierCharge = Mathf.Min(BarrierCapacity, BarrierCharge + amount);
         if (BarrierCharge >= BarrierCapacity)
         {
             Barrier = BarrierCapacity;
@@ -84,6 +85,25 @@ public sealed class PlayerWeaponTraits
         }
         else Play(WeaponTraitCue.ShieldCharge);   // 소리 없음(2026-11-21 사용자 지시), 작은 시각 효과만
         Changed?.Invoke();
+    }
+
+    private object lastBarrierSource;
+    private int lastBarrierFrame = -1;
+    private float lastBarrierTime = -10f;
+
+    /// <summary>
+    /// 해머 무기 적중을 평타 환산 횟수(hits)만큼 방어막 충전에 더한다(평타 1번 = 용량의 1/BarrierHitsToFull).
+    /// 같은 출처(source)가 같은 프레임에 여러 적을 맞혀도 한 번으로 센다. window(초)를 주면 그 시간 안의 같은 출처 적중도 한 번으로 센다(지면 평탄화는 한 번 쓸 때 한 번).
+    /// </summary>
+    public void AddBarrierHits(float hits, object source, float window = 0f)
+    {
+        if (hits <= 0f) return;
+        if (source != null && ReferenceEquals(source, lastBarrierSource)
+            && (Time.frameCount == lastBarrierFrame || Time.time - lastBarrierTime < window)) return;
+        lastBarrierSource = source;
+        lastBarrierFrame = Time.frameCount;
+        lastBarrierTime = Time.time;
+        AddBarrierCharge(hits * BarrierCapacity / BarrierHitsToFull);
     }
 
     /// <summary>

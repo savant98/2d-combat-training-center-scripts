@@ -68,7 +68,8 @@ public class RailgunWeaponSO : WeaponBaseSO
     [Header("Charged Echo - Laser (미니 레이저)")]
     [Tooltip("미니 레이저 한 발(조준선 → 본 레이저와 같은 재질의 작은 레이저)")]
     public RailEchoShot miniLaserShotPrefab;
-    [Min(0)] public int miniLaserCount = 2;                         // 파괴 광선 한 번마다 미니 레이저 수
+    [Min(0)] public int miniLaserCount = 2;                         // 미니 레이저 한 묶음(순차 타격)의 발 수
+    [Min(1)] public int miniLaserVolleys = 5;                       // 파괴 광선 지속 시간 동안 묶음을 몇 번 쏘는지(5차 사용자 지시: 2발 순차 타격 × 5번)
     [Min(0f)] public float miniLaserDamageScale = 0.65f;            // 미니 레이저 피해 = 파괴 광선 한 틱 피해 × 이 값
     [Min(0.01f)] public float miniLaserHalfWidth = 0.35f;           // 미니 레이저 판정 반폭(칸)
 

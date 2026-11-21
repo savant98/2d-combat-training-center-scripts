@@ -1010,9 +1010,10 @@ public class PlayerWeaponAbility : PlayerAbility
         {
             if (armament == null || armament.armamentId != "Hammer") continue;
             var source = info.sourceWeapon;
-            if (source == armament.normal || source == armament.gearStage1
-                || source == armament.gearStage2 || source == armament.gearStage3)
-                Traits.AddBarrierCharge(amount);
+            // 평타 환산(5차 지시): 평타 1타 = 1, 회전 망치 한 틱 = 1/3, 지면 평탄화 적중 = 5(한 번 쓸 때 한 번), 반격은 성공 때 FillBarrier로 즉시.
+            if (source == armament.normal) Traits.AddBarrierHits(1f, source);
+            else if (source == armament.gearStage2) Traits.AddBarrierHits(1f / 3f, source);
+            else if (source == armament.gearStage3) Traits.AddBarrierHits(5f, source, 1.5f);
             break;
         }
     }

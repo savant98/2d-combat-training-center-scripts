@@ -11,7 +11,7 @@ public static class ArmamentMenuGuide
 
     public static string CardDescription(PlayerArmamentSO armament) => armament?.armamentId switch
     {
-        "Hammer" => "해머 피해로 방어막 충전 · 반격 성공 시 100%\n받는 피해를 방어막 양만큼 먼저 막음",
+        "Hammer" => $"평타 {PlayerWeaponTraits.BarrierHitsToFull}번으로 방어막 충전 · 반격 성공 시 100%\n받는 피해를 방어막 양만큼 먼저 막음",
         "Rifle" => $"{PlayerWeaponTraits.MagazineCapacity}발 탄창 · 단발 연사 · 다 쓰거나 {PlayerWeaponTraits.IdleReloadDelay:0.#}초 쉬면 장전\n화상 최대 {EnemyBurn.Capacity}중첩 · 기관총 피해 증가",
         "Sword" => $"돌진 베기 적중으로 필살 최대 {PlayerWeaponTraits.ResolveCapacity}스택\n검기 강화와 일격필살에 사용",
         "Railgun" => $"연속 {PlayerWeaponTraits.RailShotsToOverheat}발에 과열 · 사격 중지 시 냉각\n폭발 후 {PlayerWeaponTraits.OverheatDuration:0}초 동안 무장 복구",
@@ -44,7 +44,7 @@ public static class ArmamentMenuGuide
         StarSpearWeaponSO => ("별창을 소환합니다. 별창은 주변의 적을 찾아 날아가 폭발합니다.",
             "레일건 충전 중 소환하면 별창마다 미니 별창 2발이 0.2초 간격으로 뒤따라 날아갑니다."),
         LaserWeaponSO => ("정면으로 지속 광선을 발사해 적에게 반복 피해를 줍니다.",
-            "레일건 충전 상태에서 발사하면 미니 레이저 2발이 0.2초 간격으로 추가 발사됩니다."),
+            "레일건 충전 상태에서 발사하면 광선이 이어지는 동안 미니 레이저 2발 순차 타격이 5번 이어집니다."),
         _ => (string.Empty, string.Empty)
     };
 }

@@ -58,7 +58,7 @@ public sealed class RailChargeAura : MonoBehaviour
     public float SecondsLeft => lastLeft;
     /// <summary>지금 보이는 충전 칸 수(터지는 중인 칸 제외) = 남은 초(올림).</summary>
     public int AliveCells { get; private set; }
-    public int CellCount => Mathf.Clamp(Mathf.CeilToInt(PlayerWeaponTraits.ChargeDuration - 1e-3f), 1, 8);
+    public int CellCount => Mathf.Clamp(Mathf.CeilToInt(PlayerWeaponTraits.ChargeDuration - 1e-3f), 1, 10);
     public bool IsBlinking { get; private set; }
     public int PopCount { get; private set; }
 
