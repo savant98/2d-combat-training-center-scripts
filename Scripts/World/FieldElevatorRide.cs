@@ -110,6 +110,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
     private Rect interior;
     private float railDistance;
     private float peakSpeed, shaftUrgency, arrivalProgress;
+    private float shaftMinY, shaftMaxY;
     private bool parkPending;
 
     // 이 이동이 맡은 것(정리할 때 되돌린다)
@@ -129,7 +130,6 @@ public sealed class FieldElevatorRide : MonoBehaviour
     private Transform shaftVisuals;
     private MeshRenderer darkRenderer, beamRenderer;
     private Mesh darkMesh, beamMesh;
-    private MaterialPropertyBlock shaftProperties;
     private CinemachineImpulseListener rideImpulse;
     private float impulseGain, motorPitch, motorVolume, beamScroll;
     private readonly List<Vector3> beamVertices = new List<Vector3>(512);
@@ -244,10 +244,12 @@ public sealed class FieldElevatorRide : MonoBehaviour
             LobbyOrigin = new Vector2(source.transform.position.x, source.CeilingTopY);
             rig.transform.position = new Vector3(LobbyOrigin.x, LobbyOrigin.y, rig.transform.position.z);
             railDistance = beamScroll = arrivalProgress = 0f;
-            float clearance = Mathf.Max(0f, LobbyOrigin.y + 5f - source.FloorY);
+            // 카메라의 화면 하단까지 천장 위에 들어간 뒤 좌표계를 옮긴다.
+            float clearance = Mathf.Max(0f, LobbyOrigin.y + Mathf.Max(5f, rideLens - ascentLift + 2f) - source.FloorY);
             peakSpeed = Mathf.Max(cruiseSpeed, clearance * 2f / AccelerationSeconds);
             var lobbyBox = LobbyBounds();
-            float leftFill = Mathf.Min(-fillHalfWidth, lobbyBox.xMin - LobbyOrigin.x), rightFill = Mathf.Max(fillHalfWidth, lobbyBox.xMax - LobbyOrigin.x);
+            float halfWidth = ShaftHalfWidth();
+            float leftFill = Mathf.Min(-halfWidth, lobbyBox.xMin - LobbyOrigin.x), rightFill = Mathf.Max(halfWidth, lobbyBox.xMax - LobbyOrigin.x);
             float rise = peakSpeed * AccelerationSeconds * .5f + source.FloorY - LobbyOrigin.y;
             var lobbyFill = Rect.MinMaxRect(leftFill, 0f, rightFill, Mathf.Max(columnHeight, rise) + Mathf.Max(fillTopMargin, rideLens * 2f));
             BuildFill(lobbyFill);
@@ -255,7 +257,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
             rig.SetActive(true);
             SetStationShaft(true);
             CreateShaftVisuals();
-            SetRushEffects(0f, 0f);
+            SetRushEffects(false, 0f);
             source.DetachCar(carHolder);
             following = false;
             var lobbyCamera = GameManager.Instance.LobbyRoom != null ? GameManager.Instance.LobbyRoom.VirtualCamera : null;
@@ -300,16 +302,13 @@ public sealed class FieldElevatorRide : MonoBehaviour
 
             CurrentPhase = Phase.Ascending;
             float accelerationDistance = peakSpeed * AccelerationSeconds;
-            for (var step = TravelUp(AccelerationSeconds, t => accelerationDistance * RampDistance(t), t =>
-            {
-                float darkness = Ease(Mathf.InverseLerp(.53f, 1f, t));
-                SetRushEffects(darkness, Ease(t));
-            }); step.MoveNext();)
+            for (var step = TravelUp(AccelerationSeconds, t => accelerationDistance * RampDistance(t),
+                t => SetRushEffects(false, Ease(t))); step.MoveNext();)
                 yield return step.Current;
 
             source.SetAlarm(false);
             SetStationShaft(false);
-            SetRushEffects(1f, 1f);
+            SetRushEffects(true, 1f);
             CurrentPhase = Phase.Rush;
             // 갱도 잔상의 위치와 속도를 유지한 채 어두운 프레임에서 좌표계를 교장 쪽으로 옮긴다.
             yield return null;
@@ -345,11 +344,11 @@ public sealed class FieldElevatorRide : MonoBehaviour
                 t => brakeDistance * (t - RampDistance(t)) + correction * SmoothArrival(t), t =>
                 {
                     arrivalProgress = t;
-                    float darkness = 1f - Ease(Mathf.InverseLerp(.23f, .92f, t));
-                    SetRushEffects(darkness, 1f - Ease(t));
+                    // 바닥 아래의 불투명한 갱도가 화면 안에서 내려가며 교장을 드러낸다.
+                    SetRushEffects(false, 1f - Ease(t));
                 }); step.MoveNext();)
                 yield return step.Current;
-            SetRushEffects(0f, 0f);
+            SetRushEffects(false, 0f);
 
             // ---- 12. 착지: 흔들림·먼지 → 잠시 뒤 문 열림 ----
             CurrentPhase = Phase.Landing;
@@ -398,6 +397,8 @@ public sealed class FieldElevatorRide : MonoBehaviour
         HideLoadingPanel();
         if (!HasSwitchedRoom) throw new InvalidOperationException("방 전환 뒤 지금 방이 목적지가 아닙니다.");
 
+        // 교장을 다시 방문할 때도 갱도가 가리고 있는 동안 첫 Wave의 배경·지형을 맞춘다.
+        if (host.Content.TryGetComponent(out WaveCellTerrain terrain)) terrain.ResetForArrival();
         Vector2 entry = host.entryPoint.position;
         interior = InteriorRect();
         var roomFollow = room.VirtualCamera != null ? room.VirtualCamera.GetComponent<CinemachineFollow>() : null;
@@ -416,8 +417,10 @@ public sealed class FieldElevatorRide : MonoBehaviour
         rideCamera.PreviousStateIsValid = false;
         if (view != null) view.transform.position = cameraBefore + delta;
 
-        var outer = Rect.MinMaxRect(Mathf.Min(interior.xMin, entry.x - fillHalfWidth),
-            FieldOrigin.y - fillTopMargin, Mathf.Max(interior.xMax, entry.x + fillHalfWidth), interior.yMax + fillTopMargin);
+        float halfWidth = ShaftHalfWidth();
+        float verticalMargin = Mathf.Max(fillTopMargin, rideLens + 2f);
+        var outer = Rect.MinMaxRect(Mathf.Min(interior.xMin, entry.x - halfWidth),
+            FieldOrigin.y - verticalMargin, Mathf.Max(interior.xMax, entry.x + halfWidth), interior.yMax + verticalMargin);
         var origin = (Vector2)rig.transform.position;
         BuildFill(Subtract(Offset(outer, -origin), Offset(interior, -origin)));
         SetBounds(Union(RoomCameraBox(), outer));
@@ -540,7 +543,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
         following = false;
         CarSpeed = 0f;
         if (rideCamera != null) rideCamera.Priority = idlePriority;
-        SetRushEffects(0f, 0f);
+        SetRushEffects(false, 0f);
         if (!IsRiding) CurrentPhase = Phase.Idle;
         if (!hierarchy) { parkPending = true; return; }
         parkPending = false;
@@ -687,7 +690,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
         var car = source != null ? source.Car : null;
         if (car != null && dy != 0f) car.AddTravel(dy);
         railDistance += Mathf.Abs(dy);
-        float spacing = Mathf.Lerp(beamSpacing, beamSpacing * .48f, ShaftDarkness);
+        float spacing = Mathf.Lerp(beamSpacing, beamSpacing * .48f, shaftUrgency);
         if (railDistance >= spacing)
         {
             railDistance %= spacing;
@@ -829,14 +832,18 @@ public sealed class FieldElevatorRide : MonoBehaviour
         var root = new GameObject("ShaftVisuals");
         shaftVisuals = root.transform;
         shaftVisuals.SetParent(rig.transform, false);
-        shaftProperties = new MaterialPropertyBlock();
 
         darkMesh = new Mesh { name = "ElevatorShaftDarkness" };
         darkMesh.vertices = new[] { new Vector3(-1f, -1f), new Vector3(-1f, 1f), new Vector3(1f, 1f), new Vector3(1f, -1f) };
         darkMesh.colors = new[] { Color.white, Color.white, Color.white, Color.white };
         darkMesh.triangles = new[] { 0, 1, 2, 0, 2, 3 };
         darkMesh.RecalculateBounds();
+        // 방 배경과 지형 위, 케이지와 Player 아래에 갱도의 불투명한 경계를 그린다.
+        fill.sortingOrder = 31997;
         darkRenderer = AddShaftRenderer("Darkness", darkMesh, fill.sharedMaterial, 31998);
+        var darknessProperties = new MaterialPropertyBlock();
+        darknessProperties.SetColor(TintId, VoidColor);
+        darkRenderer.SetPropertyBlock(darknessProperties);
 
         beamMesh = new Mesh { name = "ElevatorShaftBeams" };
         beamMesh.MarkDynamic();
@@ -857,7 +864,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
 
     private void UpdateShaftVisuals()
     {
-        if (shaftVisuals == null || !darkRenderer.enabled) return;
+        if (shaftVisuals == null || (!darkRenderer.enabled && !beamRenderer.enabled)) return;
         var camera = Camera.main;
         float height = Mathf.Max(rideLens, camera != null ? camera.orthographicSize : rideLens);
         float width = height * (camera != null ? camera.aspect : 16f / 9f);
@@ -872,7 +879,15 @@ public sealed class FieldElevatorRide : MonoBehaviour
         beamTriangles.Clear();
         float extentY = height + 4f;
         float edge = width + 5f;
-        float light = Mathf.Sin(ShaftDarkness * Mathf.PI) * .7f + shaftUrgency * .23f;
+        shaftMinY = -extentY;
+        shaftMaxY = extentY;
+        if (!darkRenderer.enabled)
+        {
+            // 잔상과 레일도 천장 위 또는 교장 바닥 아래의 갱도에서만 보인다.
+            if (HasSwitchedRoom) shaftMaxY = Mathf.Min(shaftMaxY, FieldFloorY - shaftVisuals.position.y);
+            else shaftMinY = Mathf.Max(shaftMinY, LobbyOrigin.y - shaftVisuals.position.y);
+        }
+        float light = shaftUrgency * .23f;
         Color rail = new Color(.15f, .17f, .18f, light * .52f);
         AddShaftBeam(-3.5f, -extentY, -3.36f, extentY, rail);
         AddShaftBeam(3.36f, -extentY, 3.5f, extentY, rail);
@@ -911,8 +926,10 @@ public sealed class FieldElevatorRide : MonoBehaviour
             for (int row = -count; row <= count; row++)
             {
                 float bottom = row * interval - offset;
-                if (bottom > height || bottom + length < -height) continue;
-                AddSpeedStreak(x, bottom, length, halfWidth, color);
+                float low = Mathf.Max(bottom, shaftMinY);
+                float high = Mathf.Min(bottom + length, shaftMaxY);
+                if (low >= high) continue;
+                AddSpeedStreak(x, low, high - low, halfWidth, color);
             }
         }
     }
@@ -942,6 +959,9 @@ public sealed class FieldElevatorRide : MonoBehaviour
 
     private void AddShaftBeam(float left, float bottom, float right, float top, Color color)
     {
+        bottom = Mathf.Max(bottom, shaftMinY);
+        top = Mathf.Min(top, shaftMaxY);
+        if (bottom >= top) return;
         int first = beamVertices.Count;
         beamVertices.Add(new Vector3(left, bottom));
         beamVertices.Add(new Vector3(left, top));
@@ -953,6 +973,12 @@ public sealed class FieldElevatorRide : MonoBehaviour
     }
 
     // ===================== 바깥 채움 =====================
+
+    private float ShaftHalfWidth()
+    {
+        var camera = Camera.main;
+        return Mathf.Max(fillHalfWidth, rideLens * (camera != null ? camera.aspect : 16f / 9f) + 5f);
+    }
 
     private void BuildFill(params Rect[] rects)
     {
@@ -1009,16 +1035,14 @@ public sealed class FieldElevatorRide : MonoBehaviour
         if (audio != null) { motorPitch = audio.pitch; motorVolume = audio.volume; }
     }
 
-    private void SetRushEffects(float darkness, float urgency)
+    private void SetRushEffects(bool covered, float urgency)
     {
-        ShaftDarkness = darkness;
+        ShaftDarkness = covered ? 1f : 0f;
         shaftUrgency = urgency;
         if (darkRenderer != null)
         {
-            darkRenderer.enabled = darkness > 0f;
-            beamRenderer.enabled = darkness > 0f && urgency > .015f;
-            shaftProperties.SetColor(TintId, new Color(0f, 0f, 0f, darkness));
-            darkRenderer.SetPropertyBlock(shaftProperties);
+            darkRenderer.enabled = covered;
+            beamRenderer.enabled = urgency > .015f;
         }
         var audio = loop?.GetSource();
         if (audio != null)

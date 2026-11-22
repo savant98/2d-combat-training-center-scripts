@@ -1947,14 +1947,40 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (!CanEquipArmament(setIndex, armament)) return false;
         if (GetEquippedArmament(setIndex) == armament) return true;
+        ApplyEquippedArmament(setIndex, armament, true);
+        return true;
+    }
+
+    private void ApplyEquippedArmament(int setIndex, PlayerArmamentSO armament, bool persist)
+    {
         EndPrimaryOverride(setIndex);   // 그 자리의 머신건 장착은 풀린다
         WriteArmament(weaponData.weaponSets[setIndex], armament);
         FilterLockedGear(setIndex);
         equippedArmaments[setIndex] = armament;
-        if (DataManager.Instance != null) DataManager.Instance.SetEquippedArmament(setIndex, armament.armamentId);
+        if (persist && DataManager.Instance != null) DataManager.Instance.SetEquippedArmament(setIndex, armament.armamentId);
         if (setIndex == currentSetIndex) ApplyWeaponSet(setIndex, true);
         ArmamentChanged?.Invoke(setIndex);
-        return true;
+    }
+
+    internal System.Action BeginTutorialWeaponSwap(PlayerArmamentSO practiceArmament)
+    {
+        if (practiceArmament == null || practiceArmament.normal == null) return null;
+        int slot = 0;
+        while (slot < WeaponSetCount && GetWeaponSet(slot).armamentCategory != practiceArmament.category) slot++;
+        if (slot >= WeaponSetCount) return null;
+        var original = GetEquippedArmament(slot);
+        if (IsActive) Interrupt();
+        if (original != practiceArmament) ApplyEquippedArmament(slot, practiceArmament, false);
+        if (CurrentSetIndex == slot && WeaponSetCount > 1) ApplyWeaponSet(slot == 0 ? 1 : 0, true);
+        if (original == null || original == practiceArmament) return null;
+
+        // 재수강 중 다른 원거리 무장이 저장돼 있어도 라이플을 빌려 실습하고 기존 무장으로 복귀한다.
+        return () =>
+        {
+            if (this == null || GetEquippedArmament(slot) != practiceArmament) return;
+            if (CurrentSetIndex == slot && IsActive) Interrupt();
+            ApplyEquippedArmament(slot, original, false);
+        };
     }
 
     // 에셋(Player_Weapon_Data)을 직접 고치지 않도록 실행용 사본을 만든다. 무장을 바꾸면 이 사본의 자리만 바뀐다.

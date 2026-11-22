@@ -71,6 +71,9 @@ public class EnemyHealth : HealthBase
     }
     private EnemyController controller;
     private float minimumHealth;
+    private WeaponBaseSO requiredDamageWeapon;
+
+    internal void RequireDamageWeapon(WeaponBaseSO weapon) => requiredDamageWeapon = weapon;
     private Coroutine coroutine;
     protected override void Awake()
     {
@@ -92,6 +95,7 @@ public class EnemyHealth : HealthBase
         LifeVersion++;
         // 풀에서 다시 사용될 때 일반 전투로 보호 상태가 이어지지 않게 한다.
         minimumHealth = 0f; invulnerabilityOwners.Clear();
+        requiredDamageWeapon = null;
     }
     protected override void Die()
     {
@@ -100,7 +104,7 @@ public class EnemyHealth : HealthBase
     }
     public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
-        if(IsDamageBlocked) return;
+        if (IsDamageBlocked || (requiredDamageWeapon != null && damageInfo.sourceWeapon != requiredDamageWeapon)) return;
         if (minimumHealth > 0f)
         {
             // Die 호출 전에 양의 피해만 남은 허용량으로 제한한다. 음수 피해는 기존 동작을 유지한다.

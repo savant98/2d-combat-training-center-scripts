@@ -864,6 +864,11 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (IsPreloaded) ClearPanels();
     }
 
+    internal void ResetForArrival()
+    {
+        if (IsPreloaded && !roomSpaceReset) ResetMap();
+    }
+
     private void ResetMap()
     {
         CancelCameraSettlement(true);

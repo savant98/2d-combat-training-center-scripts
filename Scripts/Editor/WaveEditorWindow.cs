@@ -984,6 +984,7 @@ public sealed class WaveEditorWindow : EditorWindow
                 Property(tutorial, "action", "실습 행동");
                 var action = (TutorialAction)tutorial.FindPropertyRelative("action").enumValueIndex;
                 if (action == TutorialAction.Move) Property(tutorial, "requiredDistance", "이동 실습 거리");
+                if (action == TutorialAction.SwapWeapon) Property(tutorial, "practiceArmament", "실습용 무장");
                 if (action == TutorialAction.Dash) Property(tutorial, "dashCrossingOffset", "대시 도달 거리");
                 var steps = tutorial.FindPropertyRelative("steps");
                 if (steps != null) EditorGUILayout.PropertyField(steps, new GUIContent("포커스 설명 단계"), true);

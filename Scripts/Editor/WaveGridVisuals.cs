@@ -119,7 +119,19 @@ public static class WavePrefabVisuals
             var scale=(Vector2)prefab.transform.localScale;
             return new Bounds(Vector2.Scale(box!=null?box.offset:capsule.offset,scale),Vector2.Scale(box!=null?box.size:capsule.size,new Vector2(Mathf.Abs(scale.x),Mathf.Abs(scale.y))));
         }
-        var enemy=prefab.GetComponent<EnemyController>();var root=enemy!=null && enemy.model!=null?enemy.model:prefab;
+        var enemy=prefab.GetComponent<EnemyController>();
+        // 몸체가 자식 HitBox에 있는 훈련 표적은 실제 충돌 하단을 격자 바닥에 맞춘다.
+        if (collision && enemy != null && enemy.Health != null && enemy.Health.TryGetComponent(out BoxCollider2D hitBox))
+        {
+            var matrix = Matrix4x4.Scale(prefab.transform.localScale) * prefab.transform.worldToLocalMatrix * hitBox.transform.localToWorldMatrix;
+            var bounds = new Bounds(matrix.MultiplyPoint3x4(hitBox.offset), Vector3.zero);
+            var halfSize = hitBox.size * .5f;
+            for (int x = -1; x <= 1; x += 2)
+                for (int y = -1; y <= 1; y += 2)
+                    bounds.Encapsulate(matrix.MultiplyPoint3x4(hitBox.offset + new Vector2(x * halfSize.x, y * halfSize.y)));
+            return bounds;
+        }
+        var root=enemy!=null && enemy.model!=null?enemy.model:prefab;
         bool found=false;var result=new Bounds();
         foreach(var renderer in root.GetComponentsInChildren<Renderer>(true).Where(r=>VisibleModelRenderer(r,root.transform)))
         {

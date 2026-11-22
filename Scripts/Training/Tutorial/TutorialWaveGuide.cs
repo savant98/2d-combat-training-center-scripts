@@ -41,6 +41,9 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
     private readonly Vector3[] focusCorners = new Vector3[4];
     private readonly List<EnemyController> preparingEnemies = new();
     private EnemyShieldSystem practiceShield;
+    private TerminalEquipmentGlyph stepIcon;
+    private bool defeatPractice;
+
     private JumpAbility practiceJump;
     private PlayerWeaponAbility practiceStorage;
     private bool storedInPractice, usedInPractice;
@@ -92,6 +95,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
         gameObject.SetActive(true);
         owner = manager;
         lesson = configuration;
+        defeatPractice = manager.Data.waves[manager.currentWaveIndex].clearType == WaveClearType.DefeatAllTargets;
         owner.WaveEnded += Close;
         owner.WavesReset += Close;
         owner.EnemySpawned += TrackEnemySpawn;
@@ -159,12 +163,8 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
     {
         if (phase != GuidePhase.Waiting || enemy == null) return;
         preparingEnemies.Add(enemy);
-        if (lesson.action == TutorialAction.ShieldBreakGear && enemy.Health is TrainingDummyHealth dummy
-            && dummy.enemyShieldSystem != null)
-        {
-            practiceShield = dummy.enemyShieldSystem;
-            practiceShield.ConfigureTrainingCapacity(195f);
-        }
+        if (!defeatPractice && lesson.action == TutorialAction.ShieldBreakGear)
+            practiceShield = enemy.Health != null ? enemy.Health.enemyShieldSystem : null;
     }
 
     private bool IsPresentationPreparing()
@@ -213,6 +213,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
         presentation?.BeginStep();
         presentation?.SetBindingText(CurrentKeys());
         var step = CurrentStep;
+        ShowStepIcon(step != null ? step.icon : TutorialStepIcon.None);
         if (title != null) title.text = step != null && !string.IsNullOrEmpty(step.title) ? step.title : lesson.title;
         if (body != null)
         {
@@ -225,6 +226,41 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
         pagePrompt = InputBindingDisplay.Confirm + " 선택 · " + (stepIndex + 1) + " / " + StepCount + (stepIndex + 1 < StepCount ? "  다음 설명" : "  설명 마치기");
         SetPrompt(pagePrompt);
         UpdateFocus();
+    }
+
+    private void ShowStepIcon(TutorialStepIcon icon)
+    {
+        if (panel == null) return;
+        if (icon == TutorialStepIcon.None)
+        {
+            if (stepIcon != null) stepIcon.gameObject.SetActive(false);
+            return;
+        }
+
+        if (stepIcon == null)
+        {
+            var node = new GameObject("TutorialStepIcon", typeof(RectTransform), typeof(CanvasRenderer), typeof(TerminalEquipmentGlyph));
+            stepIcon = node.GetComponent<TerminalEquipmentGlyph>();
+            var rect = stepIcon.rectTransform;
+            rect.SetParent(panel, false);
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(32f, -18f);
+            rect.sizeDelta = new Vector2(36f, 36f);
+        }
+        var glyph = icon switch
+        {
+            TutorialStepIcon.Shield => TerminalEquipmentGlyph.Glyph.Shield,
+            TutorialStepIcon.Gear => TerminalEquipmentGlyph.Glyph.Gear,
+            TutorialStepIcon.Break => TerminalEquipmentGlyph.Glyph.Breakable,
+            TutorialStepIcon.Gauge => TerminalEquipmentGlyph.Glyph.Gauge,
+            TutorialStepIcon.GearReady => TerminalEquipmentGlyph.Glyph.GearReady,
+            TutorialStepIcon.Storage => TerminalEquipmentGlyph.Glyph.Storage,
+            TutorialStepIcon.Swap => TerminalEquipmentGlyph.Glyph.Swap,
+            TutorialStepIcon.Secondary => TerminalEquipmentGlyph.Glyph.Secondary,
+            _ => TerminalEquipmentGlyph.Glyph.Attack
+        };
+        stepIcon.Configure(glyph, new Color(1f, .82f, .49f), 4f);
+        stepIcon.gameObject.SetActive(true);
     }
 
     public void OnMove(Vector2 direction) { }
@@ -310,7 +346,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
         }
         else DockExplanation(above >= below);
         panel.sizeDelta = new Vector2(width, height);
-        PlaceText(title, 18f, 38f, 18f, 28f);
+        PlaceText(title, 18f, 38f, 18f, 28f, TitleLeftPadding());
         PlaceText(body, 68f, height - 142f, 14f, 24f);
         PlaceText(prompt, height - 62f, 44f, 15f, 22f);
     }
@@ -325,6 +361,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
     private void StartPractice()
     {
         ReleaseFocus();
+        ShowStepIcon(TutorialStepIcon.None);
         SetPanelLayout(false);
         if (panel != null) panel.gameObject.SetActive(!lesson.wallInstructions);
         if (title != null) title.text = lesson.title;
@@ -333,7 +370,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
         lastPosition = player.transform.position;
         weapons = new WeaponObservation(player.AbilityManager.AttackAbility);
         initialWeaponSet = weapons.SetIndex;
-        if (lesson.action == TutorialAction.SkillStorage)
+        if (!defeatPractice && lesson.action == TutorialAction.SkillStorage)
         {
             practiceStorage = player.AbilityManager.AttackAbility;
             if (practiceStorage != null)
@@ -389,16 +426,16 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
                 success = abilities.DashAbility != null && abilities.DashAbility.IsActive && ReachedDashExit();
                 break;
             case TutorialAction.ShieldBreakGear:
-                success = practiceShield != null && practiceShield.SuccessfulBreakCount > 0;
+                success = !defeatPractice && practiceShield != null && practiceShield.SuccessfulBreakCount > 0;
                 break;
-            case TutorialAction.SkillStorage: success = storedInPractice && usedInPractice; break;
-            case TutorialAction.SwapWeapon: success = weapons.SetIndex >= 0 && weapons.SetIndex != initialWeaponSet; break;
+            case TutorialAction.SkillStorage: success = !defeatPractice && storedInPractice && usedInPractice; break;
+            case TutorialAction.SwapWeapon: success = !defeatPractice && weapons.SetIndex >= 0 && weapons.SetIndex != initialWeaponSet; break;
             case TutorialAction.SecondaryWeapon: success = weapons.IsExecutingSecondary; break;
             case TutorialAction.Gear: success = weapons.IsExecutingGear; break;
         }
         lastPosition = player.transform.position;
         if (success) Complete();
-        else if (lesson.action == TutorialAction.Gear || lesson.action == TutorialAction.SecondaryWeapon) SetPrompt(PracticePrompt());
+        else if (defeatPractice || lesson.action == TutorialAction.Gear || lesson.action == TutorialAction.SecondaryWeapon) SetPrompt(PracticePrompt());
     }
 
     private void OnPracticeJump(bool extraJump)
@@ -421,6 +458,27 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
 
     private string PracticePrompt()
     {
+        if (defeatPractice)
+        {
+            string targets = $"남은 표적 {owner.aliveTargets}기";
+            switch (lesson.action)
+            {
+                case TutorialAction.Attack:
+                    return CurrentKeys() + " · " + targets;
+                case TutorialAction.SwapWeapon:
+                    var ability = player.AbilityManager.AttackAbility;
+                    bool ready = ability != null && ability.GetEquippedArmament(ability.CurrentSetIndex) == lesson.practiceArmament;
+                    return ready
+                        ? "틈 가까이에서 [ " + BindingLabel("Attack") + " ] 사격 · " + targets
+                        : "[ " + BindingLabel("SwapWeapon") + " ] 키로 라이플 무장 선택";
+                case TutorialAction.ShieldBreakGear:
+                    return "쉴드를 0으로 → 기어 스킬로 브레이크 → 체력 소진 · " + targets;
+                case TutorialAction.SkillStorage:
+                    if (owner.TutorialStoredSkillUsed) return "저장 스킬 사용 확인 · " + targets;
+                    if (owner.TutorialSkillStored) return "기어 입력을 놓은 상태에서 [ " + InputBindingDisplay.StoreSkill + " ] 사용";
+                    return "기본 공격으로 게이지 충전 → 기어 준비 → [ " + InputBindingDisplay.StoreSkill + " ] 저장";
+            }
+        }
         if ((lesson.action == TutorialAction.Gear || lesson.action == TutorialAction.SecondaryWeapon) && weapons != null && weapons.NeedsGauge(lesson.action))
             return "게이지 충전: 훈련 표적을 [ " + BindingLabel("Attack") + " ]로 적중시키십시오 · " + weapons.GaugeLabel(lesson.action);
         switch (lesson.action)
@@ -444,7 +502,9 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
             case TutorialAction.Dash: return "대시 [ " + BindingLabel("Dash") + " ]";
             case TutorialAction.SwapWeapon: return "무기 전환 [ " + BindingLabel("SwapWeapon") + " ]";
             case TutorialAction.SecondaryWeapon: return "보조 무기 [ " + BindingLabel("SecondaryWeapon") + " ]";
-            case TutorialAction.Shield: return "표적 적중 [ " + BindingLabel("Attack") + " ]";
+            case TutorialAction.Attack:
+            case TutorialAction.Shield: return "기본 공격 [ " + BindingLabel("Attack") + " ]";
+            case TutorialAction.ShieldBreakGear: return "공격 [ " + BindingLabel("Attack") + " ] · 기어 준비 [ " + BindingLabel("Gear") + " ] 유지";
             case TutorialAction.Break:
             case TutorialAction.Gear: return "기어 [ " + BindingLabel("Gear") + " ] → 발동 [ " + BindingLabel("Attack") + " ]";
             case TutorialAction.SkillStorage: return "기어 [ " + BindingLabel("Gear") + " ] → 저장 [ " + InputBindingDisplay.StoreSkill + " ]";
@@ -479,19 +539,21 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
             return;
         }
         panel.sizeDelta = explaining ? new Vector2(780f, 340f) : new Vector2(780f, 240f);
-        PlaceText(title, explaining ? 24f : 18f, explaining ? 44f : 38f, 18f, explaining ? 30f : 26f);
+        PlaceText(title, explaining ? 24f : 18f, explaining ? 44f : 38f, 18f, explaining ? 30f : 26f, TitleLeftPadding());
         PlaceText(body, explaining ? 82f : 64f, explaining ? 158f : 102f, 14f, explaining ? 25f : 21f);
         PlaceText(prompt, explaining ? 254f : 176f, explaining ? 62f : 46f, 16f, explaining ? 24f : 22f);
     }
 
-    private static void PlaceText(TextMeshProUGUI text, float top, float height, float minimumFont, float maximumFont)
+    private float TitleLeftPadding() => stepIcon != null && stepIcon.gameObject.activeSelf ? 82f : 32f;
+
+    private static void PlaceText(TextMeshProUGUI text, float top, float height, float minimumFont, float maximumFont, float leftPadding = 32f)
     {
         if (text == null) return;
         var rect = text.rectTransform;
         rect.anchorMin = new Vector2(0f, 1f);
         rect.anchorMax = new Vector2(1f, 1f);
         rect.pivot = new Vector2(.5f, 1f);
-        rect.offsetMin = new Vector2(32f, -top - height);
+        rect.offsetMin = new Vector2(leftPadding, -top - height);
         rect.offsetMax = new Vector2(-32f, -top);
         text.enableAutoSizing = true;
         text.fontSizeMin = minimumFont;
@@ -556,6 +618,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
             case TutorialAction.Dash: return "Dash";
             case TutorialAction.SwapWeapon: return "SwapWeapon";
             case TutorialAction.SecondaryWeapon: return "SecondaryWeapon";
+            case TutorialAction.Attack: return "Attack";
             case TutorialAction.Gear: return "Gear";
             case TutorialAction.SkillStorage: return "StoreSkill";
             default: return "Interact";

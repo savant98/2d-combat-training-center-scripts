@@ -60,6 +60,11 @@ public class WaveManager : MonoBehaviour
     private bool isWaveActive = false;
     private bool isSpawnActive = false;
     private bool bossDefeatedThisWave;
+    private PlayerWeaponAbility tutorialStorageAbility;
+    private Action restoreTutorialArmament;
+    private readonly List<EnemyHealth> tutorialStorageTargets = new();
+    internal bool TutorialSkillStored { get; private set; }
+    internal bool TutorialStoredSkillUsed { get; private set; }
     private Wave currentWave;
     private List<EnemyController> activeEnemies = new List<EnemyController>();
     private List<WorldEntityBase> currentWaveEntities = new List<WorldEntityBase>();
@@ -217,6 +222,7 @@ public class WaveManager : MonoBehaviour
     }
     private void OnDisable()
     {
+        StopTutorialPractice();
         StopAllCoroutines();
         isWaveActive = isSpawnActive = false;
         ReleasePlayer();
@@ -226,6 +232,7 @@ public class WaveManager : MonoBehaviour
     // 다음 Wave 준비도 진행되지 않는다. 적과 지형은 그대로 두고, 재도전·로비 복귀의 ForceClear·BeginWaves가 정리한다.
     public void HaltForPlayerDefeat()
     {
+        StopTutorialPractice();
         StopAllCoroutines();
         // 보스 등장 카메라(보스를 따라가며 확대)가 도는 중이었으면 그 코루틴도 함께 끊기므로 카메라를 플레이어로 돌려 둔다.
         if (RoomManager.Instance != null && RoomManager.Instance.CurrentRoom != null) RoomManager.Instance.CurrentRoom.ResetBossEntryCamera();
@@ -242,6 +249,10 @@ public class WaveManager : MonoBehaviour
         isSpawnActive = true;
         activeEnemies.Clear();
         foreach (var prepared in preparedCourses) InitializeSpawn(prepared.Value.gameObject, prepared.Key);
+        BeginTutorialStoragePractice(wave);
+        var tutorial = wave.tutorial;
+        if (tutorial != null && tutorial.enabled && tutorial.action == TutorialAction.SwapWeapon && tutorial.practiceArmament != null)
+            restoreTutorialArmament = GameManager.Instance?.Player?.AbilityManager?.AttackAbility?.BeginTutorialWeaponSwap(tutorial.practiceArmament);
         TutorialWaveGuide.Begin(this, wave.tutorial);
         WaveStarted?.Invoke(wave);
 
@@ -303,6 +314,14 @@ public class WaveManager : MonoBehaviour
                     {
                         aliveTargets++;
                         activeEnemies.Add(enemyInstance);
+                        if (wave.tutorial != null && wave.tutorial.enabled && wave.tutorial.action == TutorialAction.SwapWeapon && wave.tutorial.practiceArmament != null)
+                            enemyInstance.Health?.RequireDamageWeapon(wave.tutorial.practiceArmament.normal);
+                        if (tutorialStorageAbility != null && !TutorialStoredSkillUsed && enemyInstance.Health != null)
+                        {
+                            // 저장과 호출을 익히기 전까지 게이지를 다시 채울 표적을 남겨 둔다.
+                            enemyInstance.Health.SetMinimumHealth(1f);
+                            tutorialStorageTargets.Add(enemyInstance.Health);
+                        }
 
                         enemyInstance.SetWaveDeathHandler(() =>
                         {
@@ -499,8 +518,50 @@ public class WaveManager : MonoBehaviour
             coroutine = StartCoroutine(NextWaveDelay(currentWave != null ? currentWave.clearDelay : 0f));
         }
     }
+    private void BeginTutorialStoragePractice(Wave wave)
+    {
+        if (wave.clearType != WaveClearType.DefeatAllTargets || wave.tutorial == null || !wave.tutorial.enabled
+            || wave.tutorial.action != TutorialAction.SkillStorage) return;
+        tutorialStorageAbility = GameManager.Instance?.Player?.AbilityManager?.AttackAbility;
+        if (tutorialStorageAbility == null) return;
+        tutorialStorageAbility.SkillStorageFinished += OnTutorialSkillStored;
+        tutorialStorageAbility.StoredSkillUsed += OnTutorialStoredSkillUsed;
+    }
+
+    private void OnTutorialSkillStored(bool completed) => TutorialSkillStored |= completed;
+
+    private void OnTutorialStoredSkillUsed()
+    {
+        if (!TutorialSkillStored) return;
+        TutorialStoredSkillUsed = true;
+        ReleaseTutorialStorageTargets();
+    }
+
+    private void ReleaseTutorialStorageTargets()
+    {
+        foreach (var target in tutorialStorageTargets)
+            if (target != null) target.SetMinimumHealth(0f);
+        tutorialStorageTargets.Clear();
+    }
+
+    private void StopTutorialPractice()
+    {
+        var restoreArmament = restoreTutorialArmament;
+        restoreTutorialArmament = null;
+        restoreArmament?.Invoke();
+        if (tutorialStorageAbility != null)
+        {
+            tutorialStorageAbility.SkillStorageFinished -= OnTutorialSkillStored;
+            tutorialStorageAbility.StoredSkillUsed -= OnTutorialStoredSkillUsed;
+            tutorialStorageAbility = null;
+        }
+        ReleaseTutorialStorageTargets();
+        TutorialSkillStored = TutorialStoredSkillUsed = false;
+    }
+
     private void ClearCurrentWaveEntities()
     {
+        StopTutorialPractice();
         activeGoals.Clear();
         foreach (var enemy in currentWaveEnemies)
             if (enemy != null && enemy.gameObject.activeInHierarchy) EnemyPool.Instance.Despawn(enemy);

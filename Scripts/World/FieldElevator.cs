@@ -8,7 +8,8 @@ using UnityEngine;
 /// 이때는 텔레포트하는게 아니라 엘리베이터를 타고 실시간으로 이동하는 연출을 해줘".
 /// - 천장(Tilemap)은 지우지 않는다. 천장 앞에 그린 해치 소품의 두 판이 좌우로 갈라져 하우징 속으로 들어가는 것으로 '천장이 갈라지는' 모습을 낸다.
 /// - 등장 연출(PlayReveal): 경고등·경고음 → 빗장이 빠지고 판이 내려앉았다가 갈라짐(Animator, 이동·회전 Clip) → 케이블에 매달린 케이지가 내려와
-///   위층 바닥에 착지(완충기·먼지·흔들림) → 문이 열리고 탑승 안내. 카메라·입력 막기·세이브 기록은 GameEventManager가 맡는다.
+///   위층 바닥에 착지(완충기·먼지·흔들림). 문은 탑승 입구와 상호작용하면 열린다.
+///   카메라·입력 막기·세이브 기록은 GameEventManager가 맡는다.
 ///   실행 번호(run)와 OnDisable 확정은 LobbyStationUnlock과 같은 관례다(멈춘 코루틴의 finally는 돌지 않는다).
 /// - 탑승(RequestRide): 훈련 목록에서 각개 전투 WaveData를 찾아 ElevatorRideTransition으로 방 전환을 요청한다. 이동 연출은 Scene 루트의 FieldElevatorRide가 맡는다.
 /// 루트는 배치용(위치만)이며 위층 플랫폼 윗면(Y -28)을 따라 X로만 옮긴다. 해치 모형·천장 위 단면·먼지·케이블 매단 점·카메라 중심은 루트의 자식이라 함께 따라가고,
@@ -51,12 +52,10 @@ public sealed class FieldElevator : MonoBehaviour
     [SerializeField, Min(.1f), Tooltip("하강 속도(칸/초)")] private float revealSpeed = 6f;
     [SerializeField, Min(.1f)] private float revealAcceleration = 12f;
     [SerializeField, Min(.1f)] private float revealBraking = 7f;
-    [SerializeField, Min(0f), Tooltip("착지 뒤 문을 열기 전")] private float landingSettle = .4f;
-    [SerializeField, Min(.1f), Tooltip("문 Clip 길이(도구가 기록)")] private float doorTime = .6f;
+    [SerializeField, Min(0f), Tooltip("착지 뒤 경고등을 끄기 전 대기 시간")] private float landingSettle = .4f;
     [SerializeField, Tooltip("완충기 눌림 깊이")] private float bufferStroke = .12f;
     [SerializeField, Min(.05f)] private float bufferTime = .35f;
-    [SerializeField, Min(0f), Tooltip("끝날 때 탑승 안내를 띄우는 시간")] private float noticeTime = 4f;
-    [SerializeField, Min(0f), Tooltip("문이 다 열린 뒤 연출이 끝나기까지")] private float finishHold = .25f;
+    [SerializeField, Min(0f), Tooltip("착지 연출 끝의 대기 시간")] private float finishHold = .25f;
 
     [Header("소리")]
     [SerializeField, Tooltip("0 경고, 1 볼트, 2 풀림, 3 구동, 4 잠김(해치 열림 Clip의 Animation Event PlayBayCue)")] private SoundOptions[] bayCues = new SoundOptions[0];
@@ -90,9 +89,12 @@ public sealed class FieldElevator : MonoBehaviour
     public float RevealStartHeight => revealStartHeight;
     /// <summary>케이지가 정박 자리에 붙어 있고 등장한 상태인가.</summary>
     public bool IsDocked => revealed && car != null && carSlot != null && car.transform.parent == carSlot;
+    /// <summary>정박한 케이지가 문을 열거나 탑승하는 입력을 받을 수 있는가.</summary>
+    public bool CanInteractAtDock => isActiveAndEnabled && IsDocked && !IsPlaying && car.isActiveAndEnabled && car.DoorsSettled
+                                    && ride != null && ride.isActiveAndEnabled && !ride.IsRiding
+                                    && RoomTransitionManager.Instance != null && !RoomTransitionManager.Instance.IsTransitioning;
     /// <summary>지금 탑승해 출발할 수 있는가.</summary>
-    public bool CanBoard => isActiveAndEnabled && revealed && IsDocked && !IsPlaying && ride != null && ride.isActiveAndEnabled && !ride.IsRiding
-                            && RoomTransitionManager.Instance != null && !RoomTransitionManager.Instance.IsTransitioning;
+    public bool CanBoard => CanInteractAtDock && car.DoorsOpen;
 
     private void Awake()
     {
@@ -126,7 +128,7 @@ public sealed class FieldElevator : MonoBehaviour
 
     // ===================== 상태 =====================
 
-    /// <summary>등장한 상태(케이지가 내려와 문이 열려 있음)와 숨긴 상태(해치 닫힘·케이지 없음)를 연출 없이 세운다. 꺼져 있으면 켜질 때 적용한다.</summary>
+    /// <summary>등장한 상태(케이지가 내려와 문이 닫혀 있음)와 숨긴 상태(해치 닫힘·케이지 없음)를 연출 없이 세운다. 꺼져 있으면 켜질 때 적용한다.</summary>
     public void ApplyRevealed(bool value)
     {
         revealed = value;
@@ -197,7 +199,7 @@ public sealed class FieldElevator : MonoBehaviour
         car.transform.SetParent(holder, true);
     }
 
-    /// <summary>케이지를 정박 자리에 문이 열린 채 다시 붙인다(등장 상태일 때만 보인다). reparent가 거짓이고 케이지가 다른 부모 아래에 있으면 아무것도 하지 않고 false.</summary>
+    /// <summary>케이지를 정박 자리에 문이 닫힌 채 다시 붙인다(등장 상태일 때만 보인다). reparent가 거짓이고 케이지가 다른 부모 아래에 있으면 아무것도 하지 않고 false.</summary>
     internal bool DockCar(bool reparent = true)
     {
         if (car == null || carSlot == null) return true;
@@ -210,7 +212,7 @@ public sealed class FieldElevator : MonoBehaviour
         t.localPosition = Vector3.zero;
         t.localRotation = Quaternion.identity;
         t.localScale = Vector3.one;
-        car.SetDoors(true, true);
+        car.SetDoors(false, true);
         car.SetCableTop(cableTop != null ? cableTop.position : (Vector3?)null);
         car.SetBeacons(false);
         car.SetPanel(FieldElevatorCar.PanelMode.Idle);
@@ -287,20 +289,11 @@ public sealed class FieldElevator : MonoBehaviour
             time = 0f;
             while (time < landingSettle) { if (!Running(id)) yield break; time += Time.deltaTime; yield return null; }
 
-            // 4) 경고등을 끄고 문을 연다.
+            // 4) 경고등을 끄고 착지 상태를 확정한다.
             SetAlarm(false);
-            car.SetDoors(true);
-            time = 0f;
-            while (time < doorTime + .3f && !(time > .05f && car.DoorsSettled)) { if (!Running(id)) yield break; time += Time.deltaTime; yield return null; }
-
-            // 5) 탑승 안내.
             PlaySound(readySound, t.position);
             revealed = true;
-            if (boarding != null)
-            {
-                boarding.gameObject.SetActive(true);
-                boarding.ShowReadyNotice(noticeTime);
-            }
+            if (boarding != null) boarding.gameObject.SetActive(true);
             time = 0f;
             while (time < finishHold) { if (!Running(id)) yield break; time += Time.deltaTime; yield return null; }
         }
@@ -365,6 +358,8 @@ public sealed class FieldElevator : MonoBehaviour
     private void TestRide()
     {
         if (!revealed) ApplyRevealed(true);
+        if (!CanInteractAtDock) return;
+        car.SetDoors(true, true);
         RequestRide();
     }
 
