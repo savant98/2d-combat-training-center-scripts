@@ -20,7 +20,14 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     private AnimationFeedbackReceiver receiver;
     private Vector3 tip, muzzleRestPosition;
     private Quaternion gunRestRotation, muzzleRestRotation;
-    private bool aimed;
+    private float gunScaleSign;
+    private Vector2 displayedDirection;
+    private const float AutoAimReturnDuration = .22f;
+    private bool aimed, autoAimApplied;
+    private float autoAimReturnTime;
+    private Vector2 lastAutoAim;
+    private Vector3 lastAutoMuzzlePosition;
+    private Quaternion lastAutoMuzzleRotation;
     // 작열탄(IncendiaryRifleWeaponSO) 사격 중이면 총신 회전을 조부모(Model) 기준으로 정해 Clip의 총구 들림 반동(WeaponModel 회전)이 보이게 한다
     // (PlayerRailgunAim과 같은 방식, 2026-11-21 "레일건과 똑같은 반동"). 라이플·머신건은 지금처럼 부모(WeaponModel) 기준으로 반동 회전을 상쇄한다.
     // 실제로 쏜 탄의 무기로 정하고 공격이 끝날 때(Restore)까지 유지한다 — 장착이 끝나는 마지막 발의 회수 동안에도 기준이 바뀌지 않게.
@@ -40,6 +47,7 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         receiver = owner.model.GetComponent<AnimationFeedbackReceiver>();
         if (gun == null || muzzle == null) return;
         gunRestRotation = gun.localRotation;
+        gunScaleSign = Mathf.Sign(gun.localScale.x);
         muzzleRestPosition = muzzle.localPosition; muzzleRestRotation = muzzle.localRotation;
         tip = gun.InverseTransformPoint(muzzle.position);
     }
@@ -49,42 +57,91 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         pending.Add(new Request { weapon = weapon, damage = damage, direction = direction });
         return true;
     }
-    private void Apply(Vector2 direction)
+    private void Apply(Vector2 direction, bool precise = false)
     {
         // 부모의 좌우 반전과 2.5도 반동까지 포함해 실제 총신 축을 맞춘다.
         // 작열탄은 조부모 기준이라 부모(WeaponModel)의 반동 회전이 그 위에 더해져 보인다(좌우 반전은 InverseTransformVector가 함께 맞춘다).
-        Transform reference = raisedFrame && gun.parent.parent != null ? gun.parent.parent : gun.parent;
-        Vector3 local = reference.InverseTransformVector(direction);
-        gun.localRotation = Quaternion.Euler(0, 0, Mathf.Atan2(local.y, local.x) * Mathf.Rad2Deg);
-        muzzle.SetPositionAndRotation(gun.TransformPoint(tip), Quaternion.Euler(0, 0, Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg));
+        Transform reference = !precise && raisedFrame && gun.parent.parent != null ? gun.parent.parent : gun.parent;
+        int flip = precise && direction.x * owner.Facing < 0f ? -1 : 1;
+        var scale = gun.localScale;
+        scale.x = Mathf.Abs(scale.x) * gunScaleSign * flip;
+        gun.localScale = scale;
+        Vector3 local = reference.InverseTransformVector(direction * flip);
+        gun.localRotation = Quaternion.Euler(0f, 0f, PlayerController.AimAngle(local));
+        muzzle.SetPositionAndRotation(gun.TransformPoint(tip), Quaternion.Euler(0f, 0f, PlayerController.AimAngle(direction)));
+        displayedDirection = direction;
         aimed = true;
     }
+    public void AlignHandCannon(Vector2 direction)
+    {
+        if (IsModelVisible && muzzle != null) Apply(direction, true);
+    }
+
     private void LateUpdate()
     {
-        if (ability == null || !ability.IsStarShotActive || gun == null) { Restore(); return; }
-        Apply(ability.PrimaryFireDirection);
-        if (ability.AttackPhase != AbilityState.Execute) { pending.Clear(); return; }
+        if (ability == null || !IsModelVisible || muzzle == null) { Restore(); return; }
+        var activeWeapon = ability.IsStarShotActive ? ability.EquippedStarShot : null;
+        Vector2 fireAim = default;
+        Collider2D target = null;
+        bool hasFireAim = activeWeapon != null && owner.TryGetRangedAim(gun.position,
+            activeWeapon.projectileSpeed * ((StarShot)activeWeapon.projectilePrefab).LifeTime,
+            1 << LayerMask.NameToLayer("Enemy"), out fireAim, out target);
+
+        var cannon = ability.ActiveHandCannon;
+        Vector2 aimOrigin = cannon != null ? cannon.AimOrigin(owner) : gun.position;
+        bool tracksMouse = cannon != null || ((!ability.IsActive || ability.IsStarShotActive) && ability.EquippedStarShot != null);
+        if (target != null)
+        {
+            Apply(fireAim, true);
+            autoAimApplied = true;
+            autoAimReturnTime = 0f;
+            lastAutoAim = fireAim;
+            lastAutoMuzzlePosition = muzzle.localPosition;
+            lastAutoMuzzleRotation = muzzle.localRotation;
+        }
+        else if (tracksMouse && owner.TryGetMouseAim(aimOrigin, out var mouseDirection))
+        {
+            autoAimApplied = false;
+            Apply(PlayerController.SmoothAim(aimed ? displayedDirection : BarrelDirection, mouseDirection), true);
+        }
+        else if (autoAimApplied && (activeWeapon != null || !ability.IsActive))
+            ReturnFromAutoAim(activeWeapon != null);
+        else if (activeWeapon != null)
+            Apply(ability.PrimaryFireDirection);
+        else
+        {
+            Restore();
+            return;
+        }
+        if (!ability.IsStarShotActive || ability.AttackPhase != AbilityState.Execute) { pending.Clear(); return; }
         foreach (var shot in pending)
         {
             raisedFrame = shot.weapon is IncendiaryRifleWeaponSO;
-            Apply(shot.direction);
+            Vector2 shotDirection = hasFireAim ? fireAim : shot.direction;
+            if (!ability.UsePrimaryRound(shot.weapon)) continue;
+            autoAimApplied = target != null;
+            Apply(shotDirection, hasFireAim);
             var machineGun = shot.weapon as MachineGunWeaponSO;
-            Vector2 fire = shot.direction;
+            Vector2 fire = shotDirection;
             Quaternion rotation = muzzle.rotation;
             if (machineGun != null)
             {
                 // 총신(위에서 Apply)은 조준 방향 그대로, 탄만 흩뜨린다. 탄은 날아가는 방향으로 눕혀 길쭉한 탄두가 진행 방향을 향하게 한다.
                 if (Time.time - lastScatterShot > machineGun.spreadResetGap) scatterStreakStart = Time.time;
                 lastScatterShot = Time.time;
-                fire = machineGun.Scatter(shot.direction, Time.time - scatterStreakStart);
+                fire = machineGun.Scatter(shotDirection, Time.time - scatterStreakStart);
                 rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(fire.y, fire.x) * Mathf.Rad2Deg);
             }
-            if (!ability.UsePrimaryRound(shot.weapon)) continue;
-            owner.AddRecoil(shot.weapon.recoilPower, owner.Facing);
-            var projectile = WorldEntityPool.Instance.Spawn(shot.weapon.projectilePrefab, muzzle.position, rotation);
+            owner.AddRecoil(hasFireAim ? shot.weapon.recoilPower * Mathf.Abs(shotDirection.x) : shot.weapon.recoilPower,
+                hasFireAim && shotDirection.x != 0f ? (shotDirection.x > 0f ? 1 : -1) : owner.Facing);
+            Vector3 spawn = muzzle.position;
+            // 표적이 총구보다 가까우면 날아가는 판정은 총신 안쪽에서 시작하고 섬광은 총구에 둔다.
+            if (target != null && Vector2.Dot((Vector2)(target.bounds.center - spawn), shotDirection) < 0f)
+                spawn = new Vector3(gun.position.x, gun.position.y, spawn.z);
+            var projectile = WorldEntityPool.Instance.Spawn(shot.weapon.projectilePrefab, spawn, rotation);
             if (projectile is not StarShot star) continue;
             star.SetFireDirection(fire);
-            star.SetMuzzlePosition(muzzle.position);
+            star.SetMuzzlePosition(muzzle.position, spawn);
             star.Initialize(owner, shot.damage, shot.weapon.projectileSpeed, shot.weapon.count, shot.weapon.platformLayer);
             var weapon = shot.weapon;
             star.OnHitEnemy += (player, point) => weapon.OnHitEnemy?.Invoke(player, point);
@@ -110,12 +167,48 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         }
         pending.Clear();
     }
+    private void ReturnFromAutoAim(bool attacking)
+    {
+        autoAimReturnTime += Time.deltaTime;
+        float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(autoAimReturnTime / AutoAimReturnDuration));
+        if (t >= 1f)
+        {
+            autoAimApplied = false;
+            if (attacking) Apply(ability.PrimaryFireDirection);
+            else Restore();
+            return;
+        }
+
+        Vector2 restDirection = attacking ? ability.PrimaryFireDirection
+            : gun.parent.TransformVector(gunRestRotation * (Vector3.right * gunScaleSign));
+        float angle = Mathf.LerpAngle(PlayerController.AimAngle(lastAutoAim), PlayerController.AimAngle(restDirection), t);
+        Apply(Quaternion.Euler(0f, 0f, angle) * Vector3.right, true);
+        if (!attacking)
+        {
+            muzzle.localPosition = Vector3.Lerp(lastAutoMuzzlePosition, muzzleRestPosition, t);
+            muzzle.localRotation = Quaternion.Slerp(lastAutoMuzzleRotation, muzzleRestRotation, t);
+        }
+    }
+
+    public void EndBurst()
+    {
+        pending.Clear();
+        if (!autoAimApplied) Restore();
+    }
+
     public void Restore()
     {
         pending.Clear();
+        autoAimApplied = false;
         raisedFrame = false;
         if (!aimed) return;
-        if (gun != null) gun.localRotation = gunRestRotation;
+        if (gun != null)
+        {
+            gun.localRotation = gunRestRotation;
+            var scale = gun.localScale;
+            scale.x = Mathf.Abs(scale.x) * gunScaleSign;
+            gun.localScale = scale;
+        }
         if (muzzle != null) { muzzle.localPosition = muzzleRestPosition; muzzle.localRotation = muzzleRestRotation; }
         aimed = false;
     }

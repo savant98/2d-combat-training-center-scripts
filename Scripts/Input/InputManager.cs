@@ -18,6 +18,22 @@ public class InputManager : MonoBehaviour
     private readonly List<UnityEngine.InputSystem.InputActionMap> suspendedMaps = new();
     private bool rebindSuspended;
     private PlayerInputActions inputActions;
+    public bool MouseAim { get; private set; }
+
+    private static readonly (string action, string binding, string path)[] MouseAimDefaults =
+    {
+        ("Move", "up", "<Keyboard>/w"),
+        ("Move", "down", "<Keyboard>/s"),
+        ("Move", "left", "<Keyboard>/a"),
+        ("Move", "right", "<Keyboard>/d"),
+        ("Jump", null, "<Keyboard>/space"),
+        ("Attack", null, "<Mouse>/leftButton"),
+        ("Dash", null, "<Mouse>/rightButton"),
+        ("SecondaryWeapon", null, "<Keyboard>/q"),
+        ("Interact", null, "<Keyboard>/e"),
+        ("SwapWeapon", null, "<Keyboard>/f"),
+        ("Gear", null, "<Keyboard>/shift")
+    };
     readonly private Dictionary<Button, ButtonData> buttonDatas = new();
 
     public Vector2 Move { get; private set; }
@@ -62,7 +78,7 @@ public class InputManager : MonoBehaviour
         // 기존 UI map을 메뉴 입력의 원본으로 사용한다. gameplay 키를 바꿔도 메뉴 Z/X는 유지한다.
         inputActions.UI.Submit.AddBinding("<Keyboard>/z");
         inputActions.UI.Cancel.AddBinding("<Keyboard>/x");
-        LoadBindings(DataManager.Instance.Options.bindingOverrides);
+        LoadControlProfile(DataManager.Instance.Options);
     }
 
     private void OnEnable()
@@ -132,18 +148,46 @@ public class InputManager : MonoBehaviour
         inputActions.Player.Escape.canceled += ctx => buttonDatas[Button.Escape].state = ButtonState.Released;
     }
 
+    public void LoadControlProfile(OptionSettings settings)
+    {
+        MouseAim = settings.mouseAim;
+        LoadBindings(settings.ActiveBindingOverrides);
+    }
+
+    private void ApplyProfileDefaults()
+    {
+        if (!MouseAim) return;
+        foreach (var entry in MouseAimDefaults)
+        {
+            var action = Actions.FindAction("Player/" + entry.action, true);
+            for (int i = 0; i < action.bindings.Count; i++)
+            {
+                var binding = action.bindings[i];
+                if (!binding.path.StartsWith("<Keyboard>/", System.StringComparison.OrdinalIgnoreCase)
+                    || (entry.binding != null && binding.name != entry.binding)) continue;
+                action.ApplyBindingOverride(i, entry.path);
+                break;
+            }
+        }
+    }
+
     public void LoadBindings(string json)
     {
+        bool wasSuspended = rebindSuspended;
+        if (!wasSuspended) SuspendForRebind(true);
         inputActions.asset.RemoveAllBindingOverrides();
+        ApplyProfileDefaults();
         try
         {
-            if (!string.IsNullOrEmpty(json)) inputActions.asset.LoadBindingOverridesFromJson(json);
+            if (!string.IsNullOrEmpty(json)) inputActions.asset.LoadBindingOverridesFromJson(json, removeExisting: false);
         }
         catch (System.Exception e)
         {
             inputActions.asset.RemoveAllBindingOverrides();
+            ApplyProfileDefaults();
             Debug.LogWarning("[InputManager] 저장된 키 설정을 읽지 못해 기본키를 사용합니다: " + e.Message);
         }
+        if (!wasSuspended) SuspendForRebind(false);
         NotifyBindingsChanged();
     }
 

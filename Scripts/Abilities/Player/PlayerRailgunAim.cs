@@ -18,9 +18,12 @@ public sealed class PlayerRailgunAim : MonoBehaviour
     [SerializeField, Min(0f)] private float releaseDelay = 0.08f;    // 공격이 끝난 뒤 수평으로 되돌리기까지(초)
 
     private PlayerWeaponAbility ability;
+    private PlayerController owner;
     private RailgunBarrelVisual barrel;
     private Quaternion restRotation = Quaternion.identity;
-    private bool hasRest, aiming;
+    private float scaleSign;
+    private bool hasRest, aiming, precise;
+    private int shotFrame = -1;
     private float idleSince = -1f;
     private Vector2 direction = Vector2.right;
 
@@ -54,20 +57,24 @@ public sealed class PlayerRailgunAim : MonoBehaviour
         if (!hasRest)
         {
             restRotation = transform.localRotation;
+            scaleSign = Mathf.Sign(transform.localScale.x);
             hasRest = true;
         }
         _ = Barrel;
     }
 
     // 조준 방향(월드)을 정하고 그 자리에서 총신을 돌린다. 모형이 꺼져 있어도 회전은 적용된다.
-    public void Aim(Vector2 worldDirection)
+    public void Aim(Vector2 worldDirection, bool exactBarrel = false)
     {
         if (worldDirection.sqrMagnitude < 1e-6f) return;
         if (!hasRest)
         {
             restRotation = transform.localRotation;   // Awake 전(꺼진 모형)에 처음 불린 경우
+            scaleSign = Mathf.Sign(transform.localScale.x);
             hasRest = true;
         }
+        precise = exactBarrel;
+        if (precise) shotFrame = Time.frameCount;
         direction = worldDirection.normalized;
         aiming = true;
         idleSince = -1f;
@@ -76,8 +83,18 @@ public sealed class PlayerRailgunAim : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (!aiming) return;
         var attack = Ability;
+        if (owner != null && (attack == null || !attack.IsActive || attack.IsRailgunPrimaryActive)
+            && shotFrame != Time.frameCount && owner.TryGetMouseAim(transform.position, out var mouseDirection))
+        {
+            if (!aiming) direction = ((Vector2)transform.TransformVector(Vector3.right)).normalized;
+            direction = PlayerController.SmoothAim(direction, mouseDirection);
+            precise = aiming = true;
+            idleSince = -1f;
+            Apply();
+            return;
+        }
+        if (!aiming) return;
         if (attack == null || attack.AttackPhase == AbilityState.None)
         {
             if (idleSince < 0f) idleSince = Time.time;
@@ -91,8 +108,12 @@ public sealed class PlayerRailgunAim : MonoBehaviour
     {
         Transform parent = transform.parent;
         if (parent == null) return;
-        Transform reference = parent.parent != null ? parent.parent : parent;
-        Vector3 local = reference.InverseTransformVector(direction);
+        Transform reference = !precise && parent.parent != null ? parent.parent : parent;
+        int flip = precise && direction.x * (owner != null ? owner.Facing : Mathf.Sign(reference.lossyScale.x)) < 0f ? -1 : 1;
+        var scale = transform.localScale;
+        scale.x = Mathf.Abs(scale.x) * scaleSign * flip;
+        transform.localScale = scale;
+        Vector3 local = reference.InverseTransformVector(direction * flip);
         if (local.sqrMagnitude < 1e-8f) return;
         transform.localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(local.y, local.x) * Mathf.Rad2Deg);
     }
@@ -101,7 +122,15 @@ public sealed class PlayerRailgunAim : MonoBehaviour
     {
         aiming = false;
         idleSince = -1f;
-        if (hasRest) transform.localRotation = restRotation;
+        precise = false;
+        shotFrame = -1;
+        if (hasRest)
+        {
+            transform.localRotation = restRotation;
+            var scale = transform.localScale;
+            scale.x = Mathf.Abs(scale.x) * scaleSign;
+            transform.localScale = scale;
+        }
     }
 
     private void OnDisable() => Restore();
@@ -112,8 +141,8 @@ public sealed class PlayerRailgunAim : MonoBehaviour
         {
             if (ability == null)
             {
-                var player = GetComponentInParent<PlayerController>(true);
-                if (player != null && player.AbilityManager != null) ability = player.AbilityManager.AttackAbility;
+                if (owner == null) owner = GetComponentInParent<PlayerController>(true);
+                if (owner != null && owner.AbilityManager != null) ability = owner.AbilityManager.AttackAbility;
             }
             return ability;
         }

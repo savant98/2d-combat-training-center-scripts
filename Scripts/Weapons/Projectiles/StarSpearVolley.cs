@@ -207,8 +207,9 @@ public class StarSpearVolley : WorldEntityBase
             break;
         }
         if (next == null) return;
-        Collider2D target = next.spear.FindNearestTarget(HeldPosition(next, index), weapon.targetSearchRadius);
-        if (target == null && waited < weapon.noTargetWaitTime - Epsilon)
+        bool mouseAim = owner is PlayerController player && player.UsesMouseAim;
+        Collider2D target = mouseAim ? null : next.spear.FindNearestTarget(HeldPosition(next, index), weapon.targetSearchRadius);
+        if (!mouseAim && target == null && waited < weapon.noTargetWaitTime - Epsilon)
         {
             IsWaiting = true;
             waited += dt;
@@ -250,7 +251,8 @@ public class StarSpearVolley : WorldEntityBase
     private void UpdateHeld(Slot slot, int index, float dt)
     {
         Vector2 position = HeldPosition(slot, index);
-        if (slot.aiming && !StarSpear.IsTrackable(slot.target))
+        bool mouseAim = owner is PlayerController player && player.UsesMouseAim;
+        if (!mouseAim && slot.aiming && !StarSpear.IsTrackable(slot.target))
         {
             slot.target = slot.spear.FindNearestTarget(position, weapon.targetSearchRadius);
             if (slot.target == null && waited < weapon.noTargetWaitTime - Epsilon) CancelAim(index);
@@ -344,6 +346,8 @@ public class StarSpearVolley : WorldEntityBase
 
     private float AimAngle(Slot slot, Vector2 from)
     {
+        if (owner is PlayerController player && player.TryGetMouseAim(from, out var mouseDirection))
+            return PlayerController.AimAngle(mouseDirection);
         if (StarSpear.IsTrackable(slot.target))
         {
             Vector2 delta = (Vector2)slot.target.bounds.center - from;

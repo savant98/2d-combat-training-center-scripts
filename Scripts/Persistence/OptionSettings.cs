@@ -24,6 +24,19 @@ public class OptionSettings
     public float flash = 0.5f;
     public string language = "ko";
     public string bindingOverrides = "";
+    public string mouseBindingOverrides = "";
+    public bool mouseAim;
+    public bool rangedAutoAim;
+
+    public string ActiveBindingOverrides
+    {
+        get => mouseAim ? mouseBindingOverrides : bindingOverrides;
+        set
+        {
+            if (mouseAim) mouseBindingOverrides = value;
+            else bindingOverrides = value;
+        }
+    }
 
     public OptionSettings Copy() => (OptionSettings)MemberwiseClone();
 
@@ -48,6 +61,7 @@ public class OptionSettings
         flash = Finite01(flash, 0.5f);
         if (language != "ko" && language != "en") language = "ko";
         bindingOverrides ??= "";
+        mouseBindingOverrides ??= "";
     }
 
     private static float Finite01(float value, float fallback) =>

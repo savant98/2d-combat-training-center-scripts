@@ -25,7 +25,7 @@ using UnityEngine;
 //   판정은 RailEcho.Cast(모터 경로, 관통, 쏘는 순간 적마다 한 번), 피해 = 한 틱 피해 × miniLaserDamageScale, 쏠 때 RailCross 큐, 맞으면 RailEchoHit 큐.
 //   본 레이저가 꺼지면(끝·취소) 남은 미니 레이저는 쏘지 않는다.
 // Player 이동(FixedUpdate) 뒤에 자리를 잡도록 실행 순서를 늦춘다.
-[DefaultExecutionOrder(110)]
+[DefaultExecutionOrder(125)]
 public class PlayerLaserBeam : WorldEntityBase
 {
     private enum Phase { None, Charge, Fire, Linger }
@@ -213,7 +213,8 @@ public class PlayerLaserBeam : WorldEntityBase
         direction = Vector2.right * (owner != null && owner.Facing < 0 ? -1f : 1f);
         var railgun = player != null ? player.model.transform.Find(RailgunWeaponSO.ModelPath) : null;
         barrelMuzzle = railgun != null ? railgun.Find(RailgunWeaponSO.MuzzleName) : null;
-        transform.rotation = Quaternion.Euler(0f, 0f, direction.x < 0f ? 180f : 0f);
+        UpdateMouseChargeAim(false);
+        transform.rotation = Quaternion.Euler(0f, 0f, PlayerController.AimAngle(direction));
         phase = Phase.Charge;
         phaseAge = 0f;
         UpdateOrigin();
@@ -234,6 +235,7 @@ public class PlayerLaserBeam : WorldEntityBase
     public void Fire()
     {
         if (phase != Phase.Charge || weapon == null) return;
+        UpdateMouseChargeAim(true);
         ClearParticles(chargeMotes);
         var traits = WeaponTraitEffects.Attack(owner)?.Traits;
         railCharged = traits != null && traits.IsRailCharged;
@@ -287,6 +289,7 @@ public class PlayerLaserBeam : WorldEntityBase
         switch (phase)
         {
             case Phase.Charge:
+                UpdateMouseChargeAim(false);
                 UpdateOrigin();
                 UpdateBlock();
                 break;
@@ -320,12 +323,24 @@ public class PlayerLaserBeam : WorldEntityBase
         return abilities.StateMachine.CurrentState == PlayerState.Attack;
     }
 
+    private void UpdateMouseChargeAim(bool firing)
+    {
+        if (player == null) return;
+        var aim = RailgunWeaponSO.FindAim(player);
+        Vector2 pivot = aim != null ? aim.transform.position
+            : player.transform.position + Vector3.up * weapon.spawnOffset.y;
+        if (!player.TryGetMouseAim(pivot, out var mouseDirection)) return;
+        direction = firing ? mouseDirection : PlayerController.SmoothAim(direction, mouseDirection);
+        aim?.Aim(direction, true);
+        transform.rotation = Quaternion.Euler(0f, 0f, PlayerController.AimAngle(direction));
+    }
+
     private void UpdateOrigin()
     {
         Vector2 ownerPosition = owner.transform.position;
         origin = barrelMuzzle != null && barrelMuzzle.gameObject.activeInHierarchy
             ? (Vector2)barrelMuzzle.position
-            : ownerPosition + new Vector2(weapon.spawnOffset.x * direction.x, weapon.spawnOffset.y);
+            : ownerPosition + direction * weapon.spawnOffset.x + Vector2.up * weapon.spawnOffset.y;
         forwardOffset = Mathf.Max(0f, Vector2.Dot(origin - ownerPosition, direction));
         transform.position = origin;
     }
@@ -387,7 +402,7 @@ public class PlayerLaserBeam : WorldEntityBase
         float boxLength = reach + judgeHalfWidth;
         Vector2 center = origin + direction * ((reach - judgeHalfWidth) * 0.5f);
         var size = new Vector2(boxLength, judgeHalfWidth * 2f);
-        float angle = direction.x < 0f ? 180f : 0f;
+        float angle = PlayerController.AimAngle(direction);
 
         RaycastMotor2D.PrepareAttackQueries();
         int count = owner.Motor.OverlapAttackBox(center, size, angle, overlapResults, weapon.damageMask);

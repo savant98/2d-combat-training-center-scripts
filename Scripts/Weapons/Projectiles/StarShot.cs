@@ -16,10 +16,15 @@ public class StarShot : ProjectileBase
     private bool hasCustomDirection;
     private Vector2 customDirection;
     private bool hasMuzzlePosition;
-    private Vector3 muzzlePosition;
+    private Vector3 muzzlePosition, shotOrigin;
     public Vector2 SpawnPosition { get; private set; }
     public float LifeTime => lifeTime;
-    public void SetMuzzlePosition(Vector3 position) { hasMuzzlePosition = true; muzzlePosition = position; }
+    public void SetMuzzlePosition(Vector3 position, Vector3? origin = null)
+    {
+        hasMuzzlePosition = true;
+        muzzlePosition = position;
+        shotOrigin = origin ?? position;
+    }
 
     public override void OnSpawnedFromPool()
     {
@@ -78,6 +83,7 @@ public class StarShot : ProjectileBase
             transform.position = muzzlePosition - offset;
         }
         base.Initialize(owner, damageInfo, speed, count, collideLayer);
+        if (hasMuzzlePosition) transform.position = shotOrigin;
         SpawnPosition = transform.position;
 
         Vector2 dir = hasCustomDirection

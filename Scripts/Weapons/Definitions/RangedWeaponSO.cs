@@ -71,6 +71,9 @@ public class RangedWeaponSO : WeaponBaseSO
         controller.AddRecoil(recoilPower, controller.Facing);
         var projectile = (ProjectileBase)WorldEntityPool.Instance.Spawn(projectilePrefab, controller.transform.position, controller.transform.rotation);
         if (projectile is StarShot star) star.SetFireDirection(direction);
+        else if (projectile is SpinningHammerShot hammer && controller is PlayerController player
+            && player.TryGetMouseAim(controller.transform.position, out var mouseDirection))
+            hammer.SetFireDirection(mouseDirection);
         projectile.Initialize(controller, WithSource(damageInfo, controller), projectileSpeed, count, platformLayer);
         projectile.OnHitEnemy += (owner, hitPoint) => OnHitEnemy?.Invoke(owner, hitPoint);
         return true;

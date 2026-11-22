@@ -34,8 +34,10 @@ public class PlayerWeaponAbility : PlayerAbility
     // 대시와 같은 범위다: 회수 단계(PlayerStateMachine.CanPerform의 대시 조건)와 기술 저장 중. 기관총 연사는 끊지 않고 쏘면서 뛰므로 제외한다.
     public bool CanJumpCancel => IsActive && !IsMachineGunAttacking && (isStoringSkill || abilityState == AbilityState.Recover);
     public Vector2 PrimaryFireDirection { get; private set; } = Vector2.right;
-    public bool IsStarShotActive => !isStoringSkill && IsActive && selectedWeapon == normalWeapon
-        && normalWeapon is RangedWeaponSO ranged && ranged.projectilePrefab is StarShot;
+    public RangedWeaponSO EquippedStarShot => normalWeapon is RangedWeaponSO ranged && ranged.projectilePrefab is StarShot ? ranged : null;
+    public HandCannonWeaponSO ActiveHandCannon => IsActive && !isStoringSkill ? selectedWeapon as HandCannonWeaponSO : null;
+    public bool IsRailgunPrimaryActive => IsActive && !isStoringSkill && selectedWeapon == normalWeapon && normalWeapon is RailgunWeaponSO;
+    public bool IsStarShotActive => !isStoringSkill && IsActive && selectedWeapon == normalWeapon && EquippedStarShot != null;
     private PlayerStarShotAim starAim;
     // 라이플 실행·회수 중에 새로 누른 공격(연타). 회수가 끝나는 순간 다음 한 발로 잇는다(TryContinueRifleFire, 2026-11-21).
     private bool rifleShotQueued;
@@ -710,7 +712,7 @@ public class PlayerWeaponAbility : PlayerAbility
             if (mountEnded || (IsMachineGunAttacking && InputManager.Released(Button.Attack)))
             {
                 StopAllCoroutines();
-                if (starAim != null) starAim.Restore();
+                starAim?.EndBurst();
                 EndAttack();
                 UpdateWeaponCooldownUI();
                 UpdateGearStageCooldownUI();

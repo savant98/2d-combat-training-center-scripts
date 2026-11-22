@@ -34,16 +34,23 @@ public class OptionMenu : SelectableMenuUI
     [SerializeField] private UnityEngine.UI.Image[] dialogFocus;
 
     [SerializeField] private UnityEngine.UI.ScrollRect displayScroll;
+    [SerializeField] private UnityEngine.UI.ScrollRect controlsScroll;
+    [SerializeField] private GameObject controlsHome;
+    [SerializeField] private GameObject controlsDetail;
     [SerializeField] private AudioCreditsPanel audioCredits;
     [SerializeField] private TextMeshProUGUI storeSkillHint;
     [SerializeField] private UnityEngine.UI.Button storeSkillClear;
     private const int StoreSkillRow = 23;
+    private const int ControlModeRow = 24;
+    private const int AutoAimRow = 25;
+    private const int OpenKeysRow = 26;
+    private const int BackFromKeysRow = 27;
     private static readonly Guid StoreSkillBindingId = new Guid("ed98d38e-dbb6-49ad-a536-196d7492c04c");
     private OptionSettings saved, draft;
-    private string originalBindings;
+    private bool showingKeys;
     private readonly List<Vector2Int> resolutions = new();
     private static readonly int[] FrameRates = { 60, 120, 144, 165, 240, -1 };
-    private static readonly string[] PageNames = { "화면 · 시각 효과", "사운드", "키보드 조작" };
+    private static readonly string[] PageNames = { "화면 · 시각 효과", "사운드", "조작" };
     public enum NavigationStage { Categories, Items, Editing, Footer }
     private NavigationStage navigationStage;
     private static readonly int[][] PageRows =
@@ -52,8 +59,12 @@ public class OptionMenu : SelectableMenuUI
         new[] { 6, 7, 8 },
         new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, StoreSkillRow }
     };
-    private int RowCount => PageRows[page].Length;
-    private int SelectedRow => PageRows[page][Mathf.Clamp(selection, 0, RowCount - 1)];
+    private static readonly int[] ControlRows = { ControlModeRow, AutoAimRow, OpenKeysRow };
+    private static readonly int[] KeyDetailRows = { BackFromKeysRow, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, StoreSkillRow };
+    private int[] CurrentRows => page == 2 ? (showingKeys ? KeyDetailRows : ControlRows) : PageRows[page];
+    private UnityEngine.UI.ScrollRect CurrentScroll => page == 0 ? displayScroll : page == 2 && showingKeys ? controlsScroll : null;
+    private int RowCount => CurrentRows.Length;
+    private int SelectedRow => CurrentRows[Mathf.Clamp(selection, 0, RowCount - 1)];
     private OptionSettings editSnapshot;
     private bool dirtyBeforeEdit;
     [SerializeField] private TextMeshProUGUI navigationHint;
@@ -172,7 +183,7 @@ public class OptionMenu : SelectableMenuUI
         int originalWidth = DisplayOptions.Width(saved), originalHeight = DisplayOptions.Height(saved);
         saved.width = originalWidth; saved.height = originalHeight;
         draft = saved.Copy();
-        originalBindings = InputManager.Instance != null ? InputManager.Instance.Actions.SaveBindingOverridesAsJson() : "";
+        showingKeys = false;
         BuildResolutions();
         dirty = false;
         rootObject.SetActive(true);
@@ -224,8 +235,30 @@ public class OptionMenu : SelectableMenuUI
             pages[i].SetActive(i == page);
             tabFills[i].color = i == page ? new Color(.08f, .3f, .4f, 1) : TrainingBoardStyle.SlotFill;
         }
-        pageTitle.text = PageNames[page];
+        if (page == 2) SetKeyPage(false);
+        else pageTitle.text = PageNames[page];
         Refresh();
+    }
+
+    private void SetKeyPage(bool detail)
+    {
+        showingKeys = detail;
+        controlsHome.SetActive(!detail);
+        controlsDetail.SetActive(detail);
+        pageTitle.text = detail ? ModeLabel + " · 키 설정" : PageNames[2];
+        if (detail)
+        {
+            Canvas.ForceUpdateCanvases();
+            controlsScroll.StopMovement();
+            controlsScroll.verticalNormalizedPosition = 1f;
+        }
+    }
+
+    private string ModeLabel => draft.mouseAim ? "마우스 조준 모드" : "기본 모드";
+
+    private void SaveDraftBindings()
+    {
+        if (InputManager.Instance != null) draft.ActiveBindingOverrides = InputManager.Instance.Actions.SaveBindingOverridesAsJson();
     }
 
     private void Resize()
@@ -348,7 +381,7 @@ public class OptionMenu : SelectableMenuUI
     private List<RectTransform> ItemRects()
     {
         var candidates = new List<RectTransform>();
-        foreach (int index in PageRows[page]) candidates.Add(optionRows[index].root);
+        foreach (int index in CurrentRows) candidates.Add(optionRows[index].root);
         return candidates;
     }
 
@@ -372,7 +405,7 @@ public class OptionMenu : SelectableMenuUI
 
     private void MoveFromItem(Vector2 direction)
     {
-        if (page == 0 && displayScroll != null && Mathf.Abs(direction.y) > .5f)
+        if (CurrentScroll != null && Mathf.Abs(direction.y) > .5f)
         {
             int nextRow = selection + (direction.y > 0 ? -1 : 1);
             if (nextRow >= 0 && nextRow < RowCount) { selection = nextRow; RefreshFocus(); return; }
@@ -463,6 +496,11 @@ public class OptionMenu : SelectableMenuUI
             statusText.text = "프레임 제한을 바꾸려면 수직 동기화를 먼저 꺼 주세요.";
             return;
         }
+        if (SelectedRow is ControlModeRow or AutoAimRow or OpenKeysRow or BackFromKeysRow)
+        {
+            AdjustRow(SelectedRow, 1);
+            return;
+        }
         navigationStage = NavigationStage.Editing;
         editSnapshot = draft.Copy();
         dirtyBeforeEdit = dirty;
@@ -489,6 +527,7 @@ public class OptionMenu : SelectableMenuUI
     {
         if (dialog.activeSelf) RejectDialog();
         else if (navigationStage == NavigationStage.Editing) FinishEditing(true);
+        else if (page == 2 && showingKeys) AdjustRow(BackFromKeysRow, 1);
         else if (navigationStage == NavigationStage.Items || navigationStage == NavigationStage.Footer)
         {
             navigationStage = NavigationStage.Categories; selection = 0; RefreshFocus();
@@ -500,7 +539,7 @@ public class OptionMenu : SelectableMenuUI
     private void SelectPointerRow(int index)
     {
         if (!CanUsePointer()) return;
-        int next = Array.IndexOf(PageRows[page], index);
+        int next = Array.IndexOf(CurrentRows, index);
         if (next < 0) return;
         if (navigationStage == NavigationStage.Editing && SelectedRow != index) FinishEditing(false);
         hoveredCategory = -1;
@@ -511,7 +550,7 @@ public class OptionMenu : SelectableMenuUI
 
     public void ActivateRow(int index)
     {
-        if (!CanUsePointer()) return;
+        if (!CanUsePointer() || Array.IndexOf(CurrentRows, index) < 0) return;
         SelectPointerRow(index);
         if (!string.IsNullOrEmpty(optionRows[index].action)) BeginRebind(index);
         else AdjustRow(index, 1);
@@ -525,6 +564,21 @@ public class OptionMenu : SelectableMenuUI
         if (!CanUsePointer() || index < 0 || index >= optionRows.Length || !string.IsNullOrEmpty(optionRows[index].action)) return;
         switch (index)
         {
+            case ControlModeRow:
+                SaveDraftBindings();
+                draft.mouseAim = !draft.mouseAim;
+                InputManager.Instance?.LoadControlProfile(draft);
+                break;
+            case AutoAimRow:
+                draft.rangedAutoAim = !draft.rangedAutoAim;
+                break;
+            case OpenKeysRow:
+            case BackFromKeysRow:
+                SetKeyPage(index == OpenKeysRow);
+                navigationStage = NavigationStage.Items;
+                selection = showingKeys ? 1 : Array.IndexOf(ControlRows, OpenKeysRow);
+                Refresh();
+                return;
             case 20: draft.language = draft.language == "en" ? "ko" : "en"; break;
             case 0:
                 int mode = draft.windowed ? 0 : DisplayOptions.Mode(draft) == FullScreenMode.ExclusiveFullScreen ? 2 : 1;
@@ -596,6 +650,8 @@ public class OptionMenu : SelectableMenuUI
             optionRows[i].value.text = Mathf.RoundToInt(GetSlider(i) * 100f) + "%";
         }
         optionRows[20].value.text = draft.language == "en" ? "English" : "한국어";
+        optionRows[ControlModeRow].value.text = ModeLabel;
+        optionRows[AutoAimRow].value.text = draft.rangedAutoAim ? "켜짐" : "꺼짐";
         foreach (int i in PageRows[2])
         {
             var row = optionRows[i];
@@ -619,9 +675,9 @@ public class OptionMenu : SelectableMenuUI
 
     private void RefreshFocus()
     {
-        if (page == 0 && displayScroll != null && !dialog.activeSelf &&
+        if (CurrentScroll != null && !dialog.activeSelf && SelectedRow != BackFromKeysRow &&
             (navigationStage == NavigationStage.Items || navigationStage == NavigationStage.Editing))
-            KeepDisplayRowVisible();
+            KeepRowVisible(CurrentScroll);
         int target = dialog.activeSelf ? 3 + optionRows.Length + footerFocus.Length + dialogIndex
             : hoveredCategory >= 0 ? hoveredCategory : navigationStage switch
         {
@@ -657,21 +713,22 @@ public class OptionMenu : SelectableMenuUI
         if (navigationHint != null) navigationHint.text = InputBindingDisplay.Format(navigationStage switch
         {
             NavigationStage.Categories => "{MenuUp} {MenuDown} 분류 선택   {Confirm} / {MenuRight} 항목으로   {Cancel} 닫기",
+            NavigationStage.Items when page == 2 && showingKeys => "{MenuUp} {MenuDown} 항목 이동   {Confirm} 선택   {Cancel} 조작 설정으로",
             NavigationStage.Items => "{MenuUp} {MenuDown} {MenuLeft} {MenuRight} 항목 선택   {Confirm} 편집   {Cancel} 분류로",
             NavigationStage.Editing => IsRebinding ? "새 키 입력   Esc 취소   10초 뒤 자동 취소" : "{MenuLeft} {MenuRight} 값 조절   {Confirm} 완료   {Cancel} 편집 취소",
             _ => "{MenuLeft} {MenuRight} 버튼 선택   {MenuUp} 항목으로   {Confirm} 실행   {Cancel} 분류로"
         });
     }
-    private void KeepDisplayRowVisible()
+    private void KeepRowVisible(UnityEngine.UI.ScrollRect scroll)
     {
         Canvas.ForceUpdateCanvases();
         var row = optionRows[SelectedRow].root;
         var corners = new Vector3[4]; row.GetWorldCorners(corners);
-        float bottom = displayScroll.viewport.InverseTransformPoint(corners[0]).y;
-        float top = displayScroll.viewport.InverseTransformPoint(corners[1]).y;
-        Rect area = displayScroll.viewport.rect;
+        float bottom = scroll.viewport.InverseTransformPoint(corners[0]).y;
+        float top = scroll.viewport.InverseTransformPoint(corners[1]).y;
+        Rect area = scroll.viewport.rect;
         float shift = top > area.yMax ? area.yMax - top : bottom < area.yMin ? area.yMin - bottom : 0;
-        if (Mathf.Abs(shift) > .1f) { displayScroll.StopMovement(); displayScroll.content.anchoredPosition += Vector2.up * shift; }
+        if (Mathf.Abs(shift) > .1f) { scroll.StopMovement(); scroll.content.anchoredPosition += Vector2.up * shift; }
     }
     [SerializeField] private UnityEngine.UI.Image[] footerFocus;
 
@@ -697,7 +754,7 @@ public class OptionMenu : SelectableMenuUI
 
     public void BeginRebind(int index)
     {
-        if (!CanUsePointer() || InputManager.Instance == null || index < 0 || index >= optionRows.Length) return;
+        if (!CanUsePointer() || InputManager.Instance == null || page != 2 || !showingKeys || Array.IndexOf(PageRows[2], index) < 0) return;
         var manager = InputManager.Instance;
         var row = optionRows[index];
         var (action, binding) = FindRowBinding(row);
@@ -714,9 +771,18 @@ public class OptionMenu : SelectableMenuUI
         try
         {
             rebind = action.PerformInteractiveRebinding(binding).WithControlsHavingToMatchPath("<Keyboard>")
+                .WithExpectedControlType<UnityEngine.InputSystem.Controls.ButtonControl>()
                 .WithCancelingThrough("<Keyboard>/escape").WithTimeout(10f).WithActionEventNotificationsBeingSuppressed()
                 .OnCancel(_ => FinishRebind(before, "키 변경을 취소했습니다."))
                 .OnComplete(_ => CompleteBindingCandidate(index, action, binding, previousBinding, previousLabel, before));
+            if (draft.mouseAim)
+            {
+                rebind.WithControlsHavingToMatchPath("<Mouse>/leftButton")
+                    .WithControlsHavingToMatchPath("<Mouse>/rightButton")
+                    .WithControlsHavingToMatchPath("<Mouse>/middleButton")
+                    .WithControlsHavingToMatchPath("<Mouse>/backButton")
+                    .WithControlsHavingToMatchPath("<Mouse>/forwardButton");
+            }
             rebind.Start();
             RefreshFocus();
         }
@@ -782,11 +848,23 @@ public class OptionMenu : SelectableMenuUI
             if (index == selectedIndex) continue;
             var row = optionRows[index];
             var (action, binding) = FindRowBinding(row);
-            if (binding >= 0 && string.Equals(path, action.bindings[binding].effectivePath, StringComparison.OrdinalIgnoreCase))
+            if (binding >= 0 && BindingPathsOverlap(path, action.bindings[binding].effectivePath))
                 result.Add(row);
         }
         return result;
     }
+
+    private static bool BindingPathsOverlap(string first, string second)
+    {
+        const string shift = "<Keyboard>/shift";
+        if (string.Equals(first, second, StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(first, shift, StringComparison.OrdinalIgnoreCase)) return IsSingleShift(second);
+        return string.Equals(second, shift, StringComparison.OrdinalIgnoreCase) && IsSingleShift(first);
+    }
+
+    private static bool IsSingleShift(string path) =>
+        string.Equals(path, "<Keyboard>/leftShift", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(path, "<Keyboard>/rightShift", StringComparison.OrdinalIgnoreCase);
 
     private static void ChangeRowsPath(List<Row> rows, string path)
     {
@@ -812,13 +890,14 @@ public class OptionMenu : SelectableMenuUI
     }
 
     private static string BindingLabel(InputAction action, int binding) => string.IsNullOrEmpty(action.bindings[binding].effectivePath)
-        ? "미지정" : action.GetBindingDisplayString(binding, InputBinding.DisplayStringOptions.DontIncludeInteractions);
+        ? "미지정" : InputBindingDisplay.DisplayKey(action.bindings[binding].effectivePath,
+            action.GetBindingDisplayString(binding, InputBinding.DisplayStringOptions.DontIncludeInteractions));
 
     private static string JoinControlNames(List<Row> rows) => string.Join(" · ", rows.ConvertAll(ControlName));
 
     public void ClearStoreSkillBinding()
     {
-        if (!CanUsePointer() || page != 2) return;
+        if (!CanUsePointer() || page != 2 || !showingKeys) return;
         var (action, binding) = FindRowBinding(optionRows[StoreSkillRow]);
         if (binding < 0 || string.IsNullOrEmpty(action.bindings[binding].effectivePath)) return;
         SelectPointerRow(StoreSkillRow);
@@ -872,7 +951,7 @@ public class OptionMenu : SelectableMenuUI
     {
         if (!CanUsePointer()) return;
         FinishEditing(false);
-        draft.bindingOverrides = InputManager.Instance != null ? InputManager.Instance.Actions.SaveBindingOverridesAsJson() : saved.bindingOverrides;
+        SaveDraftBindings();
         if (DisplayOptions.Changed(draft, saved))
         {
             OptionSettingsService.ApplyDisplay(draft);
@@ -894,7 +973,6 @@ public class OptionMenu : SelectableMenuUI
             return;
         }
         saved = draft.Copy();
-        originalBindings = draft.bindingOverrides;
         dirty = false;
         OptionSettingsService.Instance.ApplyPreview(saved);
         Refresh();
@@ -918,8 +996,8 @@ public class OptionMenu : SelectableMenuUI
         ShowDialog(page == 2 ? "키보드 조작을 기본키로 되돌릴까요?" : "모든 옵션과 키 설정을 기본값으로 되돌릴까요?", "기본값 복원", () =>
         {
             if (page != 2) draft = new OptionSettings();
-            InputManager.Instance?.LoadBindings("");
-            draft.bindingOverrides = "";
+            draft.ActiveBindingOverrides = "";
+            InputManager.Instance?.LoadControlProfile(draft);
             Changed();
         }, () => { });
     }
@@ -949,10 +1027,10 @@ public class OptionMenu : SelectableMenuUI
     {
         if (!IsActive) return;
         if (audioCredits != null) audioCredits.Close();
-        if (IsRebinding) { rebind.Cancel(); if (IsRebinding) FinishRebind(originalBindings, ""); }
+        if (IsRebinding) { rebind.Cancel(); if (IsRebinding) FinishRebind(null, ""); }
         if (!keep)
         {
-            InputManager.Instance?.LoadBindings(originalBindings);
+            InputManager.Instance?.LoadControlProfile(saved);
             OptionSettingsService.Instance.ApplyPreview(saved);
             OptionSettingsService.ApplyDisplay(saved);
         }

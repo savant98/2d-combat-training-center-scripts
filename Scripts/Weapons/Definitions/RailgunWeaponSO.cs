@@ -108,7 +108,10 @@ public class RailgunWeaponSO : WeaponBaseSO
     {
         if (controller == null) return;
         var aim = FindAim(controller);
-        if (aim != null) aim.Aim(ResolveDirection(controller));
+        if (aim == null) return;
+        if (controller is PlayerController player && player.UsesMouseAim) return;
+        bool assisted = TryGetAim(controller, aim, out var direction);
+        aim.Aim(assisted ? direction : ResolveDirection(controller), assisted);
     }
 
     // 실행 첫 프레임에 바로 쏜다(StartCoroutine이 첫 yield 전까지를 그 자리에서 실행한다).
@@ -124,13 +127,14 @@ public class RailgunWeaponSO : WeaponBaseSO
         overlapResults ??= new Collider2D[64];
         damagedTargets ??= new HashSet<HealthBase>();
 
-        Vector2 direction = ResolveDirection(controller);
         Vector2 center = controller.transform.position;
         var aim = FindAim(controller);
+        bool assisted = TryGetAim(controller, aim, out var direction);
+        if (!assisted) direction = ResolveDirection(controller);
         Vector2 muzzle;
         if (aim != null && aim.Muzzle != null)
         {
-            aim.Aim(direction);   // 이 프레임의 조준을 먼저 적용해 총구 위치가 조준 방향과 맞게 한다
+            aim.Aim(direction, assisted);   // 이 프레임의 조준을 먼저 적용해 총구 위치가 조준 방향과 맞게 한다
             muzzle = aim.Muzzle.position;
         }
         else
@@ -157,7 +161,8 @@ public class RailgunWeaponSO : WeaponBaseSO
         // 2026-11-21 사용자 지시 3차: 연속 10발에 과열 상한(한 발 = RailHeatPerShot)
         traits?.AddRailHeat(PlayerWeaponTraits.RailHeatPerShot);
 
-        controller.AddRecoil(recoilPower, controller.Facing);
+        controller.AddRecoil(assisted ? recoilPower * Mathf.Abs(direction.x) : recoilPower,
+            assisted && direction.x != 0f ? (direction.x > 0f ? 1 : -1) : controller.Facing);
         if (aim != null) aim.Barrel.Shot();
 
         if (fireFeedback != null && FeedbackPlayer.Instance != null)
@@ -270,6 +275,13 @@ public class RailgunWeaponSO : WeaponBaseSO
     }
 
     // 기본 공격의 조준 방향. 보는 쪽과 어긋나면(다른 자리의 지난 값) 보는 쪽 수평.
+    private bool TryGetAim(CharacterController2D controller, PlayerRailgunAim aim, out Vector2 direction)
+    {
+        direction = default;
+        return controller is PlayerController player && player.TryGetRangedAim(
+            aim != null ? aim.transform.position : player.transform.position, maxRange, damageMask, out direction, out _);
+    }
+
     private static Vector2 ResolveDirection(CharacterController2D controller)
     {
         float facing = controller.Facing < 0 ? -1f : 1f;

@@ -118,8 +118,111 @@ public class PlayerController : CharacterController2D
         if (original != null)
             overrides.Add(new KeyValuePair<AnimationClip, AnimationClip>(original, clip));
     }
+    private const float AimResponse = 24f;
+    private Texture2D aimCursor;
+    private bool aimCursorActive;
+
+    public bool UsesMouseAim => InputManager.Instance != null && InputManager.Instance.MouseAim;
+
+    private bool TryGetMousePoint(out Vector2 point)
+    {
+        point = default;
+        if (!UsesMouseAim || !CanReceiveInput || UnityEngine.InputSystem.Mouse.current == null) return false;
+        var camera = Camera.main;
+        if (camera == null) return false;
+        Vector2 screen = UnityEngine.InputSystem.Mouse.current.position.ReadValue();
+        Ray ray = camera.ScreenPointToRay(screen);
+        float depth = transform.position.z;
+        if (Mathf.Abs(ray.direction.z) < .0001f) return false;
+        point = ray.GetPoint((depth - ray.origin.z) / ray.direction.z);
+        return true;
+    }
+
+    public bool TryGetMouseAim(Vector2 origin, out Vector2 direction)
+    {
+        direction = default;
+        if (!TryGetMousePoint(out var point)) return false;
+        Vector2 offset = point - origin;
+        if (offset.sqrMagnitude < .0001f) return false;
+        direction = offset.normalized;
+        return true;
+    }
+
+    public bool TryGetRangedAim(Vector2 origin, float range, LayerMask targets, out Vector2 direction, out Collider2D target)
+    {
+        target = null;
+        if (OptionSettingsService.Instance?.Current?.rangedAutoAim == true)
+        {
+            target = RailEcho.FindNearest(this, transform.position, Vector2.zero, range, 0f, targets);
+            if (target != null)
+            {
+                Vector2 offset = (Vector2)target.bounds.center - origin;
+                if (offset.sqrMagnitude >= .0001f)
+                {
+                    direction = offset.normalized;
+                    return true;
+                }
+            }
+        }
+        target = null;
+        return TryGetMouseAim(origin, out direction);
+    }
+
+    public static float AimAngle(Vector2 direction) => Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg;
+
+    public static Vector2 SmoothAim(Vector2 current, Vector2 target)
+    {
+        float angle = Mathf.LerpAngle(AimAngle(current), AimAngle(target), 1f - Mathf.Exp(-AimResponse * Time.deltaTime));
+        return (Vector2)(Quaternion.Euler(0f, 0f, angle) * Vector3.right);
+    }
+
+    protected override int ResolveFacing() => UsesMouseAim ? MouseFacing() : base.ResolveFacing();
+
+    private int MouseFacing()
+    {
+        if (!TryGetMousePoint(out var point)) return Facing;
+        float horizontal = point.x - transform.position.x;
+        return Mathf.Abs(horizontal) > .001f ? (horizontal > 0f ? 1 : -1) : Facing;
+    }
+
+    private void SetAimCursor(bool active)
+    {
+        if (aimCursorActive == active) return;
+        aimCursorActive = active;
+        if (active && aimCursor == null)
+        {
+            const int size = 32, center = size / 2;
+            aimCursor = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            var pixels = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                int near = Mathf.Min(Mathf.Abs(x - center), Mathf.Abs(y - center));
+                int far = Mathf.Max(Mathf.Abs(x - center), Mathf.Abs(y - center));
+                if (near <= 1 && (far is >= 3 and <= 10 || far <= 1))
+                    pixels[y * size + x] = near == 0 && far != 3 && far != 10
+                        ? new Color32(192, 252, 255, 255) : new Color32(10, 35, 46, 255);
+            }
+            aimCursor.SetPixels32(pixels);
+            aimCursor.Apply();
+        }
+        Cursor.SetCursor(active ? aimCursor : null, active ? new Vector2(16, 15) : Vector2.zero, CursorMode.Auto);
+    }
+
     private void Update()
     {
+        SetAimCursor(UsesMouseAim && CanReceiveInput && Application.isFocused && !Application.isBatchMode
+            && UnityEngine.InputSystem.Mouse.current != null);
+        if (UsesMouseAim && !LockFacing)
+        {
+            Facing = MouseFacing();
+            if (facingModel != null)
+            {
+                var scale = facingModel.transform.localScale;
+                scale.x = Mathf.Abs(scale.x) * Facing;
+                facingModel.transform.localScale = scale;
+            }
+        }
         InputUpdate();
     }
     private void InputUpdate()
@@ -183,10 +286,21 @@ public class PlayerController : CharacterController2D
     }
     private void OnDisable()
     {
+        SetAimCursor(false);
         if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
     }
+    private void OnDestroy()
+    {
+        if (aimCursor != null) Destroy(aimCursor);
+    }
+
     public void FacingUpdate(int value)
     {
+        if (UsesMouseAim)
+        {
+            if (!LockFacing) Facing = MouseFacing();
+            return;
+        }
         Facing = value;
     }
 }

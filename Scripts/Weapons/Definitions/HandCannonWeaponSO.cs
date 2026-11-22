@@ -63,6 +63,9 @@ public class HandCannonWeaponSO : WeaponBaseSO
         yield break;
     }
 
+    public Vector2 AimOrigin(CharacterController2D controller) =>
+        (Vector2)controller.transform.position + Vector2.up * apexOffset.y;
+
     private void Fire(CharacterController2D controller)
     {
         if (controller == null || controller.Motor == null) return;
@@ -71,15 +74,20 @@ public class HandCannonWeaponSO : WeaponBaseSO
 
         int facing = controller.Facing >= 0 ? 1 : -1;
         Vector2 axis = new Vector2(facing, 0f);
-        Vector2 center = controller.transform.position;
-        Vector2 apex = center + new Vector2(apexOffset.x * facing, apexOffset.y);
+        Vector2 height = AimOrigin(controller);
+        if (controller is PlayerController player && player.TryGetMouseAim(height, out var mouseDirection))
+        {
+            axis = mouseDirection;
+            player.GetComponent<PlayerStarShotAim>()?.AlignHandCannon(axis);
+        }
+        Vector2 apex = height + axis * apexOffset.x;
 
-        controller.AddRecoil(recoilPower, facing);
+        controller.AddRecoil(recoilPower * Mathf.Abs(axis.x), facing);
 
         LastApex = apex;
         LastFacing = facing;
         LastDetonatedStacks = 0;
-        var rotation = Quaternion.Euler(0f, 0f, facing < 0 ? 180f : 0f);
+        var rotation = Quaternion.Euler(0f, 0f, PlayerController.AimAngle(axis));
         PlayBlast(apex, rotation);
         LastHitCount = ApplyDamage(controller, apex, axis);
 

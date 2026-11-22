@@ -111,7 +111,9 @@ public static class InputBindingDisplay
             var binding = action.bindings[i];
             string effective = binding.effectivePath;
             if (binding.isComposite || string.IsNullOrEmpty(effective)
-                || !effective.StartsWith(KeyboardPath, StringComparison.OrdinalIgnoreCase)
+                || (!effective.StartsWith(KeyboardPath, StringComparison.OrdinalIgnoreCase)
+                    && !(qualified.StartsWith("Player/", StringComparison.Ordinal)
+                        && effective.StartsWith("<Mouse>/", StringComparison.OrdinalIgnoreCase)))
                 || (!string.IsNullOrEmpty(part) && !string.Equals(binding.name, part, StringComparison.OrdinalIgnoreCase))) continue;
 
             if (candidate < 0) candidate = i;
@@ -125,13 +127,17 @@ public static class InputBindingDisplay
         return candidate;
     }
 
-    private static string DisplayKey(string path, string label) => path.ToLowerInvariant() switch
+    public static string DisplayKey(string path, string label) => path.ToLowerInvariant() switch
     {
         "<keyboard>/uparrow" => "↑",
         "<keyboard>/downarrow" => "↓",
         "<keyboard>/leftarrow" => "←",
         "<keyboard>/rightarrow" => "→",
         "<keyboard>/escape" => "Esc",
+        "<keyboard>/shift" => "Shift",
+        "<mouse>/leftbutton" => "좌클릭",
+        "<mouse>/rightbutton" => "우클릭",
+        "<mouse>/middlebutton" => "휠 클릭",
         "<keyboard>/leftshift" => "LShift",
         "<keyboard>/rightshift" => "RShift",
         "<keyboard>/leftctrl" => "LCtrl",

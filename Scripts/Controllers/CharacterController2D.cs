@@ -101,8 +101,7 @@ public abstract class CharacterController2D : MonoBehaviour
 
         if (!LockFacing)
         {
-            if (Velocity.x > 0.01f) Facing = 1;
-            else if (Velocity.x < -0.01f) Facing = -1;
+            Facing = ResolveFacing();
 
             facingModel.transform.localScale = new Vector3(Facing, 1, 1);
         }
@@ -110,6 +109,8 @@ public abstract class CharacterController2D : MonoBehaviour
         if (info.left || info.right)
             OnWallHit?.Invoke();
     }
+
+    protected virtual int ResolveFacing() => Mathf.Abs(Velocity.x) > 0.01f ? (Velocity.x > 0f ? 1 : -1) : Facing;
 
     protected abstract Vector2 CalculateVelocity();
 }
