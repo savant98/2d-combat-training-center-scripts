@@ -45,7 +45,10 @@ public class AiPatternDirector : MonoBehaviour
         ignoreCooldown = false;
         if (!RefreshContext()) return null;
         // 패턴을 고르기 시작할 때만 체력 비율로 페이즈를 맞춘다. 뒤따르는 후보·점수 평가는 상태를 바꾸지 않는다.
+        int previousPhase = context.PhaseIndex;
         profile.UpdatePhase(context);
+        if (context.PhaseIndex > 0 && context.PhaseIndex > previousPhase && controller.Health.IsBossEnemy)
+            RoomManager.Instance?.CurrentRoom?.PresentBossPhase(controller);
         return profile.GetAbsoluteAbility(context, out ignoreCooldown);
     }
 

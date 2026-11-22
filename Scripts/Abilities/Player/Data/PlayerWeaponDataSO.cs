@@ -52,6 +52,10 @@ public class PlayerWeaponDataSO : PlayerAbilityDataSO
     [Tooltip("각 Gear 단계에 도달한 뒤, 다음 입력을 기다리는 시간")]
     [Min(0f)] public float gearWaitTime = 0.4f;
 
+    [Header("입력 안내")]
+    [Tooltip("사용할 수 없는 공격을 눌렀을 때 재생하는 짧은 경고음")]
+    public SoundOptions actionRejectedSound;
+
     [Header("Gear Presentation")]
     [Tooltip("Gear 준비·대기 동안 Player 아래에 표시되는 체결 고리와 소리")]
     public PlayerGearVisual gearVisual;

@@ -1,15 +1,15 @@
 using UnityEngine;
 
-// 작열탄(IncendiaryBullet.prefab) 비행 자국(2026-11-21 무장 특성 피드백 개편 시안, 사용자 요청 "탄 Trail은 연기가 길게 늘어지게, 탄속 더 빠르게").
-// 별창(StarSpear.RecordPath)과 같은 방식이다. 탄속 60칸/초면 고정 단계(0.01초)마다 0.6칸씩 뛰어 TrailRenderer의 자동 점이 띄엄띄엄해지므로,
+// 작열탄과 기관총의 비행 자국. 별창과 같은 수동 Trail 기록 경로를 공유한다.
+// 빠른 탄은 고정 단계마다 크게 움직이므로 자동 Trail 점 사이에서 연기·불씨의 간격이 달라질 수 있다.
 // 고정 단계마다 지나간 점을 직접 넣고(AddPosition) 그 구간을 따라 연기 덩어리·불씨를 일정 간격으로 뿌린다(월드 공간 Emit).
-// - smokeTrail: 긴 연기 리본(Player/IncendiarySmokeTrail). 탄 Prefab의 첫 TrailRenderer여야 한다 — ProjectileBase.ReturnToPool이
+// - smokeTrail: 비행 경로를 덮는 긴 리본. 탄 Prefab의 첫 TrailRenderer여야 한다 — ProjectileBase.ReturnToPool이
 //   풀로 돌아갈 때 첫 TrailRenderer 하나만 떼어 남기므로, 나머지 자국(streak·smoke·embers)은 모두 이 Trail의 자식으로 둔다.
 //   그래서 탄이 벽에 닿거나 사거리 끝에서 사라진 뒤에도 연기가 남았다가 흩어진다.
 // - streak: 탄 바로 뒤의 짧은 주황 빛(가산, Player/StarShotTrail).
 // - 자동 점 생성은 Prefab의 minVertexDistance를 아주 크게 해 막는다(점은 모두 여기서 넣음).
 //   TrailRenderer는 emitting이 꺼진 동안 들어온 점을 그리지 않으므로 비행 중에만 켜 두고, 마지막 점(벽·사거리 끝)은 잠깐 켜고 넣은 뒤 끈다.
-// - 탄 자체(IncendiaryShot)의 이동·판정은 건드리지 않는다. 이 컴포넌트는 탄이 고정 단계에서 움직인 뒤(실행 순서 150) 위치만 읽는다.
+// - 작열탄과 기관총의 이동·판정은 기존 모터가 맡는다. 이 컴포넌트는 탄이 고정 단계에서 움직인 뒤(실행 순서 150) 위치만 읽는다.
 // - 탄 외형(탄심·불꽃 혀·빛)은 Prefab의 Body(Player/IncendiaryRound)·Glow가 그린다.
 [DefaultExecutionOrder(150)]
 public sealed class IncendiaryTracer : MonoBehaviour

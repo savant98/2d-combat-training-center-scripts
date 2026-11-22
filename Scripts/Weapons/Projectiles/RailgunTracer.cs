@@ -70,6 +70,7 @@ public class RailgunTracer : WorldEntityBase
     private int playFrame = -1;
 
     // 읽기 전용 상태(검증·디버그용)
+    internal override bool PreserveAfterBossDefeat => IsPlaying;
     public bool IsPlaying => playing && !isReturning;
     public Vector2 Origin => origin;
     public Vector2 Direction => direction;

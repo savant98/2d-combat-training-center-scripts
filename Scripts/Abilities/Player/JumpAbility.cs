@@ -20,6 +20,7 @@ public class JumpAbility : PlayerAbility
     // 점프로 올라가는 중(최고점·착지·끊김에서 꺼진다). 누르고 있어 이어지는 공격이 막 뛴 점프를 그 자리에서 멈추지 않게 PlayerWeaponAbility가 읽는다.
     private bool jumpRising;
     public bool IsJumpRising => jumpRising;
+    public event System.Action<bool> Jumped;
     // 피격이 시작된 Tick을 알아내기 위한 지난 Tick의 상태(TryJump)
     private bool wasHit;
     private InputBuffer jumpBuffer = new InputBuffer(0.2f);
@@ -110,6 +111,7 @@ public class JumpAbility : PlayerAbility
 
         controller.Velocity.y = jumpForce;
         jumpRising = true;
+        Jumped?.Invoke(extraJumpAscending);
 
         if (currentJumpCount == maxJumpCount - 1)
         {

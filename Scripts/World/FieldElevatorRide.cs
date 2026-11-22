@@ -5,64 +5,43 @@ using Unity.Cinemachine;
 using UnityEngine;
 
 /// <summary>
-/// 각개 전투 엘리베이터의 실시간 이동(2026-11-20). 사용자 요청: "탑승하면, 각개전투 교장으로 이동하고, 이때는 텔레포트하는게 아니라
-/// 엘리베이터를 타고 실시간으로 이동하는 연출을 해줘. 이 때 배경은 흰색 + 검은색 조합으로 만들고, 분위기가 완전 딴판이어야해. 배경은 어두워서 잘 안보여야해."
-/// - MainScene 루트에 늘 켜져 있고, 이동할 때만 표시 장치(Rig: 어두운 흑백 수직 갱도 두 개·위쪽 분기점과 트롤리·바깥 채움·이동 카메라)를 켠다.
-///   방은 한 번에 하나만 켜지고 방을 떠나면 방 아래가 모두 꺼지므로, 이동 중에 보여야 할 것은 방 밖(여기)에 둔다.
-/// - 흐름: 탑승(Player를 케이지 가운데로) → 문 닫힘 → Lobby 천장 해치로 상승(갱도 A) → 분기점에 멈춘 순간(경고등·표시판·집게도 멈춘 정지 화면) 방을 바꾸고 갱도·케이지·Player·카메라를
-///   같은 프레임에 교장 위쪽으로 옮김(화면은 그대로) → 트롤리가 옆 갱도 B로 옮김 → 교장 천장을 지나 Wave 1 시작 좌표에 착지 → 문 열림·해제·Wave 시작 → 케이지가 떠남.
-///   암전·텔레포트 효과를 쓰지 않는다. 입장 로딩은 분기점·가로 이송·하강 동안 진행되고(로딩 표시는 숨긴다), 끝나지 않았으면 천장 위 대기점에서 멈춰 기다린다.
-/// - 물리 규칙: Player를 직접 옮기지 않는다. 모터의 이동 구속(ConfineAroundBody → 물리 틱마다 ShiftConfinement → ClearConfinement)으로만 실어 나른다
-///   (WavePlayerStart의 크레인과 같은 방식). 방을 바꾸며 ChangeRoom이 순간이동시킨 자리는 같은 프레임에 ResetPlayerPosition(RefitConfinement 포함)으로 맞춘다.
-/// - 케이지·카메라 기준점은 구속 영역을 물리 틱마다 표본으로 모아 FixedMotionBody와 같은 비율로 보간한 자리에 둔다(Player 그림과 케이지 바닥이 어긋나지 않는다).
-/// 전환은 ElevatorRideTransitionSO가 Begin으로 시작한다. 정리(Cleanup)는 finally와 OnDisable이 함께 부르며 여러 번 불러도 같다.
+/// Lobby 천장을 통과한 케이지가 수직 갱도를 지나 각개 전투 교장의 첫 Wave 시작점으로 올라온다.
+/// 고속 구간에서는 아래로 지나가는 수직 잔상과 갱도 구조물, 음높이와 진동으로 속도를 느끼게 한다.
+/// 가장 어두울 때 방을 바꾸고 케이지와 카메라, 이동 구속 영역을 같은 양만큼 옮긴다.
+/// 실제 이동은 모터의 구속 영역으로 처리하고, 케이지와 카메라는 그 위치를 보간한다.
 /// </summary>
 [DisallowMultipleComponent, DefaultExecutionOrder(98)]
 public sealed class FieldElevatorRide : MonoBehaviour
 {
-    public enum Phase { Idle, Boarding, Ascending, Junction, Transferring, Descending, Holding, Landing, Releasing, Departing }
+    public enum Phase { Idle, Boarding, Ascending, Rush, Arriving, Holding, Landing, Releasing, Departing }
 
     [Header("구성")]
     [SerializeField, Tooltip("Lobby의 엘리베이터 정박대")] private FieldElevator elevator;
     [SerializeField, Tooltip("이동 중에만 켜는 표시 장치")] private GameObject rig;
     [SerializeField, Tooltip("이동 중 케이지가 붙는 부모")] private Transform carHolder;
-    [SerializeField] private Transform columnA, columnB, trolley, trolleySheave, clampL, clampR, counterweightA, counterweightB;
-    [SerializeField] private Transform[] trolleyWheels = new Transform[0];
-    [SerializeField] private LineRenderer counterweightRopeA, counterweightRopeB;
+    [SerializeField] private Transform columnA, columnB, trolley;
     [SerializeField, Tooltip("실행 중 만드는 바깥 채움(방 밖을 어둡게 덮는 사각형들)")] private MeshFilter exteriorFill;
     [SerializeField] private CinemachineCamera rideCamera;
     [SerializeField, Tooltip("이동 카메라가 따라가는 기준점")] private Transform cameraAnchor;
     [SerializeField, Tooltip("이동 카메라 범위(실행 중 월드 사각형으로 맞춘다)")] private BoxCollider2D rideBounds;
 
     [Header("갱도 치수(칸)")]
-    [SerializeField, Min(4f), Tooltip("천장 윗면에서 분기점까지의 갱도 높이(양쪽 같음)")] private float columnHeight = 20f;
-    [SerializeField, Tooltip("분기점에서 옆 갱도까지의 가로 거리")] private float transferOffset = 8f;
-    [SerializeField, Min(0f), Tooltip("교장 천장 두께(실내 윗변 → 천장 윗면)")] private float fieldCeilingThickness = 3f;
+    [SerializeField, Min(4f)] private float columnHeight = 20f;
     [SerializeField, Min(1f)] private float fillHalfWidth = 30f;
     [SerializeField, Min(0f)] private float fillTopMargin = 12f;
-    [SerializeField, Min(0f)] private float fillBottomMargin = 6f;
-    [SerializeField, Tooltip("케이지를 들어 집게에 물리는 높이")] private float liftHeight = .3f;
-    [SerializeField, Tooltip("평형추의 가장 낮은·높은 자리(갱도 바닥 기준)")] private Vector2 counterweightRange = new Vector2(2.5f, 22.5f);
-    [SerializeField, Tooltip("레일 이음매 간격(이만큼 지날 때마다 틱 소리)")] private float beamSpacing = 4f;
-    [SerializeField, Min(.05f)] private float wheelRadius = .2f;
+    [SerializeField, Min(.5f)] private float beamSpacing = 4f;
 
     [Header("움직임")]
     [SerializeField, Min(.5f), Tooltip("최고 속도(칸/초)")] private float cruiseSpeed = 14f;
-    [SerializeField, Min(.5f)] private float acceleration = 14f;
-    [SerializeField, Min(.5f)] private float ascentBraking = 11.7f;
-    [SerializeField, Min(.5f)] private float descentBraking = 9f;
-    [SerializeField, Min(0f), Tooltip("입장 로딩이 남았을 때 교장 천장 윗면에서 이만큼 위에서 멈춰 기다린다")] private float holdClearance = 4f;
     [SerializeField, Min(.05f)] private float boardTime = .45f;
     [SerializeField, Min(0f)] private float spinUpTime = .4f;
-    [SerializeField, Min(0f)] private float junctionHold = .5f;
-    [SerializeField, Min(.05f)] private float clampTime = .3f;
-    [SerializeField, Min(.1f)] private float transferTime = 1.6f;
+
     [SerializeField, Min(0f)] private float landingSettle = .4f;
     [SerializeField, Min(.1f)] private float doorTime = .6f;
     [SerializeField, Min(0f), Tooltip("착지·해제 뒤 케이지가 떠나기 시작할 때까지")] private float departDelay = .6f;
     [SerializeField, Min(.5f)] private float departSpeed = 10f;
     [SerializeField, Min(.5f)] private float departAcceleration = 12f;
-    [SerializeField, Min(0f), Tooltip("떠나는 케이지가 교장 천장 윗면에서 이만큼 올라가면 장치를 끈다")] private float departClearance = 8f;
+    [SerializeField, Min(0f), Tooltip("떠나는 케이지가 교장 천장보다 이만큼 높이 올라가면 장치를 끈다")] private float departClearance = 8f;
     [SerializeField, Min(0f)] private float sideMargin = .12f, topMargin = .12f;
 
     [Header("카메라")]
@@ -70,19 +49,13 @@ public sealed class FieldElevatorRide : MonoBehaviour
     [SerializeField] private int idlePriority = -1;
     [SerializeField, Min(1f)] private float rideLens = 7f;
     [SerializeField, Tooltip("올라갈 때 카메라가 케이지 바닥보다 위에 둘 높이(위를 보이게)")] private float ascentLift = 4f;
-    [SerializeField, Tooltip("내려갈 때 카메라 높이(아래를 보이게)")] private float descentLift = 1f;
-    [SerializeField, Min(.5f), Tooltip("케이지 바닥이 교장 천장 윗면에서 이만큼 위로 내려오면 교장 카메라 화면으로 맞춰 가기 시작한다")] private float framingStart = 8f;
+    [SerializeField, Min(.5f), Tooltip("착지점 아래에서 교장 카메라의 화면으로 맞추기 시작하는 거리")] private float framingStart = 8f;
     [SerializeField, Min(0f), Tooltip("교장 카메라로 넘긴 뒤 장치를 끄기까지 기다리는 시간(블렌드 1초보다 길게)")] private float blendOutWait = 1.1f;
 
     [Header("소리")]
     [SerializeField] private SoundOptions spinUpSound;
     [SerializeField, Tooltip("이동 중 반복음(케이지를 따라감)")] private SoundOptions motorLoop;
-    [SerializeField, Tooltip("가로 이송 중 반복음")] private SoundOptions transferLoop;
     [SerializeField, Tooltip("레일 이음매를 지날 때")] private SoundOptions railTick;
-    [SerializeField, Tooltip("집게가 지붕을 물 때")] private SoundOptions clampSound;
-    [SerializeField, Tooltip("집게가 풀릴 때")] private SoundOptions releaseSound;
-    [SerializeField, Tooltip("가로 이송을 시작할 때")] private SoundOptions transferSound;
-    [SerializeField, Tooltip("분기점에서 걸쇠가 물릴 때(소리·흔들림)")] private FeedbackDataSO latchFeedback;
     [SerializeField, Tooltip("교장 바닥에 착지할 때(소리·흔들림)")] private FeedbackDataSO landingFeedback;
     [SerializeField, Min(0f), Tooltip("움직이는 동안의 지속 흔들림 세기")] private float rideShake = .1f;
 
@@ -102,18 +75,21 @@ public sealed class FieldElevatorRide : MonoBehaviour
     public bool HasSwitchedRoom { get; private set; }
     public bool WavesBegun { get; private set; }
     public int SwitchFrame { get; private set; } = -1;
-    /// <summary>분기점에서 방을 바꾸는 데 걸린 시간(ms, 방 전환·방 내용 불러오기·옮기기). 아직 바꾸지 않았으면 -1. 검증에서 끊김을 잰다.</summary>
+    /// <summary>갱도에서 방을 바꾸는 데 걸린 시간(ms, 방 전환·방 내용 불러오기·옮기기). 아직 바꾸지 않았으면 -1. 검증에서 끊김을 잰다.</summary>
     public float SwitchMilliseconds { get; private set; } = -1f;
     public float CarSpeed { get; private set; }
     public Vector3 LastRelocation { get; private set; }
     public float LandingY { get; private set; }
-    public float FieldCeilingTop { get; private set; }
-    public float HoldClearance => holdClearance;
+    public float FieldFloorY { get; private set; }
+    public float ShaftDarkness { get; private set; }
+    public const float AccelerationSeconds = 3f;
+    public const float RushSeconds = 3f;
+    public const float ArrivalSeconds = 3.5f;
     public float HoldSeconds { get; private set; }
     public bool LoadingPanelHidden { get; private set; }
     public Vector2 LobbyOrigin { get; private set; }
     public Vector2 FieldOrigin { get; private set; }
-    public float CruiseSpeed => cruiseSpeed;
+    public float CruiseSpeed => peakSpeed > 0f ? peakSpeed : cruiseSpeed;
     public CinemachineCamera RideCamera => rideCamera;
     public Transform CameraAnchor => cameraAnchor;
     public BoxCollider2D RideBounds => rideBounds;
@@ -129,15 +105,11 @@ public sealed class FieldElevatorRide : MonoBehaviour
     private Rect previousArea, currentArea;
     private double sampleTime;
     private bool following;
-    private float transferProgress;
     private float playerAboveFloor = .75f;
     private Vector2 trainingOffset;
     private Rect interior;
     private float railDistance;
-    private float clampAngle = 60f, clampTarget = 60f;
-    private const float ClampOpen = 60f, ClampClosed = 0f;
-    private float trolleyHomeY;
-    private bool trolleyHomeKnown;
+    private float peakSpeed, shaftUrgency, arrivalProgress;
     private bool parkPending;
 
     // 이 이동이 맡은 것(정리할 때 되돌린다)
@@ -154,7 +126,16 @@ public sealed class FieldElevatorRide : MonoBehaviour
     private readonly List<Vector3> fillVertices = new List<Vector3>(24);
     private readonly List<Color> fillColors = new List<Color>(24);
     private readonly List<int> fillTriangles = new List<int>(36);
-    private readonly Vector3[] ropePoints = new Vector3[2];
+    private Transform shaftVisuals;
+    private MeshRenderer darkRenderer, beamRenderer;
+    private Mesh darkMesh, beamMesh;
+    private MaterialPropertyBlock shaftProperties;
+    private CinemachineImpulseListener rideImpulse;
+    private float impulseGain, motorPitch, motorVolume, beamScroll;
+    private readonly List<Vector3> beamVertices = new List<Vector3>(512);
+    private readonly List<Color> beamColors = new List<Color>(512);
+    private readonly List<int> beamTriangles = new List<int>(768);
+    private static readonly int TintId = Shader.PropertyToID("_Color");
     private static readonly Color VoidColor = new Color(.003f, .003f, .003f, 1f);
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -165,7 +146,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
         if (Instance == null || Instance == this) Instance = this;
         if (rig != null && rig.activeSelf) rig.SetActive(false);
         if (rideCamera != null) rideCamera.Priority = idlePriority;
-        CacheTrolleyHome();
+        if (rideCamera != null && rideCamera.TryGetComponent(out rideImpulse)) impulseGain = rideImpulse.Gain;
     }
 
     private void OnEnable()
@@ -190,6 +171,8 @@ public sealed class FieldElevatorRide : MonoBehaviour
     {
         if (Instance == this) Instance = null;
         if (fillMesh != null) Destroy(fillMesh);
+        if (darkMesh != null) Destroy(darkMesh);
+        if (beamMesh != null) Destroy(beamMesh);
         fillMesh = null;
     }
 
@@ -260,18 +243,20 @@ public sealed class FieldElevatorRide : MonoBehaviour
             var car = source.Car;
             LobbyOrigin = new Vector2(source.transform.position.x, source.CeilingTopY);
             rig.transform.position = new Vector3(LobbyOrigin.x, LobbyOrigin.y, rig.transform.position.z);
-            clampAngle = clampTarget = ClampOpen;
-            transferProgress = 0f;
-            railDistance = 0f;
+            railDistance = beamScroll = arrivalProgress = 0f;
+            float clearance = Mathf.Max(0f, LobbyOrigin.y + 5f - source.FloorY);
+            peakSpeed = Mathf.Max(cruiseSpeed, clearance * 2f / AccelerationSeconds);
             var lobbyBox = LobbyBounds();
-            float leftFill = Mathf.Min(-fillHalfWidth, lobbyBox.xMin - LobbyOrigin.x), rightFill = Mathf.Max(transferOffset + fillHalfWidth, lobbyBox.xMax - LobbyOrigin.x);
-            var lobbyFill = Rect.MinMaxRect(leftFill, 0f, rightFill, columnHeight + fillTopMargin);
+            float leftFill = Mathf.Min(-fillHalfWidth, lobbyBox.xMin - LobbyOrigin.x), rightFill = Mathf.Max(fillHalfWidth, lobbyBox.xMax - LobbyOrigin.x);
+            float rise = peakSpeed * AccelerationSeconds * .5f + source.FloorY - LobbyOrigin.y;
+            var lobbyFill = Rect.MinMaxRect(leftFill, 0f, rightFill, Mathf.Max(columnHeight, rise) + Mathf.Max(fillTopMargin, rideLens * 2f));
             BuildFill(lobbyFill);
             SetBounds(Union(lobbyBox, Offset(lobbyFill, LobbyOrigin)));
             rig.SetActive(true);
-            CacheTrolleyHome();
+            SetStationShaft(true);
+            CreateShaftVisuals();
+            SetRushEffects(0f, 0f);
             source.DetachCar(carHolder);
-            PlaceTrolley(0f);
             following = false;
             var lobbyCamera = GameManager.Instance.LobbyRoom != null ? GameManager.Instance.LobbyRoom.VirtualCamera : null;
             if (lobbyCamera != null)
@@ -292,13 +277,16 @@ public sealed class FieldElevatorRide : MonoBehaviour
             ResetSamples(motor.Confinement);
             playerAboveFloor = player.transform.position.y - currentArea.yMin;
             Vector2 carFloor = car.transform.position;
-            for (var step = Haul(new Vector2(currentArea.center.x, currentArea.yMin), new Vector2(carFloor.x, source.FloorY), boardTime, false); step.MoveNext();)
+            for (var step = Haul(new Vector2(currentArea.center.x, currentArea.yMin), new Vector2(carFloor.x, source.FloorY), boardTime); step.MoveNext();)
                 yield return step.Current;
             following = true;
 
             // ---- 4. 문 닫힘 ----
             car.SetDoors(false);
             for (float t = 0f; t < doorTime + .3f && !(t > .05f && car.DoorsSettled); t += Time.deltaTime) yield return null;
+
+            // 닫힌 문 뒤에서 교장 개체를 미리 구성해 질주 중의 동기 생성 비용을 줄인다.
+            if (RoomManager.Instance.CurrentRoom != room) host.Stage(context.request.waveData);
 
             // ---- 5. 출발 준비: 경고등·표시판·구동음·흔들림, Lobby BGM은 멀리 들리게 ----
             PlaySound(spinUpSound, car.transform.position);
@@ -310,91 +298,58 @@ public sealed class FieldElevatorRide : MonoBehaviour
             if (sound != null && sound.CurrentBgmClip != null) sound.SetBGMDistance(sound.CurrentBgmClip, lobbyBgmDistanceVolume, lobbyBgmCutoff, lobbyBgmRamp);
             for (float t = 0f; t < spinUpTime; t += Time.deltaTime) yield return null;
 
-            // ---- 6. 상승: Lobby 천장 해치를 지나 갱도 A 꼭대기(분기점)까지 ----
             CurrentPhase = Phase.Ascending;
-            float junctionY = LobbyOrigin.y + columnHeight;
-            bool alarmOff = false;
-            for (var step = Travel(1f, () => junctionY, ascentBraking, null); step.MoveNext();)
+            float accelerationDistance = peakSpeed * AccelerationSeconds;
+            for (var step = TravelUp(AccelerationSeconds, t => accelerationDistance * RampDistance(t), t =>
             {
-                if (!alarmOff && currentArea.yMin > source.CeilingTopY + 6f) { alarmOff = true; source.SetAlarm(false); }
+                float darkness = Ease(Mathf.InverseLerp(.53f, 1f, t));
+                SetRushEffects(darkness, Ease(t));
+            }); step.MoveNext();)
                 yield return step.Current;
-            }
-            if (!alarmOff) source.SetAlarm(false);
 
-            // ---- 7. 분기점 도착: 반복음·흔들림을 끊고 경고등·표시판도 끈다(멈춘 동안 화면에 움직이는 부품이 없게). Update 단계로 넘어가 방을 바꾼다 ----
-            CurrentPhase = Phase.Junction;
-            CarSpeed = 0f;
-            StopMotor();
-            EndShake();
-            car.SetBeacons(false);
-            car.SetPanel(FieldElevatorCar.PanelMode.Idle);
+            source.SetAlarm(false);
+            SetStationShaft(false);
+            SetRushEffects(1f, 1f);
+            CurrentPhase = Phase.Rush;
+            // 갱도 잔상의 위치와 속도를 유지한 채 어두운 프레임에서 좌표계를 교장 쪽으로 옮긴다.
             yield return null;
-
-            // ---- 8. 방 전환(같은 프레임에 장치·케이지·Player·카메라를 교장 위쪽으로 옮긴다. 화면은 바뀌지 않는다) ----
-            // 방 내용을 동기로 불러오면 이 프레임이 길어진다. 이 프레임과 긴 Δt를 받는 다음 프레임에는 움직이는 부품(집게·경고등·표시판·흔들림)이
-            // 없게 해 멈춤이 정지 화면에 묻히게 한다. 걸쇠·집게는 그다음 프레임부터 움직인다(긴 Δt로 집게가 한 번에 닫히지 않게).
             SwitchRoom(context);
-            yield return null;
-            yield return null;
 
-            // ---- 9. 분기점 대기: 걸쇠가 물리고(소리·흔들림) 집게가 지붕을 문다 ----
-            if (latchFeedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(latchFeedback, car.transform.position);
-            PlaySound(clampSound, car.transform.position);
-            clampTarget = ClampClosed;
-            for (float t = 0f; t < junctionHold; t += Time.deltaTime) { ShowLoading(car); yield return null; }
-
-            // ---- 10. 들기 → 가로 이송(갱도 A → B) → 내리기(다시 움직이므로 경고등을 켠다) ----
-            CurrentPhase = Phase.Transferring;
-            car.SetBeacons(true);
-            Vector2 atJunction = new Vector2(currentArea.center.x, currentArea.yMin);
-            Vector2 lifted = atJunction + Vector2.up * liftHeight;
-            Vector2 across = lifted + Vector2.right * transferOffset;
-            for (var step = Haul(atJunction, lifted, clampTime, false); step.MoveNext();) { ShowLoading(car); yield return step.Current; }
-            PlaySound(transferSound, car.transform.position);
-            StartMotor(transferLoop != null && transferLoop.clip != null ? transferLoop : motorLoop, car.transform);
-            StartShake(car.transform.position);
-            for (var step = Haul(lifted, across, transferTime, true); step.MoveNext();) { ShowLoading(car); yield return step.Current; }
-            transferProgress = 1f;
-            StopMotor();
-            EndShake();
-            for (var step = Haul(across, across - Vector2.up * liftHeight, clampTime, false); step.MoveNext();) { ShowLoading(car); yield return step.Current; }
-            clampTarget = ClampOpen;
-            PlaySound(releaseSound, car.transform.position);
-
-            // ---- 11. 하강: 교장 천장을 지나 Wave 1 시작 좌표의 바닥까지(로딩이 남으면 천장 위 대기점에서 기다린다) ----
-            CurrentPhase = Phase.Descending;
-            car.SetPanel(FieldElevatorCar.PanelMode.Down);
-            car.SetBeacons(true);
-            StartMotor(motorLoop, car.transform);
-            StartShake(car.transform.position);
-            LandingY = ResolveLandingY();
-            bool held = false;
-            float holdPoint = FieldCeilingTop + holdClearance, nextWarning = 15f;
-            for (var step = Travel(-1f, () => LandingY, descentBraking, () => host.IsLoading ? holdPoint : (float?)null); step.MoveNext();)
-            {
-                if (host.IsLoading)
-                {
-                    held = true;
-                    car.SetPanel(FieldElevatorCar.PanelMode.Hold, host.LoadingProgress);
-                    if (CurrentPhase == Phase.Holding)
-                    {
-                        HoldSeconds += Time.fixedDeltaTime;
-                        if (HoldSeconds > nextWarning)
-                        {
-                            nextWarning += 15f;
-                            Debug.LogWarning($"[FieldElevatorRide] 입장 로딩을 {HoldSeconds:0}초째 기다리는 중입니다(진행률 {host.LoadingProgress:P0}).", this);
-                        }
-                    }
-                }
-                else if (held)
-                {
-                    // 로딩이 끝나면 지형이 다 준비된 자리에서 내릴 바닥을 다시 찾고 내려간다.
-                    held = false;
-                    LandingY = ResolveLandingY();
-                    car.SetPanel(FieldElevatorCar.PanelMode.Down);
-                }
+            float rushDistance = peakSpeed * RushSeconds;
+            for (var step = TravelUp(RushSeconds, t => rushDistance * t); step.MoveNext();)
                 yield return step.Current;
+
+            if (host.IsLoading)
+            {
+                CurrentPhase = Phase.Holding;
+                CarSpeed = 0f;
+                float warned = 0f;
+                while (host.IsLoading)
+                {
+                    // 바닥 아래에서 로딩을 기다리는 동안에도 갱도 잔상은 정속으로 흐른다.
+                    HoldSeconds += Time.deltaTime;
+                    if (HoldSeconds - warned >= 15f)
+                    {
+                        warned = HoldSeconds;
+                        Debug.LogWarning($"[FieldElevatorRide] 입장 로딩 {HoldSeconds:0}초 경과(진행률 {host.LoadingProgress:P0}).", this);
+                    }
+                    yield return null;
+                }
             }
+
+            CurrentPhase = Phase.Arriving;
+            LandingY = ResolveLandingY();
+            float brakeDistance = peakSpeed * ArrivalSeconds;
+            float correction = LandingY - currentArea.yMin - brakeDistance * .5f;
+            for (var step = TravelUp(ArrivalSeconds,
+                t => brakeDistance * (t - RampDistance(t)) + correction * SmoothArrival(t), t =>
+                {
+                    arrivalProgress = t;
+                    float darkness = 1f - Ease(Mathf.InverseLerp(.23f, .92f, t));
+                    SetRushEffects(darkness, 1f - Ease(t));
+                }); step.MoveNext();)
+                yield return step.Current;
+            SetRushEffects(0f, 0f);
 
             // ---- 12. 착지: 흔들림·먼지 → 잠시 뒤 문 열림 ----
             CurrentPhase = Phase.Landing;
@@ -420,8 +375,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
         }
     }
 
-    // 분기점에 멈춘 프레임(Update 단계)에서 방을 바꾸고, ChangeRoom이 옮긴 것과 같은 프레임에 모두 교장 위쪽으로 옮긴다.
-    // 이 프레임에는 동기 방 내용 불러오기가 몰리므로 방 전체를 훑는 검색(GetComponentsInChildren·Find…ByType)을 하지 않는다.
+    // 갱도 조명만 보일 때 교장 바닥 아래로 옮긴다.
     private void SwitchRoom(RoomTransitionContext context)
     {
         var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -444,17 +398,15 @@ public sealed class FieldElevatorRide : MonoBehaviour
         HideLoadingPanel();
         if (!HasSwitchedRoom) throw new InvalidOperationException("방 전환 뒤 지금 방이 목적지가 아닙니다.");
 
-        // 교장 쪽 원점: Wave 1 시작 좌표(입장 지점) 위의 갱도 B 바닥 = 교장 천장 윗면. 분기점에 있는 지금은 갱도 A(그 왼쪽)에 있다.
         Vector2 entry = host.entryPoint.position;
         interior = InteriorRect();
-        // 방 내용을 새로 만들었으면 방 카메라도 새것이다. 착지 화면을 맞출 때 쓸 그 카메라의 따라가기 오프셋을 여기서 읽는다.
         var roomFollow = room.VirtualCamera != null ? room.VirtualCamera.GetComponent<CinemachineFollow>() : null;
         trainingOffset = roomFollow != null ? (Vector2)roomFollow.FollowOffset : Vector2.zero;
-        FieldCeilingTop = interior.yMax + fieldCeilingThickness;
-        FieldOrigin = new Vector2(entry.x - transferOffset, FieldCeilingTop);
-        Vector3 delta = (Vector3)(FieldOrigin - LobbyOrigin);
+        FieldFloorY = interior.yMin;
+        float climb = peakSpeed * (RushSeconds + ArrivalSeconds * .5f);
+        FieldOrigin = new Vector2(entry.x, entry.y - playerAboveFloor - climb);
+        Vector3 delta = (Vector3)(FieldOrigin - new Vector2(currentArea.center.x, currentArea.yMin));
         rig.transform.position += delta;
-        // ChangeRoom이 입장 지점으로 옮긴 Player를 같은 프레임에 케이지 안(옮긴 자리)으로 되돌리고 구속도 그 자리에 다시 잡는다.
         player.ResetPlayerPosition(playerBefore + delta);
         ResetSamples(motor.Confinement);
         LastRelocation = delta;
@@ -462,13 +414,12 @@ public sealed class FieldElevatorRide : MonoBehaviour
         UpdateAnchor();
         CinemachineCore.OnTargetObjectWarped(cameraAnchor, delta);
         rideCamera.PreviousStateIsValid = false;
-        // 이 프레임은 Brain이 꺼져 있어 카메라가 옛 자리를 그린다. 같은 양만큼 직접 옮긴다(다음 프레임부터 Brain이 이동 카메라를 그대로 비춘다).
         if (view != null) view.transform.position = cameraBefore + delta;
 
-        // 교장 쪽 바깥 채움: 실내만 비우고 둘레를 어둡게 덮는다(벽·천장·바닥 셀은 채움보다 앞에 그려진다).
-        Vector2 colB = FieldOrigin + Vector2.right * transferOffset;
-        var outer = Rect.MinMaxRect(colB.x - fillHalfWidth, interior.yMin - fillBottomMargin, colB.x + fillHalfWidth, FieldCeilingTop + columnHeight + fillTopMargin);
-        BuildFill(Subtract(Offset(outer, -FieldOrigin), Offset(interior, -FieldOrigin)));
+        var outer = Rect.MinMaxRect(Mathf.Min(interior.xMin, entry.x - fillHalfWidth),
+            FieldOrigin.y - fillTopMargin, Mathf.Max(interior.xMax, entry.x + fillHalfWidth), interior.yMax + fillTopMargin);
+        var origin = (Vector2)rig.transform.position;
+        BuildFill(Subtract(Offset(outer, -origin), Offset(interior, -origin)));
         SetBounds(Union(RoomCameraBox(), outer));
         if (lobbyClip != null && sound != null) sound.FadeOutBGM(lobbyClip, lobbyBgmFadeOut);
         SwitchMilliseconds = (float)watch.Elapsed.TotalMilliseconds;
@@ -498,20 +449,17 @@ public sealed class FieldElevatorRide : MonoBehaviour
         if (TrainingRoomLoadingPanel.Dismiss(host)) LoadingPanelHidden = true;
     }
 
-    private void ShowLoading(FieldElevatorCar car)
-    {
-        if (host != null && host.IsLoading) car.SetPanel(FieldElevatorCar.PanelMode.Hold, host.LoadingProgress);
-        else if (car.Panel == FieldElevatorCar.PanelMode.Hold || car.Panel == FieldElevatorCar.PanelMode.Up) car.SetPanel(FieldElevatorCar.PanelMode.Idle);
-    }
-
-    // 내려놓을 높이: 입장 지점에 선 몸의 발밑 근처에 실제 바닥이 있으면 그 위(크레인의 SettleHeight와 같은 규칙), 없으면 발 높이 그대로.
+    // 첫 Wave 시작점 아래의 실제 바닥을 사용하는 동안 몸을 놓을 자리도 검사한다.
     private float ResolveLandingY()
     {
         Vector2 entry = host.entryPoint.position;
         var feet = new Vector2(entry.x, entry.y - playerAboveFloor);
         float above = Mathf.Min(1.2f, Mathf.Max(.1f, currentArea.height - topMargin));
         var floor = motor.RaycastFloorBelow(feet, above, 3f);
-        return floor.collider != null && floor.distance > .02f ? floor.point.y + .012f : feet.y;
+        if (floor.collider == null || floor.distance <= .02f) return feet.y;
+        float deck = floor.point.y + .012f;
+        var bodyDestination = new Vector2(entry.x, deck + playerAboveFloor);
+        return motor.IsBodyBlockedAt(bodyDestination - (Vector2)player.transform.position) ? feet.y : deck;
     }
 
     // 착지·문 열림 뒤: 구속 해제 → 교장 카메라로 넘김 → HUD·일시정지·BGM 복원 → Wave 자동 시작 막기 복원 → Wave 시작(시작 안내 포함) → 케이지 떠남.
@@ -540,7 +488,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
         departRoutine = StartCoroutine(DepartRoutine());
     }
 
-    // 착지 뒤 케이지가 문을 연 채 갱도 B를 따라 올라가 천장 위로 사라진다. 그 뒤 장치를 끄고 케이지를 Lobby 정박 자리로 돌려 둔다(Lobby는 꺼져 있다).
+    // 승객이 내리면 케이지는 같은 축으로 교장 천장 위까지 올라가 화면 밖에서 정박 상태로 돌아간다.
     private IEnumerator DepartRoutine()
     {
         try
@@ -549,6 +497,10 @@ public sealed class FieldElevatorRide : MonoBehaviour
             for (float t = 0f; t < departDelay; t += Time.deltaTime) yield return null;
             var car = elevator != null ? elevator.Car : null;
             if (car == null || !HoldsCar) yield break;
+            car.SetDoors(false);
+            for (float t = 0f; !car.DoorsSettled && t < doorTime + .3f; t += Time.deltaTime)
+                yield return null;
+            car.SetPanel(FieldElevatorCar.PanelMode.Up);
             car.SetBeacons(true);
             StartMotor(motorLoop, car.transform);
             float speed = 0f, started = Time.time;
@@ -562,7 +514,7 @@ public sealed class FieldElevatorRide : MonoBehaviour
                 car.transform.position += Vector3.up * step;
                 car.AddTravel(step);
                 CarSpeed = speed;
-                if (car.transform.position.y > FieldCeilingTop + departClearance && Time.time - started > blendOutWait) break;
+                if (car.transform.position.y > interior.yMax + departClearance && Time.time - started > blendOutWait) break;
                 yield return null;
             }
         }
@@ -588,14 +540,12 @@ public sealed class FieldElevatorRide : MonoBehaviour
         following = false;
         CarSpeed = 0f;
         if (rideCamera != null) rideCamera.Priority = idlePriority;
-        clampAngle = clampTarget = ClampOpen;
-        transferProgress = 0f;
+        SetRushEffects(0f, 0f);
         if (!IsRiding) CurrentPhase = Phase.Idle;
         if (!hierarchy) { parkPending = true; return; }
         parkPending = false;
         var dock = source != null ? source : elevator;
         if (dock != null && dock.Car != null && carHolder != null && dock.Car.transform.parent == carHolder) dock.DockCar();
-        if (trolley != null) PlaceTrolley(0f);
         if (rig != null && rig.activeSelf) rig.SetActive(false);
     }
 
@@ -616,8 +566,9 @@ public sealed class FieldElevatorRide : MonoBehaviour
             confined = false;
             following = false;
             bool afterSwitch = interrupted && HasSwitchedRoom && !WavesBegun && room != null && host != null;
-            // 방을 바꾼 뒤 갱도(실내 위)나 지형 속에 남았으면 입장 지점으로 옮긴다(이상 경로의 순간이동).
-            if (afterSwitch && player != null && host.entryPoint != null && (player.transform.position.y > interior.yMax || motor.IsBodyBlockedAt(Vector2.zero)))
+            // 전환이 중단되어 교장 바깥이나 지형에 남은 Player를 시작점으로 복귀시킨다.
+            if (afterSwitch && player != null && host.entryPoint != null && (player.transform.position.y < interior.yMin
+                || player.transform.position.y > interior.yMax || motor.IsBodyBlockedAt(Vector2.zero)))
                 player.ResetPlayerPosition(host.entryPoint.position);
             RestoreBgm();
             RestoreSuppress();
@@ -685,45 +636,33 @@ public sealed class FieldElevatorRide : MonoBehaviour
 
     // ===================== 물리 틱 이동(위치를 직접 바꾸지 않고 구속 영역만 옮긴다) =====================
 
-    // 한 축(세로) 이동: 가속 → 일정 속도 → 감속. hold가 값을 주면 그 자리에서 멈출 수 있게 속도를 줄인다(입장 로딩 대기).
-    private IEnumerator Travel(float direction, Func<float> target, float braking, Func<float?> hold)
+    // 각 구간의 속도 곡선을 적분한 위치를 기존 모터의 물리 틱에 적용한다.
+    private IEnumerator TravelUp(float duration, Func<float, float> distance, Action<float> present = null)
     {
+        float from = currentArea.yMin;
         var tick = new WaitForFixedUpdate();
-        float speed = 0f;
-        while (true)
+        int count = Mathf.Max(1, Mathf.RoundToInt(duration / Time.fixedDeltaTime));
+        for (int index = 1; index <= count; index++)
         {
+            if (!motor.IsConfined) throw new InvalidOperationException("이동 중에 이동 구속이 풀렸습니다.");
+            float progress = (float)index / count;
+            float step = from + distance(progress) - currentArea.yMin;
+            CarSpeed = step / Time.fixedDeltaTime;
+            motor.ShiftConfinement(Vector2.up * step);
+            present?.Invoke(progress);
+            Moved(step);
             yield return tick;
             Sample();
-            if (!motor.IsConfined) throw new InvalidOperationException("이동 중에 이동 구속이 풀렸습니다.");
-            float position = currentArea.yMin;
-            float remain = (target() - position) * direction;
-            if (remain <= .0005f) { CarSpeed = 0f; break; }
-            float dt = Time.fixedDeltaTime;
-            float limit = Mathf.Min(cruiseSpeed, Mathf.Sqrt(2f * braking * remain));
-            float? stop = hold != null ? hold() : null;
-            bool holding = false;
-            if (stop.HasValue)
-            {
-                float ahead = (stop.Value - position) * direction;
-                if (ahead > -.01f)
-                {
-                    limit = Mathf.Min(limit, Mathf.Sqrt(2f * braking * Mathf.Max(0f, ahead)));
-                    holding = ahead < .01f;
-                }
-            }
-            speed = speed < limit ? Mathf.Min(limit, speed + acceleration * dt) : limit;
-            float step = Mathf.Min(speed * dt, remain);
-            if (stop.HasValue && holding) step = 0f;
-            CarSpeed = step / dt;
-            if (holding && step <= 0f) { CurrentPhase = Phase.Holding; speed = 0f; continue; }
-            if (CurrentPhase == Phase.Holding) CurrentPhase = Phase.Descending;
-            motor.ShiftConfinement(new Vector2(0f, step * direction));
-            Moved(step * direction);
         }
     }
 
-    // 구속 영역의 바닥 가운데를 from에서 to로 옮긴다(처음과 끝이 느림). 끝나면 마지막 이동량이 반영된 틱에서 멈춘다.
-    private IEnumerator Haul(Vector2 from, Vector2 to, float duration, bool transfer)
+    private static float RampDistance(float t) => t * t * t * (1f - t * .5f);
+
+    // 레이로 확인한 바닥 높이 차이를 끝점의 속도·가속도를 바꾸지 않고 흡수한다.
+    private static float SmoothArrival(float t) => t * t * t * (10f + t * (-15f + t * 6f));
+
+    // 구속 영역의 바닥 가운데를 from에서 to로 옮긴다(처음과 끝이 느림).
+    private IEnumerator Haul(Vector2 from, Vector2 to, float duration)
     {
         var tick = new WaitForFixedUpdate();
         float time = 0f;
@@ -734,7 +673,6 @@ public sealed class FieldElevatorRide : MonoBehaviour
             if (!motor.IsConfined) throw new InvalidOperationException("이동 중에 이동 구속이 풀렸습니다.");
             time += Time.fixedDeltaTime;
             float t = Mathf.Clamp01(time / duration);
-            if (transfer) transferProgress = t;
             Vector2 point = Vector2.Lerp(from, to, t * t * (3f - 2f * t));
             Vector2 delta = point - new Vector2(currentArea.center.x, currentArea.yMin);
             if (t >= 1f && delta.sqrMagnitude < 1e-8f) { CarSpeed = 0f; break; }
@@ -749,9 +687,10 @@ public sealed class FieldElevatorRide : MonoBehaviour
         var car = source != null ? source.Car : null;
         if (car != null && dy != 0f) car.AddTravel(dy);
         railDistance += Mathf.Abs(dy);
-        if (railDistance >= beamSpacing)
+        float spacing = Mathf.Lerp(beamSpacing, beamSpacing * .48f, ShaftDarkness);
+        if (railDistance >= spacing)
         {
-            railDistance -= beamSpacing;
+            railDistance %= spacing;
             if (car != null) PlaySound(railTick, car.transform.position);
         }
     }
@@ -788,16 +727,10 @@ public sealed class FieldElevatorRide : MonoBehaviour
         if (IsRiding) UpdateAnchor();
         if (car != null && HoldsCar)
         {
-            float carLocalX = car.transform.position.x - rig.transform.position.x;
-            PlaceTrolley(CurrentPhase == Phase.Departing ? transferOffset : Mathf.Clamp(carLocalX, 0f, transferOffset));
-            if (trolleySheave != null) car.SetCableTop(trolleySheave.position);
+            car.SetCableTop(car.transform.position + Vector3.up * (rideLens * 2f));
             if (shake != null) shake.Position = car.transform.position;
         }
-        clampAngle = Mathf.MoveTowards(clampAngle, clampTarget, (ClampOpen - ClampClosed) / Mathf.Max(.05f, clampTime) * Time.deltaTime);
-        // 집게 팔은 위쪽 축에 매달려 열리면 바깥으로 벌어진다(왼쪽은 시계 방향, 오른쪽은 반시계 방향).
-        if (clampL != null) clampL.localRotation = Quaternion.Euler(0f, 0f, -clampAngle);
-        if (clampR != null) clampR.localRotation = Quaternion.Euler(0f, 0f, clampAngle);
-        UpdateCounterweights(car);
+        UpdateShaftVisuals();
     }
 
     private void PlaceCar(Vector2 floor)
@@ -808,28 +741,20 @@ public sealed class FieldElevatorRide : MonoBehaviour
         t.position = new Vector3(floor.x, floor.y, t.position.z);
     }
 
-    // 카메라 기준점: 케이지 바닥 + 높이(오를 땐 위를, 내릴 땐 아래를 보이게). 하강 끝에는 교장 카메라가 비출 화면으로 맞춰 간다(넘길 때 튀지 않게).
+    // 상승 중에는 케이지 위를 비추고 입구에 접근하면 교장 카메라 화면에 맞춘다.
     private void UpdateAnchor()
     {
         if (cameraAnchor == null) return;
         var car = elevator != null ? elevator.Car : null;
         Vector2 floor = car != null ? (Vector2)car.transform.position : (Vector2)cameraAnchor.position;
-        float lift = CurrentPhase switch
+        Vector2 anchor = floor + Vector2.up * ascentLift;
+        if (HasSwitchedRoom && CurrentPhase >= Phase.Arriving && CurrentPhase != Phase.Holding)
         {
-            Phase.Boarding or Phase.Ascending or Phase.Junction => ascentLift,
-            Phase.Transferring => Mathf.Lerp(ascentLift, descentLift, Ease(transferProgress)),
-            _ => descentLift,
-        };
-        Vector2 anchor = new Vector2(floor.x, floor.y + lift);
-        if (HasSwitchedRoom && CurrentPhase >= Phase.Descending)
-        {
-            float start = FieldCeilingTop + framingStart;
-            if (floor.y < start)
-            {
-                float s = Ease((start - floor.y) / Mathf.Max(.01f, start - LandingY));
-                Vector2 view = RoomClamped(new Vector2(floor.x, floor.y + playerAboveFloor) + trainingOffset);
-                anchor = Vector2.Lerp(anchor, view, s);
-            }
+            float distanceProgress = Mathf.InverseLerp(LandingY - framingStart, LandingY, floor.y);
+            float timeProgress = Mathf.InverseLerp(.35f, 1f, arrivalProgress);
+            float progress = SmoothArrival(Mathf.Min(distanceProgress, timeProgress));
+            Vector2 view = RoomClamped(new Vector2(floor.x, floor.y + playerAboveFloor) + trainingOffset);
+            anchor = Vector2.Lerp(anchor, view, progress);
         }
         cameraAnchor.position = new Vector3(anchor.x, anchor.y, cameraAnchor.position.z);
     }
@@ -890,43 +815,141 @@ public sealed class FieldElevatorRide : MonoBehaviour
         if (confiner != null) confiner.InvalidateBoundingShapeCache();
     }
 
-    private void CacheTrolleyHome()
+    private void SetStationShaft(bool visible)
     {
-        if (trolleyHomeKnown || trolley == null) return;
-        trolleyHomeY = trolley.localPosition.y;
-        trolleyHomeKnown = true;
+        if (columnA != null) columnA.gameObject.SetActive(visible);
+        if (columnB != null) columnB.gameObject.SetActive(false);
+        if (trolley != null && trolley.parent != null) trolley.parent.gameObject.SetActive(false);
     }
 
-    private void PlaceTrolley(float x)
+    // Default 층의 갱도와 방 위에 어둠을 얹는다. Player 층의 케이지와 조명은 계속 보인다.
+    private void CreateShaftVisuals()
     {
-        if (trolley == null) return;
-        CacheTrolleyHome();
-        trolley.localPosition = new Vector3(x, trolleyHomeY, trolley.localPosition.z);
-        float angle = -x / wheelRadius * Mathf.Rad2Deg;
-        foreach (var wheel in trolleyWheels) if (wheel != null) wheel.localRotation = Quaternion.Euler(0f, 0f, angle);
+        if (shaftVisuals != null || exteriorFill == null || !exteriorFill.TryGetComponent<MeshRenderer>(out var fill)) return;
+        var root = new GameObject("ShaftVisuals");
+        shaftVisuals = root.transform;
+        shaftVisuals.SetParent(rig.transform, false);
+        shaftProperties = new MaterialPropertyBlock();
+
+        darkMesh = new Mesh { name = "ElevatorShaftDarkness" };
+        darkMesh.vertices = new[] { new Vector3(-1f, -1f), new Vector3(-1f, 1f), new Vector3(1f, 1f), new Vector3(1f, -1f) };
+        darkMesh.colors = new[] { Color.white, Color.white, Color.white, Color.white };
+        darkMesh.triangles = new[] { 0, 1, 2, 0, 2, 3 };
+        darkMesh.RecalculateBounds();
+        darkRenderer = AddShaftRenderer("Darkness", darkMesh, fill.sharedMaterial, 31998);
+
+        beamMesh = new Mesh { name = "ElevatorShaftBeams" };
+        beamMesh.MarkDynamic();
+        beamRenderer = AddShaftRenderer("PassingBeams", beamMesh, fill.sharedMaterial, 31999);
     }
 
-    // 평형추: 케이지가 오르면 내려가고 내리면 오른다(케이지가 있는 갱도만). 줄은 갱도 꼭대기까지.
-    private void UpdateCounterweights(FieldElevatorCar car)
+    private MeshRenderer AddShaftRenderer(string name, Mesh mesh, Material material, int order)
     {
-        float carLocalY = car != null && HoldsCar ? car.transform.position.y - rig.transform.position.y : -1f;
-        float carLocalX = car != null && HoldsCar ? car.transform.position.x - rig.transform.position.x : 0f;
-        bool onB = carLocalX > transferOffset * .5f;
-        float k = Mathf.InverseLerp(0f, columnHeight, carLocalY);
-        SetCounterweight(counterweightA, counterweightRopeA, onB ? 1f : k);
-        SetCounterweight(counterweightB, counterweightRopeB, onB ? k : 1f);
+        var node = new GameObject(name);
+        node.transform.SetParent(shaftVisuals, false);
+        node.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var renderer = node.AddComponent<MeshRenderer>();
+        renderer.sharedMaterial = material;
+        renderer.sortingOrder = order;
+        renderer.enabled = false;
+        return renderer;
     }
 
-    private void SetCounterweight(Transform weight, LineRenderer rope, float carProgress)
+    private void UpdateShaftVisuals()
     {
-        if (weight == null) return;
-        float y = Mathf.Lerp(counterweightRange.y, counterweightRange.x, carProgress);
-        weight.localPosition = new Vector3(weight.localPosition.x, y, weight.localPosition.z);
-        if (rope == null) return;
-        ropePoints[0] = weight.position + Vector3.up * .9f;
-        ropePoints[1] = new Vector3(weight.position.x, weight.parent.position.y + columnHeight + 5.4f, weight.position.z);
-        if (rope.positionCount != 2) rope.positionCount = 2;
-        rope.SetPositions(ropePoints);
+        if (shaftVisuals == null || !darkRenderer.enabled) return;
+        var camera = Camera.main;
+        float height = Mathf.Max(rideLens, camera != null ? camera.orthographicSize : rideLens);
+        float width = height * (camera != null ? camera.aspect : 16f / 9f);
+        shaftVisuals.position = new Vector3(cameraAnchor.position.x, cameraAnchor.position.y, shaftVisuals.position.z);
+        darkRenderer.transform.localScale = new Vector3(width + 5f, height + 5f, 1f);
+        if (!beamRenderer.enabled) return;
+
+        const float spacing = 3f;
+        beamScroll = Mathf.Repeat(beamScroll + Time.deltaTime * Mathf.Lerp(10f, 62f, shaftUrgency), 192f);
+        beamVertices.Clear();
+        beamColors.Clear();
+        beamTriangles.Clear();
+        float extentY = height + 4f;
+        float edge = width + 5f;
+        float light = Mathf.Sin(ShaftDarkness * Mathf.PI) * .7f + shaftUrgency * .23f;
+        Color rail = new Color(.15f, .17f, .18f, light * .52f);
+        AddShaftBeam(-3.5f, -extentY, -3.36f, extentY, rail);
+        AddShaftBeam(3.36f, -extentY, 3.5f, extentY, rail);
+        int count = Mathf.CeilToInt((extentY + spacing * 4f) / spacing);
+        for (int i = -count; i <= count; i++)
+        {
+            float y = i * spacing - Mathf.Repeat(beamScroll * .5f, spacing * 4f);
+            float thickness = i % 4 == 0 ? .31f : .15f;
+            Color beam = new Color(.23f, .25f, .27f, light * (i % 4 == 0 ? .78f : .47f));
+            AddShaftBeam(-edge, y - thickness, -2.45f, y, beam);
+            AddShaftBeam(2.45f, y - thickness, edge, y, beam);
+        }
+        AddSpeedStreaks(width, extentY);
+        beamMesh.Clear();
+        beamMesh.SetVertices(beamVertices);
+        beamMesh.SetColors(beamColors);
+        beamMesh.SetTriangles(beamTriangles, 0);
+    }
+
+    private void AddSpeedStreaks(float width, float height)
+    {
+        // 시야 바깥쪽의 가까운 잔상과 케이지 옆의 느린 잔상을 한 Mesh에서 그린다.
+        const float interval = 8f;
+        float laneWidth = Mathf.Max(.4f, width - 2.9f);
+        for (int side = -1; side <= 1; side += 2)
+        for (int lane = 0; lane < 7; lane++)
+        {
+            bool near = lane % 3 != 0;
+            float x = side * (2.9f + laneWidth * (.08f + lane * .14f));
+            float phase = lane * 3.19f + (side > 0 ? 1.82f : 0f);
+            float offset = Mathf.Repeat(beamScroll * (near ? 1f : .5f) + phase, interval);
+            float length = Mathf.Lerp(.6f, near ? 5.6f : 3.2f, shaftUrgency) * (.72f + .1f * (lane % 4));
+            float halfWidth = near ? .033f + .008f * (lane % 3) : .021f;
+            Color color = new Color(.62f, .72f, .83f, shaftUrgency * (near ? .61f : .31f));
+            int count = Mathf.CeilToInt((height + length + interval) / interval);
+            for (int row = -count; row <= count; row++)
+            {
+                float bottom = row * interval - offset;
+                if (bottom > height || bottom + length < -height) continue;
+                AddSpeedStreak(x, bottom, length, halfWidth, color);
+            }
+        }
+    }
+
+    private void AddSpeedStreak(float x, float y, float length, float width, Color color)
+    {
+        int first = beamVertices.Count;
+        Color clear = color;
+        clear.a = 0f;
+        beamVertices.Add(new Vector3(x - width * .4f, y));
+        beamVertices.Add(new Vector3(x - width, y + length * .23f));
+        beamVertices.Add(new Vector3(x - width * .24f, y + length));
+        beamVertices.Add(new Vector3(x + width * .24f, y + length));
+        beamVertices.Add(new Vector3(x + width, y + length * .23f));
+        beamVertices.Add(new Vector3(x + width * .4f, y));
+        beamColors.Add(clear);
+        beamColors.Add(color);
+        beamColors.Add(clear);
+        beamColors.Add(clear);
+        beamColors.Add(color);
+        beamColors.Add(clear);
+        beamTriangles.Add(first); beamTriangles.Add(first + 1); beamTriangles.Add(first + 4);
+        beamTriangles.Add(first); beamTriangles.Add(first + 4); beamTriangles.Add(first + 5);
+        beamTriangles.Add(first + 1); beamTriangles.Add(first + 2); beamTriangles.Add(first + 3);
+        beamTriangles.Add(first + 1); beamTriangles.Add(first + 3); beamTriangles.Add(first + 4);
+    }
+
+    private void AddShaftBeam(float left, float bottom, float right, float top, Color color)
+    {
+        int first = beamVertices.Count;
+        beamVertices.Add(new Vector3(left, bottom));
+        beamVertices.Add(new Vector3(left, top));
+        beamVertices.Add(new Vector3(right, top));
+        beamVertices.Add(new Vector3(right, bottom));
+        for (int i = 0; i < 4; i++) beamColors.Add(color);
+        beamTriangles.Add(first); beamTriangles.Add(first + 1); beamTriangles.Add(first + 2);
+        beamTriangles.Add(first); beamTriangles.Add(first + 2); beamTriangles.Add(first + 3);
     }
 
     // ===================== 바깥 채움 =====================
@@ -982,6 +1005,28 @@ public sealed class FieldElevatorRide : MonoBehaviour
         StopMotor();
         if (sound == null || sound.clip == null || SoundManager.Instance == null || follow == null) return;
         loop = SoundManager.Instance.PlayLoop(sound, follow.position, follow);
+        var audio = loop?.GetSource();
+        if (audio != null) { motorPitch = audio.pitch; motorVolume = audio.volume; }
+    }
+
+    private void SetRushEffects(float darkness, float urgency)
+    {
+        ShaftDarkness = darkness;
+        shaftUrgency = urgency;
+        if (darkRenderer != null)
+        {
+            darkRenderer.enabled = darkness > 0f;
+            beamRenderer.enabled = darkness > 0f && urgency > .015f;
+            shaftProperties.SetColor(TintId, new Color(0f, 0f, 0f, darkness));
+            darkRenderer.SetPropertyBlock(shaftProperties);
+        }
+        var audio = loop?.GetSource();
+        if (audio != null)
+        {
+            audio.pitch = motorPitch * Mathf.Lerp(1f, 1.65f, urgency);
+            audio.volume = Mathf.Clamp01(motorVolume * Mathf.Lerp(1f, 1.45f, urgency));
+        }
+        if (rideImpulse != null) rideImpulse.Gain = impulseGain * Mathf.Lerp(1f, 3.2f, urgency);
     }
 
     private void StopMotor()

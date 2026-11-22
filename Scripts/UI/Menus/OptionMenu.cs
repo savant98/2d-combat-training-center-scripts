@@ -35,6 +35,10 @@ public class OptionMenu : SelectableMenuUI
 
     [SerializeField] private UnityEngine.UI.ScrollRect displayScroll;
     [SerializeField] private AudioCreditsPanel audioCredits;
+    [SerializeField] private TextMeshProUGUI storeSkillHint;
+    [SerializeField] private UnityEngine.UI.Button storeSkillClear;
+    private const int StoreSkillRow = 23;
+    private static readonly Guid StoreSkillBindingId = new Guid("ed98d38e-dbb6-49ad-a536-196d7492c04c");
     private OptionSettings saved, draft;
     private string originalBindings;
     private readonly List<Vector2Int> resolutions = new();
@@ -46,7 +50,7 @@ public class OptionMenu : SelectableMenuUI
     {
         new[] { 20, 21, 0, 1, 22, 2, 3, 4, 5 },
         new[] { 6, 7, 8 },
-        new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 }
+        new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, StoreSkillRow }
     };
     private int RowCount => PageRows[page].Length;
     private int SelectedRow => PageRows[page][Mathf.Clamp(selection, 0, RowCount - 1)];
@@ -57,6 +61,7 @@ public class OptionMenu : SelectableMenuUI
     [SerializeField] private UnityEngine.UI.Image[] tabFocus;
     private InputActionRebindingExtensions.RebindingOperation rebind;
     private int page, selection, dialogIndex;
+    private int hoveredCategory = -1;
     private float inputReadyAt, displayDeadline;
     private Action acceptDialog, rejectDialog;
     private bool waitingDisplay, dirty, closing;
@@ -73,6 +78,22 @@ public class OptionMenu : SelectableMenuUI
                 trigger.gameObject.AddComponent<MenuScrollRelay>();
         BuildMenuMapping();
         base.Awake();
+        for (int i = 0; i < tabFills.Length; i++)
+        {
+            int index = i;
+            var tab = tabFills[i];
+            tab.raycastTarget = true;
+            var trigger = tab.GetComponent<EventTrigger>() ?? tab.gameObject.AddComponent<EventTrigger>();
+            var enter = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
+            enter.callback.AddListener(_ => SetHoveredCategory(index));
+            trigger.triggers.Add(enter);
+            var exit = new EventTrigger.Entry { eventID = EventTriggerType.PointerExit };
+            exit.callback.AddListener(_ =>
+            {
+                if (hoveredCategory == index) SetHoveredCategory(-1);
+            });
+            trigger.triggers.Add(exit);
+        }
         for (int i = 0; i < optionRows.Length; i++)
         {
             int index = i;
@@ -97,6 +118,7 @@ public class OptionMenu : SelectableMenuUI
             {
                 if (!CanUsePointer() || Mouse.current == null || Mouse.current.delta.ReadValue().sqrMagnitude < .01f) return;
                 FinishEditing(false);
+                hoveredCategory = -1;
                 navigationStage = NavigationStage.Footer; selection = index; RefreshFocus();
             });
             trigger.triggers.Add(enter);
@@ -182,9 +204,17 @@ public class OptionMenu : SelectableMenuUI
     private bool CanUsePointer() => IsActive && !IsRebinding && !dialog.activeSelf && !closing &&
         (UIManager.Instance == null || (!UIManager.Instance.IsUIInputBlocked && UIManager.Instance.IsCurrentInputTarget(this)));
 
+    private void SetHoveredCategory(int index)
+    {
+        if (!CanUsePointer() || hoveredCategory == index) return;
+        hoveredCategory = index;
+        RefreshFocus();
+    }
+
     public void ShowPage(int index)
     {
         if (!CanUsePointer()) return;
+        hoveredCategory = -1;
         page = (index + pages.Length) % pages.Length;
         selection = 0;
         navigationStage = NavigationStage.Categories;
@@ -211,6 +241,9 @@ public class OptionMenu : SelectableMenuUI
     {
         if (!IsActive) return;
         Resize();
+        if (page == 2 && navigationStage == NavigationStage.Items && SelectedRow == StoreSkillRow
+            && CanReceiveMenuInput && !dialog.activeSelf && Keyboard.current?.backspaceKey.wasPressedThisFrame == true)
+            ClearStoreSkillBinding();
         if (waitingDisplay)
         {
             int seconds = Mathf.CeilToInt(displayDeadline - Time.unscaledTime);
@@ -224,12 +257,15 @@ public class OptionMenu : SelectableMenuUI
 
     protected override void ProcessMove(Vector2 direction)
     {
-        if (CanReceiveMenuInput) Navigate(direction);
+        if (!CanReceiveMenuInput) return;
+        SetHoveredCategory(-1);
+        Navigate(direction);
     }
 
     public override void OnConfirm()
     {
         if (!CanReceiveMenuInput) return;
+        SetHoveredCategory(-1);
         base.OnConfirm();
         WithoutMoveFeedback(ConfirmNavigation);
     }
@@ -237,6 +273,7 @@ public class OptionMenu : SelectableMenuUI
     public override void OnCancel()
     {
         if (!CanReceiveMenuInput) return;
+        SetHoveredCategory(-1);
         base.OnCancel();
         WithoutMoveFeedback(NavigateBack);
     }
@@ -466,6 +503,7 @@ public class OptionMenu : SelectableMenuUI
         int next = Array.IndexOf(PageRows[page], index);
         if (next < 0) return;
         if (navigationStage == NavigationStage.Editing && SelectedRow != index) FinishEditing(false);
+        hoveredCategory = -1;
         selection = next;
         if (navigationStage != NavigationStage.Editing) navigationStage = NavigationStage.Items;
         RefreshFocus();
@@ -558,12 +596,22 @@ public class OptionMenu : SelectableMenuUI
             optionRows[i].value.text = Mathf.RoundToInt(GetSlider(i) * 100f) + "%";
         }
         optionRows[20].value.text = draft.language == "en" ? "English" : "한국어";
-        for (int i = 9; i < 20; i++)
+        foreach (int i in PageRows[2])
         {
             var row = optionRows[i];
-            var action = InputManager.Instance != null ? InputManager.Instance.Actions.FindAction("Player/" + row.action) : null;
-            int binding = FindBinding(action, row.part);
-            row.value.text = binding < 0 ? "입력 장치 없음" : action.GetBindingDisplayString(binding);
+            var (action, binding) = FindRowBinding(row);
+            var name = row.root.Find("Name").GetComponent<TextMeshProUGUI>();
+            name.text = ControlName(row);
+            row.value.text = binding < 0 ? "미지정" : BindingLabel(action, binding);
+        }
+        if (storeSkillHint != null)
+        {
+            storeSkillHint.text = $"스킬 저장 · 저장 스킬 사용  {InputBindingDisplay.StoreSkill}\n사용 중인 키는 확인 후 교환합니다. 전용 키를 지우려면 기본 조합 버튼 또는 Backspace를 누르세요.";
+        }
+        if (storeSkillClear != null)
+        {
+            var (action, binding) = FindRowBinding(optionRows[StoreSkillRow]);
+            storeSkillClear.interactable = binding >= 0 && !string.IsNullOrEmpty(action.bindings[binding].effectivePath);
         }
         statusText.text = dirty ? "변경 사항 미저장 · 소리와 시각 효과는 미리 적용 중" : "저장된 설정 · 변경 후 [적용 및 저장]을 눌러 주세요";
         RefreshFocus();
@@ -574,7 +622,8 @@ public class OptionMenu : SelectableMenuUI
         if (page == 0 && displayScroll != null && !dialog.activeSelf &&
             (navigationStage == NavigationStage.Items || navigationStage == NavigationStage.Editing))
             KeepDisplayRowVisible();
-        int target = dialog.activeSelf ? 3 + optionRows.Length + footerFocus.Length + dialogIndex : navigationStage switch
+        int target = dialog.activeSelf ? 3 + optionRows.Length + footerFocus.Length + dialogIndex
+            : hoveredCategory >= 0 ? hoveredCategory : navigationStage switch
         {
             NavigationStage.Categories => page,
             NavigationStage.Items => 3 + SelectedRow,
@@ -605,13 +654,13 @@ public class OptionMenu : SelectableMenuUI
             NavigationStage.Editing => "03 / 값 편집",
             _ => "저장 · 닫기"
         };
-        if (navigationHint != null) navigationHint.text = navigationStage switch
+        if (navigationHint != null) navigationHint.text = InputBindingDisplay.Format(navigationStage switch
         {
-            NavigationStage.Categories => "↑ ↓ 분류 선택   Z / → 항목으로   X 닫기",
-            NavigationStage.Items => "↑ ↓ ← → 가까운 항목 선택   Z 편집 시작   X 분류로",
-            NavigationStage.Editing => IsRebinding ? "새 키 입력   X 취소   10초 뒤 자동 취소" : "← → 값 조절   Z 편집 완료   X 이번 편집 취소",
-            _ => "← → 버튼 선택   ↑ 가까운 항목으로   Z 실행   X 분류로"
-        };
+            NavigationStage.Categories => "{MenuUp} {MenuDown} 분류 선택   {Confirm} / {MenuRight} 항목으로   {Cancel} 닫기",
+            NavigationStage.Items => "{MenuUp} {MenuDown} {MenuLeft} {MenuRight} 항목 선택   {Confirm} 편집   {Cancel} 분류로",
+            NavigationStage.Editing => IsRebinding ? "새 키 입력   Esc 취소   10초 뒤 자동 취소" : "{MenuLeft} {MenuRight} 값 조절   {Confirm} 완료   {Cancel} 편집 취소",
+            _ => "{MenuLeft} {MenuRight} 버튼 선택   {MenuUp} 항목으로   {Confirm} 실행   {Cancel} 분류로"
+        });
     }
     private void KeepDisplayRowVisible()
     {
@@ -640,7 +689,7 @@ public class OptionMenu : SelectableMenuUI
         for (int i = 0; i < action.bindings.Count; i++)
         {
             var b = action.bindings[i];
-            if (!b.isComposite && (b.path ?? "").StartsWith("<Keyboard>", StringComparison.OrdinalIgnoreCase) &&
+            if (!b.isComposite && (b.id == StoreSkillBindingId || (b.path ?? "").StartsWith("<Keyboard>", StringComparison.OrdinalIgnoreCase)) &&
                 (string.IsNullOrEmpty(part) || string.Equals(b.name, part, StringComparison.OrdinalIgnoreCase))) return i;
         }
         return -1;
@@ -648,52 +697,158 @@ public class OptionMenu : SelectableMenuUI
 
     public void BeginRebind(int index)
     {
-        if (!CanUsePointer() || InputManager.Instance == null) return;
-        SelectPointerRow(index);
-        navigationStage = NavigationStage.Editing;
+        if (!CanUsePointer() || InputManager.Instance == null || index < 0 || index >= optionRows.Length) return;
         var manager = InputManager.Instance;
         var row = optionRows[index];
-        var action = manager.Actions.FindAction("Player/" + row.action);
-        int binding = FindBinding(action, row.part);
+        var (action, binding) = FindRowBinding(row);
         if (binding < 0) return;
+        SelectPointerRow(index);
+        navigationStage = NavigationStage.Editing;
+        var previousBinding = action.bindings[binding];
+        string previousLabel = BindingLabel(action, binding);
         string before = manager.Actions.SaveBindingOverridesAsJson();
         manager.SuspendForRebind(true);
         optionCanvas.interactable = false;
-        statusText.text = "새 키를 누르세요 · X 취소 · 10초 뒤 자동 취소";
+        statusText.text = "새 키를 누르세요 · Esc 취소 · 10초 뒤 자동 취소";
         row.value.text = "입력 대기…";
-        RefreshFocus();
         try
         {
             rebind = action.PerformInteractiveRebinding(binding).WithControlsHavingToMatchPath("<Keyboard>")
-                .WithCancelingThrough("<Keyboard>/x").WithTimeout(10f).WithActionEventNotificationsBeingSuppressed()
+                .WithCancelingThrough("<Keyboard>/escape").WithTimeout(10f).WithActionEventNotificationsBeingSuppressed()
                 .OnCancel(_ => FinishRebind(before, "키 변경을 취소했습니다."))
-                .OnComplete(_ =>
-                {
-                    string path = action.bindings[binding].effectivePath;
-                    bool reserved = string.Equals(path, "<Keyboard>/escape", StringComparison.OrdinalIgnoreCase);
-                    if (reserved || HasConflict(index, path)) FinishRebind(before, reserved ? "Esc는 일시정지용입니다. 다른 키를 골라 주세요." : "이미 사용 중인 키입니다. 다른 키를 골라 주세요.");
-                    else { FinishRebind(null, "키 변경 완료 · 적용 및 저장을 눌러 주세요."); dirty = true; }
-                });
+                .OnComplete(_ => CompleteBindingCandidate(index, action, binding, previousBinding, previousLabel, before));
             rebind.Start();
+            RefreshFocus();
         }
         catch (Exception e) { FinishRebind(before, "키 변경을 시작하지 못했습니다: " + e.Message); }
     }
 
-    private bool HasConflict(int index, string path)
+    private void CompleteBindingCandidate(int index, InputAction action, int binding, InputBinding previousBinding, string previousLabel, string before)
     {
-        var selected = optionRows[index];
-        foreach (var row in optionRows)
+        try
         {
-            if (string.IsNullOrEmpty(row.action) || row == selected) continue;
-            // 기본 설정이 공유하는 위 이동 + 상호작용만 허용한다.
-            if ((selected.action == "Move" && selected.part == "up" && row.action == "Interact") ||
-                (selected.action == "Interact" && row.action == "Move" && row.part == "up")) continue;
-            var action = InputManager.Instance.Actions.FindAction("Player/" + row.action);
-            int binding = FindBinding(action, row.part);
-            if (binding >= 0 && string.Equals(path, action.bindings[binding].effectivePath, StringComparison.OrdinalIgnoreCase)) return true;
+            string path = action.bindings[binding].effectivePath;
+            string previousPath = previousBinding.effectivePath;
+            if (string.Equals(path, previousPath, StringComparison.OrdinalIgnoreCase))
+            {
+                FinishRebind(before, "기존 키를 유지했습니다.");
+                return;
+            }
+
+            string keyLabel = BindingLabel(action, binding);
+            var conflicts = GetRowsAtPath(index, path);
+            ApplyBindingPath(action, binding, path, previousBinding);
+            if (conflicts.Count == 0)
+            {
+                dirty = true;
+                FinishRebind(null, "키 변경 완료 · 적용 및 저장을 눌러 주세요.");
+                return;
+            }
+
+            // 위 방향과 상호작용처럼 이미 공유하는 키들은 같은 묶음으로 교환한다.
+            // 대상 조작의 이전 키가 미지정이면 그 상태까지 서로 교환한다.
+            var current = GetRowsAtPath(index, previousPath);
+            ChangeRowsPath(current, path);
+            ChangeRowsPath(conflicts, previousPath);
+            string candidate = InputManager.Instance.Actions.SaveBindingOverridesAsJson();
+            current.Insert(0, optionRows[index]);
+            string fromNames = JoinControlNames(current);
+            string toNames = JoinControlNames(conflicts);
+            string message = string.IsNullOrEmpty(previousPath)
+                ? $"[{keyLabel}] {toNames}\n{fromNames}에 지정하고 기존 조작의 키를 해제할까요?"
+                : $"[{previousLabel}] {fromNames}\n[{keyLabel}] {toNames}\n두 키를 서로 교환할까요?";
+            FinishRebind(before, "교환할 키를 확인해 주세요.");
+            ShowDialog(message, "키 교환", () =>
+            {
+                InputManager.Instance?.LoadBindings(candidate);
+                dirty = true;
+                Refresh();
+                statusText.text = "키 교환 완료 · 적용 및 저장을 눌러 주세요.";
+            }, () => statusText.text = "기존 키를 유지했습니다.");
         }
-        return false;
+        catch (Exception error)
+        {
+            FinishRebind(before, "키 설정을 변경하지 못했습니다.");
+            Debug.LogException(error, this);
+        }
     }
+
+    private List<Row> GetRowsAtPath(int selectedIndex, string path)
+    {
+        var result = new List<Row>();
+        if (string.IsNullOrEmpty(path)) return result;
+        foreach (int index in PageRows[2])
+        {
+            if (index == selectedIndex) continue;
+            var row = optionRows[index];
+            var (action, binding) = FindRowBinding(row);
+            if (binding >= 0 && string.Equals(path, action.bindings[binding].effectivePath, StringComparison.OrdinalIgnoreCase))
+                result.Add(row);
+        }
+        return result;
+    }
+
+    private static void ChangeRowsPath(List<Row> rows, string path)
+    {
+        foreach (var row in rows)
+        {
+            var (action, binding) = FindRowBinding(row);
+            ApplyBindingPath(action, binding, path, action.bindings[binding]);
+        }
+    }
+
+    private static void ApplyBindingPath(InputAction action, int binding, string path, InputBinding prior) =>
+        action.ApplyBindingOverride(binding, new InputBinding
+        {
+            overridePath = path ?? string.Empty,
+            overrideProcessors = prior.overrideProcessors,
+            overrideInteractions = prior.overrideInteractions
+        });
+
+    private static (InputAction action, int binding) FindRowBinding(Row row)
+    {
+        var action = InputManager.Instance?.Actions.FindAction("Player/" + row.action);
+        return (action, FindBinding(action, row.part));
+    }
+
+    private static string BindingLabel(InputAction action, int binding) => string.IsNullOrEmpty(action.bindings[binding].effectivePath)
+        ? "미지정" : action.GetBindingDisplayString(binding, InputBinding.DisplayStringOptions.DontIncludeInteractions);
+
+    private static string JoinControlNames(List<Row> rows) => string.Join(" · ", rows.ConvertAll(ControlName));
+
+    public void ClearStoreSkillBinding()
+    {
+        if (!CanUsePointer() || page != 2) return;
+        var (action, binding) = FindRowBinding(optionRows[StoreSkillRow]);
+        if (binding < 0 || string.IsNullOrEmpty(action.bindings[binding].effectivePath)) return;
+        SelectPointerRow(StoreSkillRow);
+        action.RemoveBindingOverride(binding);
+        InputManager.Instance.ClearButtonStates();
+        InputManager.NotifyBindingsChanged();
+        dirty = true;
+        Refresh();
+        statusText.text = "스킬 저장 기본 조합을 복원했습니다. 적용 및 저장을 눌러 주세요.";
+    }
+
+    private static string ControlName(Row row) => row.action switch
+    {
+        "Move" => row.part switch
+        {
+            "up" => "위 방향 · 조준",
+            "down" => "아래 방향 · 발판 통과",
+            "left" => "왼쪽 이동",
+            _ => "오른쪽 이동"
+        },
+        "Jump" => "점프 · 더블 점프",
+        "Dash" => "대시",
+        "Attack" => "기본 공격 · 기어 발동",
+        "Gear" => "기어 준비",
+        "StoreSkill" => "스킬 저장 · 사용",
+        "SecondaryWeapon" => "보조 무기",
+        "Interact" => "상호작용",
+        "SwapWeapon" => "무장 전환",
+        _ => row.action
+    };
 
     private void FinishRebind(string restore, string message)
     {
@@ -706,6 +861,7 @@ public class OptionMenu : SelectableMenuUI
         {
             if (restore != null) InputManager.Instance.LoadBindings(restore);
             InputManager.Instance.SuspendForRebind(false);
+            if (restore == null) InputManager.NotifyBindingsChanged();
         }
         optionCanvas.interactable = true;
         inputReadyAt = Time.unscaledTime + .25f;

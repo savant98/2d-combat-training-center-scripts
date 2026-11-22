@@ -35,6 +35,7 @@ public sealed class AudioCreditsPanel : MonoBehaviour, IUIInputReceiver
             return;
         }
 
+        InputBindingHint.Bind(root.transform, "ScrollHint", "{MenuVertical} 스크롤    {Cancel} 돌아가기");
         root.SetActive(true);
         if (!isActiveAndEnabled || !root.activeInHierarchy) return;
 

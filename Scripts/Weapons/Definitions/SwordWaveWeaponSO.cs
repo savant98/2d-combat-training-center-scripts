@@ -2,28 +2,15 @@ using System;
 using System.Collections;
 using UnityEngine;
 
-// 검기방출(칼 Gear 2단계, 2026-11-21 무장 특성 3차 요청으로 전면 개편).
-// 사용자 요청 요지: "검기방출의 animation, effect, sound, 공격 범위까지 모두 바꿔야 해. 게임 엘소드의 레이븐이 쓰는 스킬 쇼크웨이브를 참고.
-//   공중에서 검기를 날리는데 크기는 지금보다 더 커야 해. 검기방출 사용 시 점프 높이를 더 올려서 검기 궤적도 키우고 범위를 넓혀 쓸모를 올린다.
-//   점프는 굉장히 빠르기 때문에(0.2초) 점프하는 순간에는 무적."
-// 흐름(실행 단계의 시각, 실행 Clip Player_SwordWave_Execute와 같은 표 — tools/Unity/SwordWaveSetup.cs가 둘을 함께 쓴다)
-// - 0 ~ leapTime: 매우 빠른 도약(leapHeight칸, 처음이 가장 빠르고 정점에서 멈추는 감속). 기존 모터 경로로 오른다(물리 틱마다 Velocity.y만 정하고
-//   GravityOn을 끈다 — 위치를 직접 바꾸지 않는다). 천장에 막히면 그 높이에서 멈춘다. 이 동안 무적(SwordWave가 쥔 SwordSkillInvulnerability).
-// - leapTime ~ 발사: 정점에서 잠깐 멈춰(체공) 두 칼을 머리 뒤로 젖혔다가 크게 내려긋는다.
-// - 발사(leapTime + apexHang + slashLead): 칼이 앞 아래로 지나는 순간, 몸 앞(launchForward·launchUp)에서 큰 초승달 검기(SwordWave)가
-//   수평 아래 launchAngle도로 날아간다. 필살이 empowerCost 이상이면 소비해 강화 검기(크게, 6타)를 낸다(옛 규칙: 2스택 소비·적중 시 2스택 환급).
-// - 발사 + afterLaunchHold: 회수(forceRecover)로 넘어가 중력을 받고 떨어진다(회수 Clip에서 칼을 집어넣는다).
-// 효과음은 WeaponTraitFeedback 표의 큐로 낸다: SwordWaveLeap(도약), SwordWave·SwordWaveEmpowered(발사), SwordWaveHit·HeavyHit(적중), SwordWaveLand(바닥에 닿음·벽에 터짐).
-// 공격이 끊기면(피격·잡기) 이 코루틴은 StopAllCoroutines로 멈춘다. 중력·외부 힘 무시는 PlayerWeaponAbility.Interrupt가 되돌리고,
-// 숨긴 채 기다리던 검기 개체는 심장 박동(Hold)이 끊긴 것을 보고 무적을 풀며 스스로 사라진다.
+// 검기방출(칼 Gear 2단계).
+// 도약은 기존 모터 경로로 오르고, 정점에서 내려긋는 동작에 맞춰 큰 초승달을 내보낸다.
+// 필살을 2스택 소비한 강화 검기는 타격 수와 틱당 피해가 증가한다.
 public sealed class SwordWaveWeaponSO : WeaponBaseSO
 {
     [Header("Wave")]
     [Tooltip("초승달 검기(풀 개체). 도약이 시작될 때 꺼내 무적을 쥐고, 발사 순간 날아간다.")]
     [SerializeField] private SwordWave wavePrefab;
     [SerializeField] private LayerMask damageMask;
-    [Tooltip("검기가 내려앉고 막히는 지형(통과 발판은 지나간다 — 다른 투사체와 같은 규칙).")]
-    [SerializeField] private LayerMask platformLayer;
 
     [Header("Leap")]
     [Tooltip("도약 높이(칸). 일반 점프 최고 높이(약 3.3칸)보다 높다.")]
@@ -42,9 +29,11 @@ public sealed class SwordWaveWeaponSO : WeaponBaseSO
     [SerializeField] private float launchForward = 1.05f;
     [SerializeField] private float launchUp = 0.1f;
     [Tooltip("수평에서 아래로 기운 발사 각도(도).")]
-    [SerializeField, Range(0f, 80f)] private float launchAngle = 35f;
+    [SerializeField, Range(0f, 80f)] private float launchAngle = 22f;
     [Tooltip("강화 검기에 쓰는 필살 스택(옛 규칙 2).")]
     [SerializeField, Min(1)] private int empowerCost = 2;
+    [Tooltip("필살을 소비한 강화 검기의 틱당 피해 배율.")]
+    [SerializeField, Min(1f)] private float empoweredDamageMultiplier = 1.5f;
 
     public SwordWave WavePrefab => wavePrefab;
     public float LeapHeight => leapHeight;
@@ -54,6 +43,7 @@ public sealed class SwordWaveWeaponSO : WeaponBaseSO
     public float AfterLaunchHold => afterLaunchHold;
     public float LaunchAngle => launchAngle;
     public int EmpowerCost => empowerCost;
+    public float EmpoweredDamageMultiplier => empoweredDamageMultiplier;
     /// <summary>실행 단계 시작부터 검기가 나가는 순간까지(초).</summary>
     public float LaunchTime => leapTime + apexHang + slashLead;
 
@@ -124,9 +114,10 @@ public sealed class SwordWaveWeaponSO : WeaponBaseSO
         if (wave != null)
         {
             var info = WithSource(damageInfo, player);
+            if (empowered) info.damage *= empoweredDamageMultiplier;
             info.knockbackOrigin = center;
             info.knockbackFacing = facing;
-            wave.Launch(center, front, facing, launchAngle, empowered, info, damageMask, platformLayer,
+            wave.Launch(front, facing, launchAngle, empowered, info, damageMask,
                 (owner, point) => OnHitEnemy?.Invoke(owner, point));
         }
 

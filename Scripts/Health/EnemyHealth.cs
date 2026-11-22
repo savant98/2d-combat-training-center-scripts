@@ -25,8 +25,18 @@ public class EnemyHealth : HealthBase
     [SerializeField] private EnemyUI enemyUI;
     [SerializeField] private SpriteRenderer[] hitSprites;
 
-    public bool IsBossEnemy { get; set; }
+    private bool isBossEnemy;
+    public bool IsBossEnemy
+    {
+        get => isBossEnemy;
+        set
+        {
+            isBossEnemy = value;
+            if (enemyUI != null) enemyUI.SetWorldHudVisible(!value);
+        }
+    }
     public float MinimumHealth => minimumHealth;
+    public uint LifeVersion { get; private set; }
 
     // 적이 실제로 잃은 체력(무적 차단·체력 하한 적용 뒤, 남은 체력을 넘는 피해는 뺀다). 체력이 줄기 직전에 나간다.
     // 훈련 기록이 읽기만 한다. 구독자는 게임 상태를 바꾸지 않는다.
@@ -79,6 +89,7 @@ public class EnemyHealth : HealthBase
     }
     private void OnDisable()
     {
+        LifeVersion++;
         // 풀에서 다시 사용될 때 일반 전투로 보호 상태가 이어지지 않게 한다.
         minimumHealth = 0f; invulnerabilityOwners.Clear();
     }

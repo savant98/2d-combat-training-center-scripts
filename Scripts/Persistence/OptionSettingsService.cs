@@ -36,11 +36,10 @@ public class OptionSettingsService : MonoBehaviour
     {
         // AudioMixer는 Start 이후 값을 설정해야 초기화 값으로 덮이지 않는다.
         yield return null;
-        // 이 서비스는 Scene보다 먼저 만들어진다. 그때 Scene에 놓인 DataManager는 아직 설정 파일을 읽기 전이라 기본값을 돌려줄 수 있다.
-        // 적용할 때 저장된 설정을 다시 읽는다(저장하지 않은 옵션 창의 미리보기는 Scene을 넘어가지 않는다).
-        Current = DataManager.Instance.Options.Copy();
-        ApplyPreview(Current);
-        ApplyTiming(Current);
+        // Scene에 새로 연결된 믹서와 피드백에는 저장한 값을 적용한다.
+        var saved = DataManager.Instance.Options;
+        ApplyPreview(saved);
+        ApplyTiming(saved);
     }
 
     public void ApplyPreview(OptionSettings settings)

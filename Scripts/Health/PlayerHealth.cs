@@ -158,10 +158,12 @@ public class PlayerHealth : HealthBase
 
         hitMaterial.SetColor("_EmissionColor", initialColor);
     }
-    public override void ResetHealth()
+    public override void ResetHealth() => ResetHealth(false);
+
+    internal void ResetHealth(bool preserveAttackGeneration)
     {
         base.ResetHealth();
-        GetComponentInParent<PlayerController>()?.AbilityManager?.AttackAbility?.Traits?.Reset();
+        GetComponentInParent<PlayerController>()?.AbilityManager?.AttackAbility?.Traits?.Reset(preserveAttackGeneration);
         UIManager.Instance.UpdateHP(maxHP, maxHP);
         IsInvincible = false;
         IsDead = false;

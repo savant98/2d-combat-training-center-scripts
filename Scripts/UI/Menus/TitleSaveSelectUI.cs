@@ -67,10 +67,10 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
 
     private static readonly Color Body = new Color32(0xD3, 0xEB, 0xF2, 0xFF);
     private static readonly Color Sub = new Color32(0x7E, 0xA7, 0xB5, 0xFF);
-    private const string ListHint = "↑ ↓ 선택   ·   Z 시작   ·   → 삭제   ·   X 뒤로";
-    private const string EmptyHint = "↑ ↓ 선택   ·   Z 새 세이브로 시작   ·   X 뒤로";
-    private const string DeleteHint = "Z 이 세이브 삭제   ·   ← 돌아가기   ·   X 뒤로";
-    private const string DialogHint = "← → 선택   ·   Z 확인   ·   X 취소";
+    private const string ListHint = "{MenuVertical} 선택   ·   {Confirm} 시작   ·   {MenuRight} 삭제   ·   {Cancel} 뒤로";
+    private const string EmptyHint = "{MenuVertical} 선택   ·   {Confirm} 새 세이브로 시작   ·   {Cancel} 뒤로";
+    private const string DeleteHint = "{Confirm} 이 세이브 삭제   ·   {MenuLeft} 돌아가기   ·   {Cancel} 뒤로";
+    private const string DialogHint = "{MenuHorizontal} 선택   ·   {Confirm} 확인   ·   {Cancel} 취소";
 
     private Mode mode = Mode.Closed;
     private SaveSlotSummary[] summaries = Array.Empty<SaveSlotSummary>();
@@ -477,10 +477,10 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
         if (hint == null) return;
         bool denied = deniedUntil > 0f;
         hint.color = denied ? TrainingBoardStyle.Warning : Sub;
-        if (denied) hint.text = "읽을 수 없는 세이브입니다.  → 로 삭제 버튼을 골라 지운 뒤 사용하세요.";
-        else if (mode == Mode.Dialog) hint.text = DialogHint;
-        else if (onDelete) hint.text = DeleteHint;
-        else hint.text = summaries.Length > selected && summaries[selected].exists ? ListHint : EmptyHint;
+        string template = denied ? "읽을 수 없는 세이브입니다.  {MenuRight}로 삭제 버튼을 골라 지운 뒤 사용하세요."
+            : mode == Mode.Dialog ? DialogHint : onDelete ? DeleteHint
+            : summaries.Length > selected && summaries[selected].exists ? ListHint : EmptyHint;
+        InputBindingHint.Bind(hint, template);
     }
 
     private static string Date(DateTime local) =>

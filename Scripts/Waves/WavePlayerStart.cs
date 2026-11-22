@@ -156,7 +156,7 @@ public sealed class WavePlayerStart : MonoBehaviour
         // 이미 시작 좌표 근처에 서 있으면 옮기지 않는다(제자리에서 들었다 놓지 않는다). 시작 좌표는 바닥에서 조금 떠 있게 적는 일이 많아 세로는 넉넉하게 본다.
         // 다만 넘어갈 Wave의 지형이 지금 갇혀 있는 자리에 새로 생기면, 그대로 두면 지형 속에 남으므로 근처여도 옮긴다.
         Vector2 away = carryDestination - carryOrigin;
-        if (Mathf.Abs(away.x) < NearStart.x && Mathf.Abs(away.y) < NearStart.y
+        if (!data.waves[index].alwaysCarryToStart && Mathf.Abs(away.x) < NearStart.x && Mathf.Abs(away.y) < NearStart.y
             && (terrain == null || !terrain.WillAddTerrain(index, RoomRect(coordinates, player.Motor.Confinement)))) return;
         carryTerrain = terrain;
         // 카메라·배경 범위는 지형을 바꾸기 전에 넓혀 둔다. 크레인이 내려와 물 때까지 미루면, 그 사이에 실내가 줄어드는 Wave에서

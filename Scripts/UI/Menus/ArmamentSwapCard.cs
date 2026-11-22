@@ -85,12 +85,7 @@ public sealed class ArmamentSwapCard : MonoBehaviour
     public void Bind(PlayerArmamentSO armament, bool equipped, bool locked, string lockLabel)
     {
         if (armament == null) return;
-        foreach (var preview in previews)
-        {
-            if (preview.node != null) preview.node.gameObject.SetActive(true);
-            if (preview.stageText != null) preview.stageText.gameObject.SetActive(true);
-            if (preview.nameText != null) preview.nameText.gameObject.SetActive(true);
-        }
+        SetArmamentDetailsVisible(true);
         bool ready = armament.normal != null;
         if (portText != null) portText.text = UpgradeMenuPage.CategoryCode(armament.category) + " ARMAMENT";
         if (nameText != null) nameText.text = armament.DisplayName;
@@ -116,20 +111,23 @@ public sealed class ArmamentSwapCard : MonoBehaviour
     public void BindSecondary(WeaponBaseSO weapon, bool equipped, bool locked, string lockLabel)
     {
         if (weapon == null) return;
-        if (portText != null) portText.text = "SUPPORT";
+        SetArmamentDetailsVisible(false);
         if (nameText != null) nameText.text = weapon.DisplayName;
-        if (descriptionText != null)
-            descriptionText.text = (locked ? "훈련 필증으로 해금 · 해금하면 이 자리에 바로 장착" : "모든 무장에서 사용 가능")
-                + "\n게이지 " + weapon.skillGauge.ToString("0.#") + " · 쿨타임 " + weapon.cooldown.ToString("0.#") + "초";
         if (icon != null) { icon.sprite = weapon.weaponSprite; icon.enabled = icon.sprite != null; }
         ShowBadge(equipped, locked, lockLabel, false);
         if (contact != null) contact.color = equipped ? contactColor : idleContactColor;
         ShowLock(locked);
+    }
+
+    private void SetArmamentDetailsVisible(bool visible)
+    {
+        if (portText != null) portText.gameObject.SetActive(visible);
+        if (descriptionText != null) descriptionText.gameObject.SetActive(visible);
+        var rule = transform.Find("Rule");
+        if (rule != null) rule.gameObject.SetActive(visible);
         foreach (var preview in previews)
         {
-            if (preview.node != null) preview.node.gameObject.SetActive(false);
-            if (preview.stageText != null) preview.stageText.gameObject.SetActive(false);
-            if (preview.nameText != null) preview.nameText.gameObject.SetActive(false);
+            if (preview?.node != null) preview.node.transform.parent.gameObject.SetActive(visible);
         }
     }
 

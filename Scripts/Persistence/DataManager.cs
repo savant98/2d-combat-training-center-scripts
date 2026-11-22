@@ -37,6 +37,9 @@ public class SaveData
     // 필증을 이미 준 훈련(trainingId). 같은 훈련을 다시 수료해도 또 주지 않는다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
     public List<string> certifiedTrainings = new List<string>();
 
+    // 실제 등장 연출이 끝나 만난 적입니다. 이전 저장 파일은 비어 있는 도감으로 읽습니다.
+    public List<string> encounteredEnemies = new List<string>();
+
     // 훈련장 관련 클리어 및 베스트 기록 정보 리스트
     public List<TrainingRoomSaveData> trainingRoomRecords = new List<TrainingRoomSaveData>();
 
@@ -154,11 +157,18 @@ public class DataManager : MonoBehaviour
             return instance;
         }
     }
-    public OptionSettings Options => global.options ??= new OptionSettings();
+    public OptionSettings Options
+    {
+        get
+        {
+            EnsureSettingsLoaded();
+            return global.options;
+        }
+    }
 
     public bool SaveOptions(OptionSettings options)
     {
-        var previous = global.options;
+        var previous = Options;
         global.options = options.Copy();
         if (TrySaveGlobal()) return true;
         global.options = previous;
@@ -205,13 +215,8 @@ public class DataManager : MonoBehaviour
         instance = this;
         DontDestroyOnLoad(gameObject);
 
-        // 영구 저장 장치 경로 설정
-        saveDirectory = string.IsNullOrEmpty(DirectoryOverride) ? Application.persistentDataPath : DirectoryOverride;
-        Directory.CreateDirectory(saveDirectory);
-        settingsFilePath = Path.Combine(saveDirectory, SettingsFileName);
-
-        // 게임 켜지면 환경 설정만 자동 로드. 진행 기록은 타이틀에서 슬롯을 고를 때 읽는다.
-        LoadGame();
+        EnsureSettingsLoaded();
+        GenerateCache();
     }
 
     // 타이틀을 거치지 않고 게임 Scene이 바로 열리면(편집기에서 MainScene을 Play, 검증 도구) 마지막 슬롯을 이어서 쓴다.
@@ -313,8 +318,21 @@ public class DataManager : MonoBehaviour
         GenerateCache();
     }
 
+    // 타이틀이나 MainScene의 Awake 순서와 관계없이 입력과 화면 설정에 저장값을 제공한다.
+    private void EnsureSettingsLoaded()
+    {
+        if (settingsFilePath == null) LoadGlobal();
+    }
+
     private void LoadGlobal()
     {
+        if (settingsFilePath == null)
+        {
+            saveDirectory = string.IsNullOrEmpty(DirectoryOverride) ? Application.persistentDataPath : DirectoryOverride;
+            Directory.CreateDirectory(saveDirectory);
+            settingsFilePath = Path.Combine(saveDirectory, SettingsFileName);
+        }
+
         global = null;
         bool settingsExisted = File.Exists(settingsFilePath);
         try
@@ -818,6 +836,18 @@ public class DataManager : MonoBehaviour
 
     // 휴대용 단말기(InventoryTerminalMenu)의 재화 칸이 읽는 호환용 이름이다. 훈련 필증 수를 돌려준다. 단말기 개편 때 삭제한다.
     public int CurrentGold => TrainingCertificates;
+
+    public bool HasEncounteredEnemy(string enemyId) =>
+        HasSelectedSlot && !string.IsNullOrEmpty(enemyId) && CurrentSaveData?.encounteredEnemies?.Contains(enemyId) == true;
+
+    public void RecordEnemyEncounter(string enemyId)
+    {
+        if (!HasSelectedSlot || CurrentSaveData == null || string.IsNullOrEmpty(enemyId)) return;
+        CurrentSaveData.encounteredEnemies ??= new List<string>();
+        if (CurrentSaveData.encounteredEnemies.Contains(enemyId)) return;
+        CurrentSaveData.encounteredEnemies.Add(enemyId);
+        SaveGame();
+    }
 
     /// <summary>이 훈련의 필증을 이미 받았는가.</summary>
     public bool HasTrainingCertificate(string trainingId)

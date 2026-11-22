@@ -2,7 +2,7 @@ using System.Collections;
 using UnityEngine;
 
 /// <summary>
-/// 각개 전투 엘리베이터 전환(2026-11-20): 암전 없이 케이지를 타고 실제로 이동하는 동안 방을 바꾼다.
+/// 각개 전투 엘리베이터 전환: 케이지가 어두운 수직 갱도를 지나는 동안 방을 바꾼다.
 /// 연출 본체는 Scene 루트의 FieldElevatorRide가 맡는다(ScriptableObject는 Scene 개체를 직렬화로 가리킬 수 없다).
 /// 이동 장치가 없거나 시작하지 못하면 보통 입장(방을 바로 바꾸고 입장 로딩·Wave 자동 시작)으로 대신한다.
 /// </summary>

@@ -27,6 +27,7 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
 
     private void Awake()
     {
+        InputBindingHint.Bind(transform, "HologramSign/InputHint", "{MenuHorizontal} 선택   ·   {Confirm} 확인   ·   {Cancel} 취소");
         if (presentation != null) restScale = presentation.localScale;
         for (int i = 0; buttons != null && i < buttons.Length; i++)
         {

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 /// <summary>상호작용용 투사 화면과 전투 중 화면 좌상단에 표시하는 분석 결과를 분리한다.</summary>
 public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, IInteractable
@@ -73,13 +72,18 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
         listenersReady = true;
         if (sourceTemplate != null) sourceTemplate.gameObject.SetActive(false);
         if (hudSourceTemplate != null) hudSourceTemplate.gameObject.SetActive(false);
-        if (interactionPrompt != null) promptCanvas = interactionPrompt.GetComponent<Canvas>();
+        if (interactionPrompt != null)
+        {
+            promptCanvas = interactionPrompt.GetComponent<Canvas>();
+            InputBindingHint.Bind(interactionPrompt.transform, "Prompt", "{Interact}  전투 분석기");
+        }
+        InputBindingHint.Bind(hintText, "{MenuDirections} 선택 · {Confirm} 확인 · {Cancel} 닫기 · 마우스 휠로 피해 내역 탐색");
     }
 
     private void OnEnable()
     {
         controlsOpen = false;
-        playerNearby = false;
+        SetNearby(false);
         previousCount = previousHudCount = -1;
         scrollDirection = 0;
         Canvas.willRenderCanvases += UpdateInteractionPrompt;
@@ -243,7 +247,6 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
         if (maximumText != null) maximumText.text = Number(stats.MaximumHit);
         if (summaryText != null) summaryText.text = "평균 DPS  " + Number(stats.Dps) + "     최고 DPS  " + Number(stats.PeakDps) + "     적중  " + stats.HitCount;
         if (startLabel != null) startLabel.text = busy ? "측정 취소" : controller.Phase == SelfTrainingPhase.Results ? "다시 분석 시작" : "전투 분석 시작";
-        if (hintText != null) hintText.text = "방향키 선택 · Z 확인 · X 닫기 · 마우스 휠로 피해 내역 탐색";
         if (timeFill != null) timeFill.fillAmount = controller.Phase == SelfTrainingPhase.Measuring ? Mathf.Clamp01(controller.Elapsed / 10f)
             : controller.Phase == SelfTrainingPhase.Results ? 1f : 0f;
         if (shieldToggle != null)
@@ -328,21 +331,19 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
         if (hudDpsText != null) hudDpsText.text = Number(controller.Phase == SelfTrainingPhase.Results ? stats.Dps : stats.CurrentDps);
         if (hudMaximumText != null) hudMaximumText.text = Number(stats.MaximumHit);
         if (hudSummaryText != null) hudSummaryText.text = "평균 DPS " + Number(stats.Dps) + "  ·  최고 DPS " + Number(stats.PeakDps) + "  ·  적중 " + stats.HitCount;
-        if (hudScrollHint != null) hudScrollHint.text = playerNearby
-            ? "단말기 근처 ↑ 조작 / 멀리서 ↑↓ 내역 스크롤"
-            : "↑↓ · 마우스 휠 · 우측 스크롤바로 내역 보기";
     }
 
     private void ScrollHudWithKeyboard()
     {
-        // 단말기 범위에서는 기존 ↑ 상호작용을 우선한다. 멀리서는 전투 입력을 잠그지 않고 목록만 움직인다.
+        // 단말기 범위에서는 상호작용을 우선한다. 멀리서는 안내와 같은 키로 목록을 움직인다.
         if (controlsOpen || playerNearby || HasOtherInput || Time.timeScale <= 0f || controller.Phase == SelfTrainingPhase.Free
-            || hudSourceScroll == null || hudSourceScroll.content == null || hudSourceScroll.viewport == null || Keyboard.current == null)
+            || hudSourceScroll == null || hudSourceScroll.content == null || hudSourceScroll.viewport == null || InputManager.Instance == null)
         {
             scrollDirection = 0;
             return;
         }
-        int direction = Keyboard.current.upArrowKey.isPressed ? 1 : Keyboard.current.downArrowKey.isPressed ? -1 : 0;
+        int direction = InputBindingDisplay.KeyboardButton("UI/Navigate", "up")?.isPressed == true ? 1
+            : InputBindingDisplay.KeyboardButton("UI/Navigate", "down")?.isPressed == true ? -1 : 0;
         if (direction == 0) { scrollDirection = 0; return; }
         if (direction == scrollDirection && Time.unscaledTime < nextScrollAt) return;
         float distance = hudSourceScroll.content.rect.height - hudSourceScroll.viewport.rect.height;
@@ -390,8 +391,15 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
         if (immediate) boardGroup.alpha = presentationFrom = presentationTarget;
         if (immediate && projectionGroup != null) projectionGroup.alpha = presentationTarget;
     }
-    private void OnTriggerEnter2D(Collider2D other) { if (other.GetComponent<PlayerController>() != null) playerNearby = true; }
-    private void OnTriggerExit2D(Collider2D other) { if (other.GetComponent<PlayerController>() != null) playerNearby = false; }
+    private void SetNearby(bool nearby)
+    {
+        playerNearby = nearby;
+        InputBindingHint.Bind(hudScrollHint, nearby
+            ? "{Interact} 단말기 조작 · 범위 밖에서는 {MenuVertical} 내역 스크롤"
+            : "{MenuVertical} · 마우스 휠 · 스크롤바로 내역 보기");
+    }
+    private void OnTriggerEnter2D(Collider2D other) { if (other.GetComponent<PlayerController>() != null) SetNearby(true); }
+    private void OnTriggerExit2D(Collider2D other) { if (other.GetComponent<PlayerController>() != null) SetNearby(false); }
     private void Play(FeedbackDataSO data) { if (data != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(data, transform); }
     private static string Number(float value) => value.ToString(value >= 10000f ? "N0" : "N1");
     private void OnDisable() { Canvas.willRenderCanvases -= UpdateInteractionPrompt; scrollDirection = 0; CloseControls(); SetBoardVisibility(false, true); SetOverlay(countdownGroup, false); SetOverlay(timerGroup, false); if (interactionPrompt != null) interactionPrompt.alpha = 0f; }

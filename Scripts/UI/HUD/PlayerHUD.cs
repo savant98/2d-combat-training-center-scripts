@@ -34,6 +34,7 @@ public class PlayerHUD : MonoBehaviour
         // 칸 GameObject는 끄지 않는다(기초 훈련의 강조 표시가 아이콘 GameObject의 활성 여부를 본다).
         [System.NonSerialized] public bool locked;
         [System.NonSerialized] public Image lockMark;
+        [System.NonSerialized] public TextMeshProUGUI finisherRequirement;
     }
 
     // 체력 깎인 양을 잠시 남겨 보여 주는 뒤쪽 값(셰이더 _Trail)과 그 줄어드는 Tween
@@ -170,6 +171,11 @@ public class PlayerHUD : MonoBehaviour
     private Vector4 skillCellFlash;
     private float previousSkillGaugeNormalized = 0f;
     private int previousSkillIconCount = 0;
+    private PlayerWeaponAbility attackRejectionSource;
+    private TextMeshProUGUI attackRejectionText;
+    private float attackRejectionUntil;
+    private const float AttackRejectionDuration = 0.95f;
+    private static readonly Color AttackRejectionColor = new Color32(255, 100, 98, 255);
 
     private void Awake()
     {
@@ -195,6 +201,14 @@ public class PlayerHUD : MonoBehaviour
             ShieldBar = shieldBar;
             shieldBar.Configure(hpBar.rectTransform);
         }
+    }
+
+    private void OnDisable()
+    {
+        if (attackRejectionSource != null)
+            attackRejectionSource.AttackRejected -= ShowAttackRejection;
+        attackRejectionSource = null;
+        if (attackRejectionText != null) attackRejectionText.gameObject.SetActive(false);
     }
 
     private void OnDestroy()
@@ -227,6 +241,96 @@ public class PlayerHUD : MonoBehaviour
         RotateWeaponSlot(secondarySlot);
 
         UpdateGaugeMotion();
+        UpdateAttackRejection();
+    }
+
+    private void UpdateAttackRejection()
+    {
+        var attack = GameManager.Instance?.Player?.AbilityManager?.AttackAbility;
+        if (attackRejectionSource != attack)
+        {
+            if (attackRejectionSource != null) attackRejectionSource.AttackRejected -= ShowAttackRejection;
+            attackRejectionSource = attack;
+            if (attackRejectionSource != null) attackRejectionSource.AttackRejected += ShowAttackRejection;
+            if (attackRejectionText != null) attackRejectionText.gameObject.SetActive(false);
+        }
+
+        if (attackRejectionText == null || !attackRejectionText.gameObject.activeSelf) return;
+        float remaining = attackRejectionUntil - Time.unscaledTime;
+        attackRejectionText.alpha = Mathf.Clamp01(remaining / 0.2f);
+        if (remaining <= 0f) attackRejectionText.gameObject.SetActive(false);
+    }
+
+    private void ShowAttackRejection(PlayerWeaponAbility.RejectionReason reason)
+    {
+        if (!isActiveAndEnabled || hudCanvasGroup == null || hudCanvasGroup.alpha <= 0f) return;
+        if (attackRejectionText == null)
+        {
+            attackRejectionText = CreateCombatLabel(
+                "AttackRejection", transform, gearStage3Slot?.cooldownText?.font, 23f, TextAlignmentOptions.MidlineLeft);
+            var rect = attackRejectionText.rectTransform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = WeaponTraitHud.BandPosition + new Vector2(0f, -50f);
+            rect.sizeDelta = new Vector2(350f, 34f);
+        }
+
+        attackRejectionText.text = reason switch
+        {
+            PlayerWeaponAbility.RejectionReason.Cooldown => "기술 재사용 대기 중",
+            PlayerWeaponAbility.RejectionReason.Gauge => "스킬 게이지 부족",
+            PlayerWeaponAbility.RejectionReason.Resolve => "필살 3스택 필요",
+            PlayerWeaponAbility.RejectionReason.Reloading => "재장전 중",
+            PlayerWeaponAbility.RejectionReason.EmptyMagazine => "탄창이 비었습니다",
+            PlayerWeaponAbility.RejectionReason.Overheated => "레일건 과열",
+            PlayerWeaponAbility.RejectionReason.GearCharging => "기어 충전 중",
+            PlayerWeaponAbility.RejectionReason.Busy => "기술 저장 중",
+            _ => "사용할 수 없는 기술"
+        };
+        attackRejectionUntil = Time.unscaledTime + AttackRejectionDuration;
+        attackRejectionText.alpha = 1f;
+        attackRejectionText.gameObject.SetActive(true);
+    }
+
+    internal static void SetResolveRequirement(ref TextMeshProUGUI label, RectTransform icon, TMP_FontAsset font, int stacks, int required)
+    {
+        if (stacks < 0)
+        {
+            if (label != null) label.gameObject.SetActive(false);
+            return;
+        }
+        if (icon == null) return;
+        if (label == null)
+        {
+            label = CreateCombatLabel("FinisherRequirement", icon, font, 18f, TextAlignmentOptions.MidlineRight);
+            var rect = label.rectTransform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(1f, 0f);
+            rect.anchoredPosition = new Vector2(4f, -3f);
+            rect.sizeDelta = new Vector2(48f, 20f);
+        }
+
+        // 스택이 달라졌을 때만 문자열과 TMP 메시를 갱신한다.
+        string shown = label.text;
+        if (string.IsNullOrEmpty(shown) || shown.Length != 3 || shown[0] != '0' + stacks || shown[2] != '0' + required)
+            label.SetText("{0}/{1}", stacks, required);
+        label.gameObject.SetActive(true);
+    }
+
+    private static TextMeshProUGUI CreateCombatLabel(string name, Transform parent, TMP_FontAsset font, float size, TextAlignmentOptions alignment)
+    {
+        var root = new GameObject(name, typeof(RectTransform), typeof(TextMeshProUGUI));
+        root.layer = parent.gameObject.layer;
+        root.transform.SetParent(parent, false);
+        var label = root.GetComponent<TextMeshProUGUI>();
+        if (font != null) label.font = font;
+        label.fontSize = size;
+        label.color = AttackRejectionColor;
+        label.fontStyle = FontStyles.Bold;
+        label.alignment = alignment;
+        label.textWrappingMode = TextWrappingModes.NoWrap;
+        label.raycastTarget = false;
+        label.outlineColor = new Color32(14, 7, 15, 255);
+        label.outlineWidth = 0.18f;
+        return label;
     }
 
     // 체력·스킬 칸 게이지의 채움·깎인 양·방전·점검 빛·번쩍임을 셰이더에 넘긴다. 실제 시간 기준이라 히트스톱 중에도 멈추지 않는다.
@@ -280,6 +384,7 @@ public class PlayerHUD : MonoBehaviour
     public void HUDVisible(bool isVisible)
     {
         hudCanvasGroup.alpha = isVisible ? 1f : 0f;
+        if (!isVisible && attackRejectionText != null) attackRejectionText.gameObject.SetActive(false);
     }
     public void UpdateWeaponCooldowns(
     float normalRemaining,
@@ -331,6 +436,9 @@ public class PlayerHUD : MonoBehaviour
 
         var attack = GameManager.Instance?.Player?.AbilityManager?.AttackAbility;
         SetSlotCooldownReady(slot, !coolingDown && (attack == null || attack.IsWeaponTraitReady(slot.weapon)));
+        int required = PlayerWeaponTraits.ResolveCapacity;
+        int stacks = slot.locked || attack == null ? -1 : attack.GetResolveRequirementStacks(slot.weapon, out required);
+        SetResolveRequirement(ref slot.finisherRequirement, slot.icon?.rectTransform, slot.cooldownText?.font, stacks, required);
     }
     private void HideCooldown(WeaponHudSlot slot)
     {

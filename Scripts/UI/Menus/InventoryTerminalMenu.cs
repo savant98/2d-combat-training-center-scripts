@@ -13,6 +13,19 @@ using UnityEngine.InputSystem;
 public sealed class InventoryTerminalMenu : SelectableMenuUI
 {
     [Serializable]
+    public sealed class EquipmentGuide
+    {
+        public PlayerArmamentSO armament;
+        public WeaponBaseSO weapon;
+        public int parent = -1;
+        public bool passive;
+        public WeaponBaseSO[] videoRequirements;
+        public UnityEngine.Video.VideoClip alternateVideo;
+        public GameObject[] videoPresentation;
+        public GameObject textGuide;
+    }
+
+    [Serializable]
     public sealed class SectionBinding
     {
         public GameObject root;
@@ -33,6 +46,9 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         public bool[] popupAvailable;
         [Tooltip("목록 옆 요약 정보를 복제해 항목 선택 시 단말기 위 팝업으로 띄웁니다.")]
         public bool popupFromInline;
+        public TextMeshProUGUI visibleCount;
+        public GameObject emptyState;
+        public EquipmentGuide[] equipmentGuides;
     }
 
     [Header("Availability")]
@@ -63,6 +79,10 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     [Tooltip("훈련 목표 분류의 항목 순서와 같은 훈련입니다. 세이브의 기록으로 수료 여부를 항목에 보여 줍니다.")]
     [SerializeField] private TrainingDefinitionSO[] goalTrainings;
     [SerializeField] private TextMeshProUGUI[] goalStateLabels;
+    [SerializeField] private TextMeshProUGUI[] goalGradeLabels;
+    [SerializeField] private TextMeshProUGUI[] goalBestTimeLabels;
+    [SerializeField] private TextMeshProUGUI[] goalBestHitLabels;
+    [SerializeField] private string[] codexEnemyIds;
     [Tooltip("수료한 항목에만 켜는 표시와 수료 전의 항목에만 켜는 표시(항목 순서)")]
     [SerializeField] private GameObject[] goalClearedMarks;
     [SerializeField] private GameObject[] goalPendingMarks;
@@ -104,6 +124,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private const float CloseDuration = .24f;
     private const float PageDuration = .52f;
     private const float TabInputInterval = .2f;
+    private const int EquipmentTab = 2;
     private readonly int[] selectedEntries = new int[4];
     private readonly List<Action> unbindButtons = new List<Action>();
     private readonly Dictionary<UnityEngine.UI.Button, bool> detailActionAvailability = new Dictionary<UnityEngine.UI.Button, bool>();
@@ -141,6 +162,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private bool listFocused, initialized, isTransitioning, isClosing, ownsPause;
     [SerializeField] private bool equipmentUsesGeometry;
     private bool detailOpen, isPageTransitioning, isCategoryTransitioning, contentInteractable, contentRaycasts;
+    private int equipmentLesson = -1, equipmentFocus = -1;
+    private int DetailIndex => selectedTab == EquipmentTab && equipmentLesson >= 0 ? equipmentLesson : SelectedEntry;
 
     private sealed class ButtonVisual
     {
@@ -198,6 +221,11 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             Debug.LogError("인벤토리 단말기의 화면·4개 탭·목록/상세 참조가 필요합니다.", this);
             return;
         }
+        var screen = terminalRoot.Find("ScreenClip");
+        InputBindingHint.Bind(screen, "Header/Close/Label", "{Cancel} 닫기");
+        InputBindingHint.Bind(screen, "Footer/InputHint", "{MenuDirections} 이동 · {Confirm} 선택 · {Cancel} 뒤로 · {Inventory} 닫기");
+        InputBindingHint.Bind(transform, "Onboarding/TerminalIcon/KeyHint/Key", "{Inventory}");
+        InputBindingHint.Bind(transform, "Onboarding/OpenPrompt/KeyGroup/Key", "{Inventory}");
         terminalHome = terminalRoot.anchoredPosition;
         terminalRotation = terminalRoot.localRotation;
         contentInputGroup = contentViewport.GetComponent<CanvasGroup>();
@@ -246,8 +274,16 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
                 var button = sections[tab].entryButtons[entry];
                 entryAvailability[button] = button.interactable;
                 highlightColors[sections[tab].entryHighlights[entry]] = sections[tab].entryHighlights[entry].color;
-                BindClick(button, () => SelectEntryFromPointer(tabIndex, entryIndex, true));
-                BindHover(button, () => SelectEntryFromPointer(tabIndex, entryIndex, false));
+                if (tab == EquipmentTab && EquipmentParent(sections[tab], entry) >= 0)
+                {
+                    BindClick(button, () => OpenEquipmentLesson(entryIndex));
+                    BindHover(button, () => SelectEquipmentLesson(entryIndex));
+                }
+                else
+                {
+                    BindClick(button, () => SelectEntryFromPointer(tabIndex, entryIndex, true));
+                    BindHover(button, () => SelectEntryFromPointer(tabIndex, entryIndex, false));
+                }
             }
             var popupButtons = sections[tab].popupButtons;
             if (popupButtons != null)
@@ -291,7 +327,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         foreach (var trigger in GetComponentsInChildren<EventTrigger>(true))
             if (trigger.GetComponentInParent<UnityEngine.UI.ScrollRect>(true) != null && trigger.GetComponent<MenuScrollRelay>() == null)
                 trigger.gameObject.AddComponent<MenuScrollRelay>();
-        inventoryAction = new InputAction("Inventory", InputActionType.Button, "<Keyboard>/tab");
+        inventoryAction = new InputAction("Inventory", InputActionType.Button, InputBindingDisplay.InventoryPath);
         inventoryAction.performed += HandleInventoryInput;
         noticeRoot.SetActive(false);
         homeVisible = true;
@@ -462,9 +498,11 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private void OnEnable()
     {
         inventoryAction?.Enable();
+        ArmamentUnlocks.Changed += RefreshEquipmentAfterUnlock;
     }
     private void OnDisable()
     {
+        ArmamentUnlocks.Changed -= RefreshEquipmentAfterUnlock;
         inventoryAction?.Disable();
         CloseImmediately();
     }
@@ -502,15 +540,235 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         RefreshInteractable();
     }
 
-    // 수료 표시만 읽는다. 실패 시 생성되는 초기 기록과 등록되지 않은 훈련은 집계하지 않는다.
+    private void RefreshCatalogProgress()
+    {
+        if (homeDataManager == null) homeDataManager = FindFirstObjectByType<DataManager>();
+        var catalog = TrainingCatalogSO.Load();
+
+        var goals = sections[0];
+        if (goalTrainings != null && goalTrainings.Length == goals.entryButtons.Length)
+        {
+            int visible = 0;
+            for (int index = 0; index < goalTrainings.Length; index++)
+            {
+                var training = goalTrainings[index];
+                var entry = training != null ? catalog?.Find(training.trainingId) : null;
+                bool available = entry?.waveData?.waves?.Length > 0 && !entry.alwaysAvailable && catalog.IsUnlocked(entry, homeDataManager);
+                goals.entryButtons[index].gameObject.SetActive(available);
+                if (available) visible++;
+            }
+            UpdateFilteredList(goals, visible, "과정");
+        }
+
+        var enemies = sections[1];
+        if (codexEnemyIds != null && codexEnemyIds.Length == enemies.entryButtons.Length)
+        {
+            int visible = 0;
+            for (int index = 0; index < codexEnemyIds.Length; index++)
+            {
+                bool encountered = homeDataManager != null && homeDataManager.HasEncounteredEnemy(codexEnemyIds[index]);
+                enemies.entryButtons[index].gameObject.SetActive(encountered);
+                if (encountered) visible++;
+            }
+            UpdateFilteredList(enemies, visible, "기록");
+        }
+        RefreshEquipmentGuides();
+    }
+
+    private static void UpdateFilteredList(SectionBinding section, int visible, string unit)
+    {
+        SetHomeText(section.visibleCount, $"{visible} {unit}");
+        if (section.emptyState != null) section.emptyState.SetActive(visible == 0);
+        var scroll = section.entryScroll;
+        if (scroll == null || scroll.content == null || scroll.viewport == null) return;
+        var layout = scroll.content.GetComponent<UnityEngine.UI.VerticalLayoutGroup>();
+        if (layout == null) return;
+        float height = layout.padding.vertical + Mathf.Max(0, visible - 1) * layout.spacing;
+        foreach (var button in section.entryButtons)
+        {
+            if (button.gameObject.activeSelf) height += ((RectTransform)button.transform).rect.height;
+        }
+        scroll.StopMovement();
+        scroll.content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, Mathf.Max(scroll.viewport.rect.height, height));
+        scroll.content.anchoredPosition = Vector2.zero;
+        scroll.verticalNormalizedPosition = 1f;
+    }
+
+    private static int EquipmentParent(SectionBinding section, int index) =>
+        section.equipmentGuides != null && index >= 0 && index < section.equipmentGuides.Length
+            ? section.equipmentGuides[index].parent : -1;
+
+    private void RefreshEquipmentGuides()
+    {
+        var section = sections[EquipmentTab];
+        var guides = section.equipmentGuides;
+        if (guides == null || guides.Length == 0) return;
+        var content = section.entryScroll.content;
+        var techniqueCounts = new int[guides.Length];
+        int common = 0, armaments = 0;
+        var secondary = new List<RectTransform>();
+        for (int i = 0; i < guides.Length; i++)
+        {
+            var guide = guides[i];
+            var row = (RectTransform)section.entryButtons[i].transform;
+            bool unlocked = (guide.armament == null || ArmamentUnlocks.IsArmamentUnlocked(guide.armament))
+                && (guide.weapon == null || ArmamentUnlocks.IsWeaponUnlocked(guide.weapon));
+            row.gameObject.SetActive(unlocked);
+            if (!unlocked)
+            {
+                section.details[i].SetActive(false);
+                continue;
+            }
+            if (guide.videoRequirements != null && guide.videoRequirements.Length > 0)
+            {
+                bool full = Array.TrueForAll(guide.videoRequirements, ArmamentUnlocks.IsWeaponUnlocked);
+                if (guide.alternateVideo != null)
+                    section.details[i].GetComponentInChildren<TerminalTutorialVideo>(true).SetAlternativeClip(full ? null : guide.alternateVideo);
+                if (guide.textGuide != null)
+                {
+                    foreach (var element in guide.videoPresentation) element.SetActive(full);
+                    guide.textGuide.SetActive(!full);
+                }
+            }
+            if (guide.parent >= 0)
+            {
+                if (!guide.passive)
+                {
+                    int order = techniqueCounts[guide.parent]++;
+                    row.anchoredPosition = new Vector2(order % 2 == 0 ? -233f : 233f, -88f - order / 2 * 75f);
+                }
+            }
+            else if (guide.armament != null) PlaceEquipmentRow(row, 174f, armaments++);
+            else if (guide.weapon != null) secondary.Add(row);
+            else PlaceEquipmentRow(row, -498f, common++);
+        }
+
+        int secondaryLine = (armaments + 1) / 2 + 1;
+        for (int index = 0; index < secondary.Count; index++) PlaceEquipmentRow(secondary[index], 174f, secondaryLine * 2 + index);
+        if (content.Find("SupportHeading") is RectTransform supportHeading)
+        {
+            supportHeading.anchoredPosition = new Vector2(supportHeading.anchoredPosition.x, -37f - secondaryLine * 78f);
+            supportHeading.gameObject.SetActive(secondary.Count > 0);
+        }
+        int rowCount = Mathf.Max((common + 1) / 2, secondary.Count > 0 ? secondaryLine + (secondary.Count + 1) / 2 : (armaments + 1) / 2);
+        content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, Mathf.Max(section.entryScroll.viewport.rect.height, 85 + rowCount * 78));
+        if (content.Find("VerticalDivider") is RectTransform divider)
+            divider.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, content.rect.height - 24f);
+        SetHomeText(section.visibleCount, $"{common + armaments + secondary.Count} 항목");
+    }
+
+    private static void PlaceEquipmentRow(RectTransform row, float startX, int index) =>
+        row.anchoredPosition = new Vector2(startX + index % 2 * 324f, -115f - index / 2 * 78f);
+
+    private void RefreshEquipmentAfterUnlock()
+    {
+        if (!initialized) return;
+        RefreshEquipmentGuides();
+        var section = sections[EquipmentTab];
+        int selected = selectedEntries[EquipmentTab];
+        if (!EntryAvailable(section, selected))
+        {
+            selectedEntries[EquipmentTab] = FirstAvailableEntry(section);
+            if (selectedTab == EquipmentTab && detailOpen)
+            {
+                detailOpen = false;
+                equipmentLesson = equipmentFocus = -1;
+                CancelSlide();
+            }
+        }
+        else if (selectedTab == EquipmentTab && detailOpen)
+        {
+            if (equipmentLesson >= 0 && !section.entryButtons[equipmentLesson].gameObject.activeSelf)
+            {
+                equipmentLesson = -1;
+                CancelSlide();
+            }
+            if (equipmentFocus < 0 || !section.entryButtons[equipmentFocus].gameObject.activeSelf)
+                equipmentFocus = FirstEquipmentLesson(selected);
+        }
+        if (IsActive) RefreshSelection();
+    }
+
+    private int FirstEquipmentLesson(int parent)
+    {
+        var section = sections[EquipmentTab];
+        var guides = section.equipmentGuides;
+        if (guides == null) return -1;
+        for (int i = 0; i < guides.Length; i++)
+            if (guides[i].parent == parent && guides[i].passive && section.entryButtons[i].gameObject.activeSelf) return i;
+        return -1;
+    }
+
+    private bool EquipmentLessonAvailable(SectionBinding section, int index) =>
+        selectedTab == EquipmentTab && equipmentLesson < 0 && EquipmentParent(section, index) == SelectedEntry
+        && SelectedEntry >= 0 && section.entryButtons[index].gameObject.activeSelf && EntryAvailable(section, SelectedEntry);
+
+    private void SelectEquipmentLesson(int index)
+    {
+        if (!CanReceiveInput || !detailOpen || NoticeVisible || !EquipmentLessonAvailable(sections[EquipmentTab], index)) return;
+        if (equipmentFocus != index) PlayFeedback(moveFeedback);
+        equipmentFocus = index;
+        RefreshButtonFaces();
+    }
+
+    private void OpenEquipmentLesson(int index)
+    {
+        var section = sections[EquipmentTab];
+        if (!CanReceiveInput || !detailOpen || NoticeVisible || !EquipmentLessonAvailable(section, index)
+            || !Allowed(GuardedAction.ShowDetails, index)) return;
+        equipmentLesson = equipmentFocus = index;
+        hoveredButton = null;
+        PlayFeedback(confirmFeedback);
+        BeginPopup((RectTransform)section.details[index].transform);
+        EntryDetailsShown?.Invoke(EquipmentTab, index);
+    }
+
+    private void MoveEquipmentLesson(Vector2 direction)
+    {
+        var section = sections[EquipmentTab];
+        bool vertical = Mathf.Abs(direction.y) > .5f;
+        if (!vertical && Mathf.Abs(direction.x) <= .5f) return;
+        Vector2 origin = ((RectTransform)section.entryButtons[equipmentFocus].transform).anchoredPosition;
+        float nearest = float.PositiveInfinity;
+        int next = equipmentFocus;
+        for (int i = 0; i < section.entryButtons.Length; i++)
+        {
+            if (!EquipmentLessonAvailable(section, i)) continue;
+            Vector2 offset = ((RectTransform)section.entryButtons[i].transform).anchoredPosition - origin;
+            float distance = vertical ? offset.y * Mathf.Sign(direction.y) : offset.x * Mathf.Sign(direction.x);
+            float side = vertical ? Mathf.Abs(offset.x) : Mathf.Abs(offset.y);
+            if (distance < 1f || (!vertical && side > 1f)) continue;
+            float score = distance * 100f + side;
+            if (score < nearest) { nearest = score; next = i; }
+        }
+        SelectEquipmentLesson(next);
+    }
+
+    private void SelectCurrentTrainingGoal()
+    {
+        for (int index = 0; goalTrainings != null && index < goalTrainings.Length; index++)
+        {
+            var training = goalTrainings[index];
+            if (!EntryAvailable(sections[0], index) || training == null
+                || DataManager.IsCleared(homeDataManager?.GetTrainingRoomRecord(training.trainingId))) continue;
+            selectedEntries[0] = index;
+            return;
+        }
+    }
+
+    // 현재 공개된 과정의 기록만 읽고 수료, 최고 등급과 기록을 표시합니다.
     public void RefreshHomeStatistics()
     {
         if (homeDataManager == null) homeDataManager = UnityEngine.Object.FindFirstObjectByType<DataManager>();
         homeKnownTrainingIds.Clear();
         homeClearedTrainingIds.Clear();
         if (homeTrainingDefinitions != null)
-            foreach (var training in homeTrainingDefinitions)
-                if (training != null && !string.IsNullOrWhiteSpace(training.trainingId)) homeKnownTrainingIds.Add(training.trainingId);
+            for (int index = 0; index < homeTrainingDefinitions.Length; index++)
+            {
+                var training = homeTrainingDefinitions[index];
+                if (training != null && !string.IsNullOrWhiteSpace(training.trainingId) && EntryAvailable(sections[0], index))
+                    homeKnownTrainingIds.Add(training.trainingId);
+            }
         var save = homeDataManager != null ? homeDataManager.CurrentSaveData : null;
         if (save != null && save.trainingRoomRecords != null)
             foreach (var record in save.trainingRoomRecords)
@@ -526,20 +784,27 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         if (homeProgressFill != null) homeProgressFill.fillAmount = HomeProgressNormalized;
         SetHomeText(homeProgressText, Mathf.RoundToInt(HomeProgressNormalized * 100f).ToString(CultureInfo.InvariantCulture) + "%");
         SetHomeText(homeTrainingText, HomeTrainingCleared.ToString(CultureInfo.InvariantCulture) + " / " + HomeTrainingTotal.ToString(CultureInfo.InvariantCulture));
-        int gold = homeDataManager != null ? homeDataManager.CurrentGold : 0;
-        SetHomeText(homeGoldText, gold.ToString("N0", CultureInfo.InvariantCulture));
+        int certificates = homeDataManager != null ? homeDataManager.TrainingCertificates : 0;
+        SetHomeText(homeGoldText, certificates.ToString("N0", CultureInfo.InvariantCulture));
         // 훈련 목표의 항목마다 실제 수료 여부를 보여 준다(위에서 모은 수료 기록 그대로).
         if (goalTrainings == null) return;
+        bool pendingAssigned = false;
         for (int index = 0; index < goalTrainings.Length; index++)
         {
-            bool cleared = goalTrainings[index] != null && homeClearedTrainingIds.Contains(goalTrainings[index].trainingId);
+            var training = goalTrainings[index];
+            bool visible = training != null && EntryAvailable(sections[0], index);
+            var record = visible ? homeDataManager?.GetTrainingRoomRecord(training.trainingId) : null;
+            bool cleared = DataManager.IsCleared(record);
+            bool current = visible && !cleared && !pendingAssigned;
+            if (current) pendingAssigned = true;
+            UpdateGoalRecord(index, cleared ? record : null);
             if (goalStateLabels != null && index < goalStateLabels.Length && goalStateLabels[index] != null)
             {
                 var label = goalStateLabels[index];
                 // 수료 전의 글자색은 처음 본 색(Prefab 값)을 기억해 두고 쓴다.
                 if (goalPendingColors == null || goalPendingColors.Length != goalStateLabels.Length)
                     goalPendingColors = Array.ConvertAll(goalStateLabels, source => source != null ? source.color : Color.white);
-                SetHomeText(label, cleared ? goalClearedText : goalPendingText);
+                SetHomeText(label, cleared ? goalClearedText : current ? "현재 목표" : goalPendingText);
                 Color wanted = cleared ? goalClearedColor : goalPendingColors[index];
                 if (label.color != wanted) label.color = wanted;
             }
@@ -549,6 +814,29 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
                 goalPendingMarks[index].SetActive(!cleared);
         }
     }
+    private void UpdateGoalRecord(int index, TrainingRoomSaveData record)
+    {
+        var grade = GoalLabel(goalGradeLabels, index);
+        if (grade != null)
+        {
+            string gradeText = record?.bestGrade switch
+            {
+                Grade.Flawless => "무결점",
+                Grade.Excellent => "우수",
+                Grade.Pass => "통과",
+                _ => "기록 없음"
+            };
+            SetHomeText(grade, gradeText);
+        }
+        SetHomeText(GoalLabel(goalBestTimeLabels, index),
+            record != null ? TrainingScoreFormatHelper.FormatTime(record.bestTimeSeconds) : "—");
+        SetHomeText(GoalLabel(goalBestHitLabels, index),
+            record != null ? record.bestHitCount.ToString(CultureInfo.InvariantCulture) + "회" : "—");
+    }
+
+    private static TextMeshProUGUI GoalLabel(TextMeshProUGUI[] labels, int index) =>
+        labels != null && index < labels.Length ? labels[index] : null;
+
     private Color[] goalPendingColors;
     private static void SetHomeText(TextMeshProUGUI label, string value)
     {
@@ -616,10 +904,13 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             return;
         if (!Allowed(GuardedAction.Open)) return;
         selectedTab = 0;
+        equipmentLesson = equipmentFocus = -1;
         selectedHomeIndex = OpeningHomeIndex != null ? Mathf.Clamp(OpeningHomeIndex(), 0, sections.Length - 1) : 0;
         homeVisible = true;
         nextTabInputAt = float.NegativeInfinity;
+        RefreshCatalogProgress();
         for (int tab = 0; tab < sections.Length; tab++) selectedEntries[tab] = FirstAvailableEntry(sections[tab]);
+        SelectCurrentTrainingGoal();
         listFocused = false;
         detailOpen = false;
         isClosing = false;
@@ -712,6 +1003,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         selectedTab = index;
         homeVisible = false;
         detailOpen = false;
+        equipmentLesson = -1;
         listFocused = false;
         // 안내가 가리키는 항목이 있으면 바로 골라 둔다(확인 한 번에 열린다).
         int guided = GuidedEntry != null ? GuidedEntry(index) : -1;
@@ -728,6 +1020,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         if (!Allowed(GuardedAction.ReturnHome)) return;
         CancelSlide();
         detailOpen = false;
+        equipmentLesson = -1;
         listFocused = false;
         hoveredButton = null;
         selectedHomeIndex = selectedTab;
@@ -808,6 +1101,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         {
             PlayFeedback(cancelFeedback);
             detailOpen = false;
+            equipmentLesson = -1;
             listFocused = false;
             hoveredButton = null;
             BeginPopup(null);
@@ -820,6 +1114,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         nextTabInputAt = Time.unscaledTime + TabInputInterval;
         selectedTab = index;
         detailOpen = false;
+        equipmentLesson = -1;
         listFocused = false;
         hoveredButton = null;
         BeginPageSlide(previous, sections[index].listRoot, reverse);
@@ -847,14 +1142,15 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     }
     private bool EntryAvailable(SectionBinding section, int index)
     {
-        if (!DeclaredEntryAvailable(section, index) || section.entryButtons[index] == null) return false;
+        if (!DeclaredEntryAvailable(section, index) || section.entryButtons[index] == null || !section.entryButtons[index].gameObject.activeSelf
+            || EquipmentParent(section, index) >= 0) return false;
         return !entryAvailability.TryGetValue(section.entryButtons[index], out bool available) || available;
     }
     private int FirstAvailableEntry(SectionBinding section)
     {
         for (int index = 0; index < section.entryButtons.Length; index++)
             if (EntryAvailable(section, index)) return index;
-        return 0;
+        return -1;
     }
     private static bool PopupAvailable(SectionBinding section, int index)
     {
@@ -917,6 +1213,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         if (inlinePopupSources.TryGetValue(section.details[index], out var source)) CopyTexts(source, section.details[index]);
         PlayFeedback(confirmFeedback);
         selectedEntries[selectedTab] = index;
+        equipmentLesson = -1;
+        if (selectedTab == EquipmentTab) equipmentFocus = FirstEquipmentLesson(index);
         detailOpen = true;
         listFocused = true;
         hoveredButton = null;
@@ -976,16 +1274,18 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             sections[3].details[SelectedEntry].GetComponent<TerminalMailDocumentView>()?.ScrollBy(direction.y);
             return;
         }
-        if (detailOpen && selectedTab == 2 && CanReceiveInput)
+        if (detailOpen && selectedTab == EquipmentTab && CanReceiveInput)
         {
-            var tutorial = sections[2].details[SelectedEntry].GetComponentInChildren<TerminalTutorialVideo>(true);
+            var tutorial = sections[EquipmentTab].details[DetailIndex].GetComponentInChildren<TerminalTutorialVideo>();
             if (tutorial != null) { if (horizontal != 0) tutorial.SeekBySeconds(horizontal); return; }
+            if (equipmentLesson < 0 && equipmentFocus >= 0) { MoveEquipmentLesson(direction); return; }
         }
         if (!listFocused)
         {
             int nextTab = (selectedTab + horizontal + sections.Length) % sections.Length;
             if (horizontal != 0) SelectTab(nextTab, horizontal);
-            else if (vertical > 0 && CanReceiveInput) { listFocused = true; RefreshSelection(); EnsureEntryVisible(sections[selectedTab], SelectedEntry); }
+            else if (vertical > 0 && CanReceiveInput && SelectedEntry >= 0)
+            { listFocused = true; RefreshSelection(); EnsureEntryVisible(sections[selectedTab], SelectedEntry); }
             return;
         }
         if (!CanReceiveInput) return;
@@ -1034,8 +1334,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             if (vertical && center.x * (center.x + delta.x) < 0) continue;
             float along = vertical ? delta.y * Mathf.Sign(direction.y) : delta.x * Mathf.Sign(direction.x);
             float across = vertical ? Mathf.Abs(delta.x) : Mathf.Abs(delta.y);
-            if (along < 1 || (!vertical && across > 2)) continue;
-            float score = vertical ? along * 10000 + across : along;
+            if (along < 1) continue;
+            float score = vertical ? along * 10000 + across : across * 100 + along;
             if (score < bestScore) { bestScore = score; best = i; }
         }
         if (best >= 0) SelectEntry(best);
@@ -1047,11 +1347,13 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         hoveredButton = null;
         if (homeVisible) { OpenCategory(selectedHomeIndex); return; }
         if (NoticeVisible) { DismissNotice(); return; }
-        if (detailOpen && selectedTab == 2)
+        if (detailOpen && selectedTab == EquipmentTab)
         {
-            var tutorial = sections[2].details[SelectedEntry].GetComponentInChildren<TerminalTutorialVideo>(true);
+            var tutorial = sections[EquipmentTab].details[DetailIndex].GetComponentInChildren<TerminalTutorialVideo>();
             if (tutorial != null) { tutorial.TogglePlayback(); return; }
+            if (equipmentLesson < 0 && equipmentFocus >= 0) { OpenEquipmentLesson(equipmentFocus); return; }
         }
+        if (SelectedEntry < 0) return;
         if (!listFocused) { PlayFeedback(confirmFeedback); listFocused = true; RefreshSelection(); return; }
         if (!detailOpen)
         {
@@ -1068,7 +1370,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         }
         PlayFeedback(confirmFeedback);
         var actions = sections[selectedTab].detailActions;
-        var action = actions != null && SelectedEntry < actions.Length ? actions[SelectedEntry] : null;
+        var action = actions != null && DetailIndex < actions.Length ? actions[DetailIndex] : null;
         if (action != null && action.isActiveAndEnabled && action.interactable) action.onClick.Invoke();
     }
     public override void OnCancel()
@@ -1079,6 +1381,12 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         PlayFeedback(cancelFeedback);
         if (homeVisible) Close();
         else if (NoticeVisible) DismissNotice();
+        else if (detailOpen && selectedTab == EquipmentTab && equipmentLesson >= 0)
+        {
+            equipmentFocus = equipmentLesson;
+            equipmentLesson = -1;
+            BeginPopup((RectTransform)sections[EquipmentTab].details[SelectedEntry].transform);
+        }
         else if (detailOpen)
         {
             detailOpen = false;
@@ -1160,9 +1468,12 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         if (homeVisible) return button == homeButtons[selectedHomeIndex];
         if (button == tabButtons[selectedTab]) return true;
         var section = sections[selectedTab];
+        if (SelectedEntry < 0) return false;
         if (!detailOpen) return listFocused && button == section.entryButtons[SelectedEntry];
-        return listFocused && section.detailActions != null && SelectedEntry < section.detailActions.Length
-            && button == section.detailActions[SelectedEntry];
+        if (selectedTab == EquipmentTab && equipmentLesson < 0 && equipmentFocus >= 0)
+            return button == section.entryButtons[equipmentFocus];
+        return listFocused && section.detailActions != null && DetailIndex < section.detailActions.Length
+            && button == section.detailActions[DetailIndex];
     }
     private void SetHighlightAlpha(UnityEngine.UI.Image image, float alpha)
     {
@@ -1182,7 +1493,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         foreach (var section in sections)
         {
             for (int index = 0; index < section.entryButtons.Length; index++)
-                section.entryButtons[index].interactable = enabledInput && !homeVisible && !detailOpen && EntryAvailable(section, index);
+                section.entryButtons[index].interactable = enabledInput && !homeVisible &&
+                    (detailOpen ? EquipmentLessonAvailable(section, index) : EntryAvailable(section, index));
             if (section.entryScroll != null) section.entryScroll.enabled = enabledInput && !homeVisible && !detailOpen;
             if (section.detailActions != null)
                 foreach (var button in section.detailActions)
@@ -1196,7 +1508,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     }
 
     private RectTransform CurrentPage() => homeVisible ? homeRoot : detailOpen
-        ? sections[selectedTab].details[SelectedEntry].GetComponent<RectTransform>() : sections[selectedTab].listRoot;
+        ? sections[selectedTab].details[DetailIndex].GetComponent<RectTransform>() : sections[selectedTab].listRoot;
     private void NormalizePages()
     {
         homeRoot.gameObject.SetActive(homeVisible);
@@ -1234,7 +1546,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             }
             for (int entry = 0; entry < sections[tab].details.Length; entry++)
             {
-                bool visible = active && detailOpen && entry == selectedEntries[tab];
+                bool visible = active && detailOpen && entry == DetailIndex;
                 var detail = sections[tab].details[entry];
                 if (detail == null) continue;
                 detail.SetActive(visible);
@@ -1294,8 +1606,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             next.gameObject.SetActive(true);
             next.SetAsLastSibling();
             next.anchoredPosition = pageHomes[next];
-            next.localScale = Vector3.Scale(pageScales[next], PopupStartScale(selectedTab, SelectedEntry));
-            next.localRotation = pageRotations[next] * Quaternion.Euler(0f, 0f, PopupStartAngle(selectedTab, SelectedEntry));
+            next.localScale = Vector3.Scale(pageScales[next], PopupStartScale(selectedTab, DetailIndex));
+            next.localRotation = pageRotations[next] * Quaternion.Euler(0f, 0f, PopupStartAngle(selectedTab, DetailIndex));
             pageGroups[next].alpha = 0f;
         }
         contentInputGroup.interactable = contentInputGroup.blocksRaycasts = false;

@@ -186,17 +186,17 @@ public abstract class ProjectileBase : MovingEntityBase
         if (health is EnemyHealth enemy)
         {
             var impact = damageInfo;
-            bool machineGun = impact.sourceWeapon is MachineGunWeaponSO;
-            if (machineGun && enemy.TryGetComponent<EnemyBurn>(out var burn) && burn.Stacks > 0)
+            if (impact.sourceWeapon is MachineGunWeaponSO)
             {
-                impact.damage *= 1f + burn.Stacks * 0.12f;
-                if (WeaponTraitEffects.ApplyEnemyHit(enemy, impact, hitPoint))
-                    WeaponTraitFeedbackSO.Play(WeaponTraitCue.MachineGunBurn, hitPoint, -velocity);
+                int stacks = enemy.TryGetComponent<EnemyBurn>(out var burn) ? burn.Stacks : 0;
+                impact.damage *= 1f + stacks * 0.12f;
+                if (!WeaponTraitEffects.ApplyEnemyHit(enemy, impact, hitPoint)) return;
+                if (stacks > 0) WeaponTraitFeedbackSO.Play(WeaponTraitCue.MachineGunBurn, hitPoint, -velocity);
+                if (WeaponTraitEffects.Attack(owner)?.Traits.RecordMachineGunHit() == true)
+                    EnemyBurn.Apply(enemy);
             }
             else if (enemy.enemyShieldSystem == null) enemy.TakeDamage(impact, hitPoint);
             else enemy.enemyShieldSystem.TakeDamage(impact, hitPoint);
-            // 2026-11-21 사용자 지시: 기관총 장착 중 기본 공격도 화상을 1스택 쌓는다(이번 탄의 추가 피해는 맞기 전 스택으로 계산).
-            if (machineGun) EnemyBurn.Apply(enemy);
             OnHitEnemy?.Invoke(owner, hitPoint);
         }
         else if (health is PlayerHealth player)

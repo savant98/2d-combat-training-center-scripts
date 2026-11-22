@@ -39,7 +39,7 @@ public class HandCannonWeaponSO : WeaponBaseSO
     public GameObject fanEffect;
     [Header("Burn Detonation")]
     [Tooltip("화상 기폭: 직격을 맞은 대상의 화상 스택마다 한 번씩 주는 연속 폭발 피해(2026-11-21 사용자 결정 기폭형. 밸런스: 스택당 45 — 5스택 기폭 225가 직격 80보다 큰 핵심 피해, PlayerArmamentBalanceSetup). 넉백·기술 게이지 없음")]
-    [Min(0f)] public float detonationDamage = 45f;
+    [Min(0f)] public float detonationDamage = 67.5f;
     private const int MaxFanInstances = 3;
     [NonSerialized] private List<GameObject> fanInstances;
 
@@ -184,12 +184,15 @@ public class HandCannonWeaponSO : WeaponBaseSO
             int burnStacks = burn != null ? burn.Stacks : 0;
             Bounds bodyBounds = burnStacks > 0 ? hit.bounds : default;   // 직격으로 죽어 꺼져도 기폭 연출을 이 자리에서 낸다
             // 핸드캐논은 더 이상 화상을 부여하지 않는다(2026-11-21). 화상에 걸린 대상이면 그 스택을 모두 소모해 스택 수만큼 연속 폭발한다(기폭).
-            if (WeaponTraitEffects.ApplyEnemyHit(enemy, info, hitPoint) && burnStacks > 0)
+            bool directHit = WeaponTraitEffects.ApplyEnemyHit(enemy, info, hitPoint);
+            // 쉴드가 소진된 대상은 직격이 막혀도 기존 화상을 기폭해 브레이크할 수 있다.
+            bool canDetonate = directHit || (enemy.enemyShieldSystem?.IsBreakable == true && !enemy.IsDamageBlocked);
+            if (burnStacks > 0 && canDetonate)
             {
                 if (burn != null) burn.Detonate();
                 var blast = info;
                 blast.damage = detonationDamage;
-                blast.damageType = DamageType.Normal;
+                blast.damageType = DamageType.Skill;
                 blast.knockbackFacing = 0;
                 BurnDetonation.Begin(controller, enemy, hit, burnStacks, blast, bodyBounds);
                 LastDetonatedStacks += burnStacks;

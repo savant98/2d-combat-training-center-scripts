@@ -40,6 +40,7 @@ public class EnemyUI : MonoBehaviour
     private Tween breakTimerTween;
     private Tween hideBarsTween;
     private EnemyController owner;
+    private Canvas worldHudCanvas;
     private bool breaking;
     private BreakDamageCounterView breakCounter;
     private bool countingBreakDamage;
@@ -54,7 +55,8 @@ public class EnemyUI : MonoBehaviour
     private FillTweenSlot subHpFadeFill;
     private void Awake()
     {
-        GetComponent<Canvas>().worldCamera = Camera.main;
+        worldHudCanvas = GetComponent<Canvas>();
+        worldHudCanvas.worldCamera = Camera.main;
         DisableUnusedRaycaster();
         owner = GetComponentInParent<EnemyController>();
 
@@ -92,14 +94,23 @@ public class EnemyUI : MonoBehaviour
                 .SetLink(gameObject, LinkBehaviour.PauseOnDisablePlayOnEnable);
         }
     }
+    public void SetWorldHudVisible(bool visible)
+    {
+        if (worldHudCanvas == null) worldHudCanvas = GetComponent<Canvas>();
+        if (worldHudCanvas != null) worldHudCanvas.enabled = visible;
+    }
+
     public void ShowShield(float normalized, bool isBoss)
     {
+        if (isBoss)
+        {
+            UIManager.Instance.UpdateBossShield(normalized);
+            return;
+        }
         if (shieldCells != null)
         {
             shieldCells.Show(normalized);
             RevealBars();
-            if (isBoss)
-                UIManager.Instance.UpdateBossShield(normalized);
             return;
         }
 
@@ -123,20 +134,18 @@ public class EnemyUI : MonoBehaviour
         // 1초 후 서서히 사라짐
         hideShieldTween = shieldGroup.DOFade(0, 0.5f).SetDelay(1f);
 
-        // BossUI 처리
-        if (isBoss)
-        {
-            UIManager.Instance.UpdateBossShield(normalized);
-        }
     }
     public void ShowHP(float normalized, bool isBoss)
     {
+        if (isBoss)
+        {
+            UIManager.Instance.UpdateBossHP(normalized);
+            return;
+        }
         if (hpCells != null)
         {
             hpCells.Show(normalized);
             RevealBars();
-            if (isBoss)
-                UIManager.Instance.UpdateBossHP(normalized);
             return;
         }
 
@@ -159,11 +168,6 @@ public class EnemyUI : MonoBehaviour
         // 1초 후 서서히 사라짐
         hideHPTween = hpGroup.DOFade(0, 0f).SetDelay(1f);
 
-        // BossUI 처리
-        if (isBoss)
-        {
-            UIManager.Instance.UpdateBossHP(normalized);
-        }
     }
     public void ShowBreakable() => ShowBreakable(0f);
     // duration이 있으면 남은 시간 고리가 그동안 줄어든다.
@@ -325,7 +329,7 @@ public class EnemyUI : MonoBehaviour
         if (shieldCells == null)
             shieldBar.fillAmount = 1;
 
-        if (bossMessageGroup != null)
+        if (bossMessageGroup != null && worldHudCanvas != null && worldHudCanvas.enabled)
             ShowBossMessage();
     }
     // 이름표의 글자를 적의 표준 이름으로 맞춘다(Prefab에 남은 옛 글자를 덮는다).

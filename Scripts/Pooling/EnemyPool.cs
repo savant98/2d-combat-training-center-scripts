@@ -18,7 +18,7 @@ public class EnemyPool : MonoBehaviour
     {
         Instance = this;
     }
-    public EnemyController Spawn(EnemyController prefab, Vector3 pos)
+    public EnemyController Spawn(EnemyController prefab, Vector3 pos, bool isBoss = false)
     {
         // Enemy Spawn
         if (!pool.ContainsKey(prefab))
@@ -30,12 +30,14 @@ public class EnemyPool : MonoBehaviour
         {
             enemy = pool[prefab].Dequeue();
             CancelSpawn(enemy);
+            enemy.Health.IsBossEnemy = isBoss;
             enemy.gameObject.SetActive(true);
         }
         else
         {
             enemy = Instantiate(prefab);
             enemy.Poolkey = prefab;
+            enemy.Health.IsBossEnemy = isBoss;
         }
 
         activeEnemies.Add(enemy);
@@ -86,6 +88,8 @@ public class EnemyPool : MonoBehaviour
         {
             while (sequence.MoveNext())
                 yield return sequence.Current;
+            if (enemy != null && enemy.gameObject.activeInHierarchy && enemy.Poolkey != null && enemy.Poolkey.CodexId.Length > 0)
+                UnityEngine.Object.FindFirstObjectByType<DataManager>()?.RecordEnemyEncounter(enemy.Poolkey.CodexId);
         }
         finally
         {

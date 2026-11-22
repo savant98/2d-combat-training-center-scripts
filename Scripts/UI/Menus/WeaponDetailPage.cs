@@ -240,7 +240,8 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             if (entry == null) { warning = LockedByArmamentMessage(); return false; }
             if (entry.includedWeapon != null) purchaseName = entry.Title + " · 해금";
             price = entry.price;
-            if (data.TrainingCertificates < price) { warning = ShortageMessage(); return false; }
+            if (data.TrainingCertificates < price)
+            { warning = UpgradePurchaseDialog.CertificateShortage(data.TrainingCertificates, price); return false; }
             warning = null;
             return true;
         }
@@ -255,7 +256,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
         if (!unlocked)
         { warning = "먼저 기술을 해금해 주세요."; return false; }
         if (data.TrainingCertificates < price)
-        { warning = ShortageMessage(); return false; }
+        { warning = UpgradePurchaseDialog.CertificateShortage(data.TrainingCertificates, price); return false; }
         warning = null;
         return true;
     }
@@ -354,7 +355,12 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             // 연출 대기 중 가격·상태·재화가 바뀌었으면 다시 확인하게 하고 기존 거래는 수행하지 않는다.
             if (!ValidateConfirmedPurchase(nodeType, weaponId, quotedPrice, out warning)) yield break;
             if (!Commit(nodeType))
-            { warning = ShortageMessage(); yield break; }
+            {
+                int owned = DataManager.Instance.TrainingCertificates;
+                warning = owned < quotedPrice ? UpgradePurchaseDialog.CertificateShortage(owned, quotedPrice)
+                    : "구매를 저장하지 못했습니다. 다시 시도해 주세요.";
+                yield break;
+            }
             // 실제 차감과 구매 기록이 끝난 뒤에만 성공 Feedback을 한 번 재생한다.
             PlayFeedbackAt(completeFeedback, at);
             Refresh();
@@ -442,9 +448,6 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
     #endregion
 
     #region Display
-    // 비용의 단위는 훈련 필증이다(무기 SO의 upgradeCost). 재화의 이름은 훈련 목록(TrainingCatalogSO)에서 읽는다.
-    private static string ShortageMessage() => TrainingCatalogSO.CertificateName + " 수가 부족합니다";
-
     // 구매 줄의 재화 아이콘(UpgradePanel.prefab의 CostIcon, 옛 재화 그림)을 훈련 필증 아이콘으로 바꿔 끼운다.
     // 아이콘이 정해지지 않았으면 원래 그림을 그대로 둔다.
     private void ApplyCertificateIcons()
@@ -497,7 +500,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
                 : "아직 정해진 강화 효과가 없습니다.";
             Color descriptionColor = string.IsNullOrWhiteSpace(node.description) && nodeType != UnlockNode ? mutedColor : readyColor;
             row.Show(Title(nodeType, node), EvenLines(description), descriptionColor,
-                "x" + node.upgradeCost.ToString(CultureInfo.InvariantCulture), purchased ? mutedColor : costColor,
+                purchased ? string.Empty : $"비용 {node.upgradeCost:N0}개", costColor,
                 status, statusColor, purchased ? activeColor : inactiveColor, purchased);
         }
     }
@@ -536,10 +539,8 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             description = LockedByArmamentMessage();
         }
         if (own != null && !string.IsNullOrWhiteSpace(own.description)) description = own.description;
-        string cost = entry != null ? "x" + entry.price.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        string cost = entry != null ? $"비용 {entry.price:N0}개" : string.Empty;
         row.Show("기술 해금", EvenLines(description), readyColor, cost, costColor, status, statusColor, unlocked ? activeColor : inactiveColor, unlocked);
-        Transform costIcon = row.transform.Find("CostIcon");
-        if (costIcon != null && costIcon.gameObject.activeSelf != (entry != null)) costIcon.gameObject.SetActive(entry != null);
     }
 
     private string ArmamentName()

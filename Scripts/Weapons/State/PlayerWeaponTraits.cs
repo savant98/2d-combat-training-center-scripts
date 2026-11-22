@@ -7,8 +7,10 @@ public sealed class PlayerWeaponTraits
     public const int MagazineCapacity = 30;
     // 2026-11-21 사용자 지시 3차: 작열탄 10발
     public const int IncendiaryCapacity = 10;
+    public const int MachineGunHitsPerBurn = 3;
     public const int ResolveCapacity = 3;
-    public const float BarrierCapacity = 60f;
+    public const float BarrierCapacity = 30f;
+    public const float BarrierRebuildDelay = 7f;
     public const float ReloadDuration = 3f;
     public const float OverheatDuration = 10f;
     // 2026-11-21 사용자 지시 3차: 레일건 연속 10발에 과열 상한, 0.5초 뒤 빠르게 식어 99% → 0까지 3초
@@ -18,7 +20,6 @@ public sealed class PlayerWeaponTraits
     public const float CoolingRate = 1f / 3f;
     /// <summary>레일건 충전(Gear 1) 지속 시간(초).</summary>
     public const float ChargeDuration = 10f;   // 5차 사용자 지시: 5 → 10초
-    // 2026-11-21 사용자 지시 3차: 쉴드 충전에 필요한 수급량을 1/3로(준 피해의 3배가 충전된다). 방어막 내구도(BarrierCapacity)는 그대로.
     /// <summary>방어막이 가득 차는 평타 환산 횟수(2026-11-21 5차 사용자 지시: 평타 10번, 회전 망치 3틱 = 평타 1번, 지면 평탄화 적중 = 평타 5번, 반격 성공 = 즉시).</summary>
     public const int BarrierHitsToFull = 10;
     // 2026-11-21 사용자 지시 3차: 탄창을 다 쓰거나, 마지막 라이플 탄 뒤 이 시간 동안 쏘지 않으면 장전한다(무기 교체는 장전 조건이 아니다).
@@ -33,9 +34,11 @@ public sealed class PlayerWeaponTraits
     private float reloadEnd;
     private float lockoutEnd;
     private float chargeEnd;
+    private float barrierRebuildAt;
     private float heat;
     private float coolingStart;
     private bool venting;
+    private int machineGunHits;
     public float BarrierFlashTime { get; private set; } = -10f;
     public Vector2 BarrierHitDirection { get; private set; }
 
@@ -47,6 +50,7 @@ public sealed class PlayerWeaponTraits
     public uint Generation { get; private set; }
     public float BarrierCharge { get; private set; }
     public float Barrier { get; private set; }
+    private bool CanBuildBarrier => Time.time >= barrierRebuildAt;
     public BarrierEventType LastBarrierEvent { get; private set; }
     public float BarrierEventTime { get; private set; } = -10f;
     public int RifleAmmo { get; private set; } = MagazineCapacity;
@@ -72,7 +76,7 @@ public sealed class PlayerWeaponTraits
 
     public void AddBarrierCharge(float amount)
     {
-        if (Barrier > 0f || amount <= 0f) return;
+        if (!CanBuildBarrier || Barrier > 0f || amount <= 0f) return;
         BarrierCharge = Mathf.Min(BarrierCapacity, BarrierCharge + amount);
         if (BarrierCharge >= BarrierCapacity)
         {
@@ -97,7 +101,7 @@ public sealed class PlayerWeaponTraits
     /// </summary>
     public void AddBarrierHits(float hits, object source, float window = 0f)
     {
-        if (hits <= 0f) return;
+        if (!CanBuildBarrier || hits <= 0f) return;
         if (source != null && ReferenceEquals(source, lastBarrierSource)
             && (Time.frameCount == lastBarrierFrame || Time.time - lastBarrierTime < window)) return;
         lastBarrierSource = source;
@@ -107,11 +111,12 @@ public sealed class PlayerWeaponTraits
     }
 
     /// <summary>
-    /// 반격 성공: 지금 남은 방어막·충전량과 관계없이 방어막을 가득 채운다(2026-11-21 사용자 지시).
+    /// 반격 성공 시 방어막을 가득 채운다. 파괴 후 재생성 대기 중에는 충전할 수 없다.
     /// 없던 방어막이 생기면 전개 연출·전개음을 내되 반격 성공 연출과 겹치는 화면 효과는 뺀다. 남아 있던 방어막이면 재충전 연출만 낸다.
     /// </summary>
     public void FillBarrier()
     {
+        if (!CanBuildBarrier) return;
         bool raised = Barrier <= 0f;
         Barrier = BarrierCapacity;
         BarrierCharge = 0f;
@@ -152,6 +157,7 @@ public sealed class PlayerWeaponTraits
         else
         {
             Barrier = 0f;
+            barrierRebuildAt = Time.time + BarrierRebuildDelay;
             Play(WeaponTraitCue.ShieldBreak);
             RaiseBarrierEvent(BarrierEventType.Broken);
         }
@@ -295,11 +301,24 @@ public sealed class PlayerWeaponTraits
             ? muzzle.position : player.transform.position, Vector2.right * player.Facing);
     }
 
-    public void Reset()
+    // 탄이 어느 적에 맞았는지에 관계없이 현재 플레이어의 유효 적중을 세어 매 세 번째 적에게 화상을 붙인다.
+    public bool RecordMachineGunHit()
     {
-        Generation++;
+        machineGunHits = (machineGunHits + 1) % MachineGunHitsPerBurn;
+        return machineGunHits == 0;
+    }
+
+    public void Reset(bool preserveAttackGeneration = false)
+    {
+        // 보스 처치 때는 상태를 채우면서 이미 발사한 검기와 미니 레이저의 연출을 이어 간다.
+        if (!preserveAttackGeneration) Generation++;
+        machineGunHits = 0;
         reloadEnd = lockoutEnd = chargeEnd = heat = 0f;
         Barrier = BarrierCharge = 0f;
+        barrierRebuildAt = 0f;
+        lastBarrierSource = null;
+        lastBarrierFrame = -1;
+        lastBarrierTime = -10f;
         BarrierFlashTime = -10f;
         BarrierHitDirection = Vector2.zero;
         BarrierEventTime = -10f;

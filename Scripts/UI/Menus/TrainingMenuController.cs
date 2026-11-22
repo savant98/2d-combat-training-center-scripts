@@ -76,6 +76,10 @@ public class TrainingMenuController : MonoBehaviour
     {
         CacheProjectorRays();
         CacheScreenLayout();
+        InputBindingHint.Bind(listPanel != null ? listPanel.transform : null, "NavigationHint",
+            "<color=#FFFFFF>{Confirm}</color>   상세 확인          <color=#FFFFFF>{Cancel}</color>   닫기");
+        InputBindingHint.Bind(detailPanel != null ? detailPanel.transform : null, "NavigationHint",
+            "<color=#FFFFFF>{Confirm}</color>   확인          <color=#FFFFFF>{Cancel}</color>   목록으로");
     }
 
     private void CacheScreenLayout()
@@ -260,7 +264,7 @@ public class TrainingMenuController : MonoBehaviour
         currentTraining = entry.definition;
         SelectedWaveData = entry.waveData;
         if (detailTitleText != null) detailTitleText.text = entry.Title;
-        if (detailDescriptionText != null) detailDescriptionText.text = entry.summary;
+        if (detailDescriptionText != null) SetSummary(detailDescriptionText, entry.summary);
         RefreshUI();
         if (!HasPresentation)
         {
@@ -367,18 +371,17 @@ public class TrainingMenuController : MonoBehaviour
         }
 
         if (listTitleText != null) listTitleText.text = entry.Title;
-        if (listSummaryText != null) listSummaryText.text = entry.summary + CertificateLine(entry);
+        if (listSummaryText != null) SetSummary(listSummaryText, entry.summary);
         if (listCompletionText != null) listCompletionText.text = IsCompleted(entry.definition) ? "COMPLETED" : "NOT CLEARED";
     }
 
-    // 요약 아래의 수료 보상 줄. 훈련 필증을 주는 훈련에서만, 아직 받지 않았으면 보상을, 받았으면 수령 완료를 적는다.
-    private static string CertificateLine(TrainingCatalogSO.Entry entry)
+    private static void SetSummary(TextMeshProUGUI field, string summary)
     {
-        if (!entry.grantsCertificate) return "";
-        string certificate = TrainingCatalogSO.CertificateName;
-        return DataManager.Instance.HasTrainingCertificate(entry.TrainingId)
-            ? $"\n\n{certificate} 수령 완료"
-            : $"\n\n수료 보상  {certificate} 1";
+        field.text = string.IsNullOrEmpty(summary)
+            ? string.Empty
+            : summary.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        field.textWrappingMode = TextWrappingModes.Normal;
+        field.overflowMode = TextOverflowModes.Ellipsis;
     }
 
     // 수료 판정은 훈련 목록의 열림 판정과 같은 기준(DataManager.IsCleared)을 쓴다.

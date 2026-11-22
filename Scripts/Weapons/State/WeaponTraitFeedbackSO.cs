@@ -44,8 +44,9 @@ public sealed class WeaponTraitFeedbackSO : ScriptableObject
     [SerializeField] private TMPro.TMP_FontAsset burnFont;
     [Tooltip("화상 스택 수 글자 재질(어두운 외곽선)")]
     [SerializeField] private Material burnTextMaterial;
+    private static readonly int CueCount = Enum.GetValues(typeof(WeaponTraitCue)).Length;
     private static WeaponTraitFeedbackSO database;
-    private Cue[] cache;
+    [NonSerialized] private Cue[] cache;
 
     private static WeaponTraitFeedbackSO Database
     {
@@ -71,12 +72,14 @@ public sealed class WeaponTraitFeedbackSO : ScriptableObject
     public static void Play(WeaponTraitCue trigger, Vector3 position, Vector2 axis = default, float scale = 1f, bool cameraEffects = true)
     {
         var table = Database;
-        if (table == null) return;
-        if (table.cache == null)
+        if (table == null || (uint)trigger >= (uint)CueCount) return;
+        // Editor 스크립트 재로딩 뒤 복원된 빈 캐시도 다시 구성한다.
+        if (table.cache == null || table.cache.Length != CueCount)
         {
-            table.cache = new Cue[Enum.GetValues(typeof(WeaponTraitCue)).Length];
-            foreach (var item in table.cues)
-                if ((int)item.trigger >= 0 && (int)item.trigger < table.cache.Length) table.cache[(int)item.trigger] = item;
+            table.cache = new Cue[CueCount];
+            if (table.cues != null)
+                foreach (var item in table.cues)
+                    if (item != null && (uint)item.trigger < (uint)CueCount) table.cache[(int)item.trigger] = item;
         }
         var cue = table.cache[(int)trigger];
         if (cue == null) return;

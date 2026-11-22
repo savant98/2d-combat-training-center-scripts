@@ -144,7 +144,12 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         report?.Invoke(1f);
     }
 
-    public void Load(WaveDataSO data)
+    public void Load(WaveDataSO data) => LoadContent(data, true);
+
+    // 다른 방에 있는 동안 교장 개체만 만들어 두고, 실제 입장 시 Room이 활성화한다.
+    internal void Stage(WaveDataSO data) => LoadContent(data, false);
+
+    private void LoadContent(WaveDataSO data, bool activateContent)
     {
         if (data == null) data = defaultData;
         // 기본 WaveData까지 비어 있으면(삭제·참조 끊김) 방을 만들 수 없다. 예외로 Room 초기화를 끊지 않고 알리기만 한다.
@@ -209,6 +214,7 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         }
         owner.BindContent(Content);
         entryPoint.localPosition = WaveRoomState.EntryPoint(data);
+        if (!activateContent) Content.gameObject.SetActive(false);
         Content.transform.SetParent(transform, false);
         Destroy(staging);
     }

@@ -7,6 +7,27 @@ public class PlayerWeaponAbility : PlayerAbility
     public override bool IsActive => abilityState != AbilityState.None;
     public AbilityState AttackPhase => abilityState;
     public PlayerWeaponTraits Traits { get; private set; }
+
+    public enum RejectionReason
+    {
+        None, Unavailable, Cooldown, Gauge, Resolve, Reloading, EmptyMagazine, Overheated, GearCharging, Busy
+    }
+
+    /// <summary>사용할 수 없는 공격을 눌렀을 때 안내 사유를 HUD에 전달합니다.</summary>
+    public event System.Action<RejectionReason> AttackRejected;
+    private RejectionReason lastAttackRejection;
+    private float nextRepeatedRejectionTime;
+
+    /// <summary>일격필살에 스택이 부족하면 현재 스택을, 요구 표시가 필요 없으면 -1을 반환합니다.</summary>
+    public int GetFinisherRequirementStacks(WeaponBaseSO weapon) =>
+        weapon is SwordFinisherWeaponSO && Traits != null && Traits.Resolve < PlayerWeaponTraits.ResolveCapacity
+            ? Traits.Resolve : -1;
+    public int GetResolveRequirementStacks(WeaponBaseSO weapon, out int required)
+    {
+        required = weapon is SwordWaveWeaponSO wave ? wave.EmpowerCost : PlayerWeaponTraits.ResolveCapacity;
+        if (weapon is not SwordWaveWeaponSO) return GetFinisherRequirementStacks(weapon);
+        return Traits != null && Traits.Resolve < required ? Traits.Resolve : -1;
+    }
     public string ActiveArmamentId => GetEquippedArmament(currentSetIndex)?.armamentId;
     public bool IsMachineGunAttacking => IsNormalAttackRunning && selectedWeapon is MachineGunWeaponSO;
     // 점프가 지금 공격을 끊고 나갈 수 있는지(2026-11-21 사용자 지시 "공격 중 점프도 대시와 똑같이", JumpAbility.TryJump).
@@ -34,6 +55,7 @@ public class PlayerWeaponAbility : PlayerAbility
     public event System.Action StoredSkillsChanged;
     public event System.Action<StoredGearSkill> SkillStorageStarted;
     public event System.Action<bool> SkillStorageFinished;
+    public event System.Action StoredSkillUsed;
     private StoredGearSkill pendingSkill;
     private bool isStoringSkill;
     private int executionSetIndex = -1;
@@ -247,9 +269,9 @@ public class PlayerWeaponAbility : PlayerAbility
         }
     }
 
-    public void ResetSkillGauge()
+    public void ResetSkillGauge(bool preserveExecutingAttack = false)
     {
-        if (isStoringSkill || executionSetIndex >= 0) Interrupt();
+        if (isStoringSkill || (!preserveExecutingAttack && executionSetIndex >= 0)) Interrupt();
         EndPrimaryOverride();
         storedSkills.Clear();
         StoredSkillsChanged?.Invoke();
@@ -267,13 +289,20 @@ public class PlayerWeaponAbility : PlayerAbility
     // 이동 입력에 아래가 들어 있는지(대각선 아래, 다른 방향을 함께 누른 것 포함)
     private bool IsDownHeld() => InputManager.Instance != null ? InputManager.Instance.MoveDownHeld : InputManager.IsDownward(controller.MoveInput);
 
+    private bool UseStorageChord => InputManager.Instance == null || !InputManager.Instance.HasStoreSkillBinding;
+
     private void RegisterNormalAttack()
     {
         suppressHeldPrimaryUntilRelease = gearState != GearState.Inactive;
-        if (isStoringSkill) { normalWeaponBuffer.Reset(); return; }
-        bool down = IsDownHeld();
+        if (isStoringSkill)
+        {
+            normalWeaponBuffer.Reset();
+            RejectAttack(RejectionReason.Busy);
+            return;
+        }
+        bool down = UseStorageChord && IsDownHeld();
         primaryPressPending = false;
-        if (gearState == GearState.Inactive && storedSkills.Count > 0)
+        if (UseStorageChord && gearState == GearState.Inactive && storedSkills.Count > 0)
         {
             if (down)
             {
@@ -289,15 +318,15 @@ public class PlayerWeaponAbility : PlayerAbility
         if (gearState == GearState.Waiting && !down)
         {
             var target = weaponData.weaponSets[currentSetIndex].GetGearWeapon(gearStage);
-            if (target == null || !IsWeaponCooldownReady(target)) { normalWeaponBuffer.Reset(); return; }
+            if (RejectAttack(GetWeaponReadinessBlock(target))) { normalWeaponBuffer.Reset(); return; }
         }
         // Gear+공격 동시 입력은 모든 입력 이벤트가 끝난 Tick에서 해석한다.
         normalWeaponBuffer.RegisterInput();
     }
     private void RegisterSecondaryAttack()
     {
-        if (isStoringSkill || secondaryWeapon == null || !IsWeaponCooldownReady(secondaryWeapon))
-        { secondaryWeaponBuffer.Reset(); return; }
+        var restriction = isStoringSkill ? RejectionReason.Busy : GetWeaponReadinessBlock(secondaryWeapon);
+        if (RejectAttack(restriction)) { secondaryWeaponBuffer.Reset(); return; }
         secondaryWeaponBuffer.RegisterInput();
     }
     // 작열탄도 누르고 있으면 반복한다(2026-11-21 사용자 지시: 레일건과 같은 조작, 매번 준비 단계부터).
@@ -310,13 +339,20 @@ public class PlayerWeaponAbility : PlayerAbility
         if (comboQueuedByHold && !InputManager.Held(Button.Attack))
         { comboQueuedThisStep = comboQueuedByHold = false; }
     }
-    private void TryAttack()
+    private void TryAttack(bool storePreparedGear)
     {
         if (!CanDo()) { HoldAttackThroughHit(); return; }
         restartAfterHit = false;
         // 기술 저장과 사용은 모두 '아래 + 공격'이다(아래를 누른 채 공격을 눌러도 되고, 대각선 아래처럼 다른 방향이 함께 눌려도 된다).
         // Gear 대기 중이면 그 단계의 기술을 저장하고, Gear를 쓰지 않을 때는 저장해 둔 기술을 꺼내 쓴다(누른 순간 아래가 들어 있었으면 storedSkillBuffer).
-        bool down = primaryPressDown || IsDownHeld();
+        if (storePreparedGear)
+        {
+            normalWeaponBuffer.Reset();
+            if (gearState == GearState.Waiting) TryStoreGearSkill();
+            else RejectAttack(gearState == GearState.Charging ? RejectionReason.GearCharging : RejectionReason.Unavailable);
+            return;
+        }
+        bool down = UseStorageChord && (primaryPressDown || IsDownHeld());
         if (gearState != GearState.Inactive)
         {
             if (normalWeaponBuffer.ConsumeIfValid())
@@ -326,6 +362,8 @@ public class PlayerWeaponAbility : PlayerAbility
                 // 저장하려다 조금 일찍 눌러, 저장해 둔 기술이 대신 나가 버리지 않게 한다.
                 if (down && gearState == GearState.Waiting)
                     TryStoreGearSkill();
+                else if (gearState == GearState.Charging)
+                    RejectAttack(RejectionReason.GearCharging);
                 else if (!down) TryStartGearWeapon();
                 if (IsActive) { secondaryWeaponBuffer.Reset(); return; }
             }
@@ -340,7 +378,7 @@ public class PlayerWeaponAbility : PlayerAbility
         {
             TryUseStoredSkill();
             if (IsActive) return;
-            if (storedSkills.Count > 0) return;
+            if (storedSkills.Count > 0 || !UseStorageChord) return;
             StartNormalWeapon();        // 그사이 저장 목록이 비었으면 평소 공격
             return;
         }
@@ -356,7 +394,9 @@ public class PlayerWeaponAbility : PlayerAbility
             StartNormalWeapon();
             return;
         }
-        if (CanRepeatPrimary && !WaitsForJumpRise) StartNormalWeapon();
+        // 누른 채 반복되는 기본 공격은 실패 안내를 다시 재생하지 않는다.
+        if (CanRepeatPrimary && !WaitsForJumpRise && GetAttackBlock(normalWeapon, true) == RejectionReason.None)
+            StartNormalWeapon();
     }
     // 누르고 있어 이어지는 공격이 막 뛴 점프를 그 자리에서 멈추지 않게 한다(2026-11-21 "공격 중 점프").
     // 시작할 때 세로 속도를 지우고 중력을 끄는 기본 무기(해머·칼·레일건·작열탄, StartWindup)는 점프 상승이 끝날 때(최고점)까지 반복을 미룬다.
@@ -563,13 +603,7 @@ public class PlayerWeaponAbility : PlayerAbility
         normalWeaponBuffer.Reset();
         if (normalWeapon == null) return;   // 기본 무기가 없는 자리(데이터 누락)는 공격하지 않는다
 
-        if (skillGauge < normalWeapon.skillGauge)
-        {
-            // 무기 스킬 게이지 없을때 사용 피드백 필요
-            return;
-        }
-
-        if (!IsWeaponCooldownReady(normalWeapon) || !CanFirePrimary(normalWeapon))
+        if (RejectAttack(GetAttackBlock(normalWeapon, true)))
             return;
 
         selectedWeapon = normalWeapon;
@@ -610,15 +644,7 @@ public class PlayerWeaponAbility : PlayerAbility
             .GetGearWeapon(gearStage);
 
         // 해당 단계 무기가 없으면 아무 일도 하지 않는다.
-        if (gearWeapon == null)
-            return;
-
-        // 게이지가 부족하면 아무 일도 하지 않는다.
-        // Gear도 취소하지 않고, 기본공격도 나가지 않는다.
-        if (skillGauge < gearWeapon.skillGauge)
-            return;
-
-        if (!IsWeaponCooldownReady(gearWeapon))
+        if (RejectAttack(GetAttackBlock(gearWeapon)))
             return;
 
         selectedWeapon = gearWeapon;
@@ -639,13 +665,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
     private void StartSecondaryWeapon()
     {
-        if (secondaryWeapon == null || skillGauge < secondaryWeapon.skillGauge)
-        {
-            // 무기 스킬 게이지 없을때 사용 피드백 필요
-            return;
-        }
-
-        if (!IsWeaponCooldownReady(secondaryWeapon))
+        if (RejectAttack(GetAttackBlock(secondaryWeapon)))
             return;
 
         selectedWeapon = secondaryWeapon;
@@ -662,7 +682,18 @@ public class PlayerWeaponAbility : PlayerAbility
         if (modelReturnTime >= 0f && Time.time >= modelReturnTime - 0.0001f) FinishModelReturn();
         Traits.Tick();
         TickPrimaryOverride();
-        if (isStoringSkill) { TickSkillStorage(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return; }
+        bool storageRequested = controller.CanReceiveInput && InputManager.StoreSkillPressed();
+        if (isStoringSkill)
+        {
+            if (storageRequested) RejectAttack(RejectionReason.Busy);
+            TickSkillStorage(); UpdateWeaponCooldownUI(); UpdateGearStageCooldownUI(); return;
+        }
+        bool storePreparedGear = storageRequested && gearState != GearState.Inactive;
+        if (storageRequested && !storePreparedGear)
+        {
+            if (storedSkills.Count > 0) storedSkillBuffer.RegisterInput();
+            else RejectAttack(RejectionReason.Unavailable);
+        }
         RepeatPrimaryInput();
         if (abilityState != AbilityState.None)
         {
@@ -704,7 +735,8 @@ public class PlayerWeaponAbility : PlayerAbility
             if (ChainsWithoutRecover && abilityState == AbilityState.Recover && CancelAttack())
                 return;
 
-            if (timer > 0)
+            bool rifleCadence = IsNormalAttackRunning && IsRifle(selectedWeapon);
+            if (timer > (rifleCadence ? 0.00001f : 0f))
             {
                 UpdateWeaponCooldownUI();
                 UpdateGearStageCooldownUI();
@@ -721,7 +753,12 @@ public class PlayerWeaponAbility : PlayerAbility
                     if (ChainsWithoutRecover && CancelAttack())
                         break;
                     if (selectedWeapon.ShouldEnterRecover())
+                    {
+                        float carry = rifleCadence ? timer : 0f;
                         StartRecover();
+                        // 라이플 연사 주기에 단계 전환의 프레임 오차가 쌓이지 않게 한다.
+                        if (rifleCadence) timer = Mathf.Max(0f, timer + carry);
+                    }
                     else if (!TryContinueMachineGunBurst())
                     {
                         EndAttack();
@@ -745,7 +782,7 @@ public class PlayerWeaponAbility : PlayerAbility
 
         StartQueuedGearCharge();
         UpdateGear();
-        TryAttack();
+        TryAttack(storePreparedGear);
 
         UpdateWeaponCooldownUI();
         UpdateGearStageCooldownUI();
@@ -779,9 +816,13 @@ public class PlayerWeaponAbility : PlayerAbility
         // 공격 중에 누른 Gear 키는 공격이 끝나야 충전을 시작한다(StartQueuedGearCharge). 이어 쏘면 Gear를 쓸 수 없으므로 여기서 끊는다.
         if (gearPressQueued && gearKeyDown) return false;
         bool wantsShot = CanRepeatPrimary || (queued && gearState == GearState.Inactive && controller.CanReceiveInput);
-        if (!wantsShot || skillGauge < selectedWeapon.skillGauge || !IsWeaponCooldownReady(selectedWeapon)
-            || !CanFirePrimary(selectedWeapon))
+        if (!wantsShot) return false;
+        var restriction = GetAttackBlock(selectedWeapon, true);
+        if (restriction != RejectionReason.None)
+        {
+            if (queued) RejectAttack(restriction);
             return false;
+        }
 
         if (selectedWeapon.skillGauge > 0f)
         {
@@ -797,8 +838,10 @@ public class PlayerWeaponAbility : PlayerAbility
             SnapFacingModel();
         }
         PrimaryFireDirection = ReadPrimaryAim(controller.Facing);
+        float carry = timer;
         StopAllCoroutines();
         StartExecute();
+        timer = Mathf.Max(0f, timer + carry);
         if (!manager.DashAbility.IsActive) controller.animator.Play("WeaponExecute", 0, 0f);
         return true;
     }
@@ -822,7 +865,7 @@ public class PlayerWeaponAbility : PlayerAbility
         if (primaryPressPending)
         {
             if (Time.time - primaryPressTime > SimultaneousInputWindow) primaryPressPending = false;
-            else if (IsDownHeld() && InputManager.Held(Button.Attack))
+            else if (UseStorageChord && IsDownHeld() && InputManager.Held(Button.Attack))
             {
                 primaryPressPending = false;
                 suppressHeldPrimaryUntilRelease = true;
@@ -831,7 +874,7 @@ public class PlayerWeaponAbility : PlayerAbility
         }
         if (!IsNormalAttackRunning || !storedSkillBuffer.IsValid || storedSkills.Count == 0 || !controller.CanReceiveInput)
             return false;
-        if (!IsWeaponCooldownReady(storedSkills[0].Weapon)) { storedSkillBuffer.Reset(); return false; }
+        if (RejectAttack(GetWeaponReadinessBlock(storedSkills[0].Weapon))) { storedSkillBuffer.Reset(); return false; }
         storedSkillBuffer.Reset();
         // 끊는 기본 공격의 모습·판정·남은 연사를 정리한다(selectedWeapon을 바꾸기 전에 해야 기본 근접 공격으로 알아본다)
         FinishModelReturn();
@@ -1033,10 +1076,42 @@ public class PlayerWeaponAbility : PlayerAbility
         }
     }
 
-    private bool CanFirePrimary(WeaponBaseSO weapon)
+    private RejectionReason GetAttackBlock(WeaponBaseSO weapon, bool isPrimary = false)
     {
-        if (IsRifle(weapon)) return Traits.RifleAmmo > 0 && Traits.ReloadRemaining <= 0f;
-        if (weapon is IncendiaryRifleWeaponSO) return Traits.IncendiaryAmmo > 0;
+        var restriction = GetWeaponReadinessBlock(weapon);
+        if (restriction != RejectionReason.None) return restriction;
+        if (skillGauge < weapon.skillGauge) return RejectionReason.Gauge;
+        if (!isPrimary) return RejectionReason.None;
+        if (IsRifle(weapon))
+        {
+            if (Traits.ReloadRemaining > 0f) return RejectionReason.Reloading;
+            if (Traits.RifleAmmo <= 0) return RejectionReason.EmptyMagazine;
+        }
+        if (weapon is IncendiaryRifleWeaponSO && Traits.IncendiaryAmmo <= 0)
+            return RejectionReason.EmptyMagazine;
+        return RejectionReason.None;
+    }
+
+    private RejectionReason GetWeaponReadinessBlock(WeaponBaseSO weapon)
+    {
+        if (weapon == null) return RejectionReason.Unavailable;
+        var restriction = GetTraitBlock(weapon);
+        return restriction == RejectionReason.None && GetWeaponCooldownRemaining(weapon) > 0f
+            ? RejectionReason.Cooldown : restriction;
+    }
+
+    private bool RejectAttack(RejectionReason reason)
+    {
+        if (reason == RejectionReason.None) return false;
+
+        float now = Time.unscaledTime;
+        if (reason != lastAttackRejection || now >= nextRepeatedRejectionTime)
+        {
+            lastAttackRejection = reason;
+            nextRepeatedRejectionTime = now + 0.30f;
+            SoundManager.Instance?.PlaySFX(weaponData.actionRejectedSound, transform.position);
+            AttackRejected?.Invoke(reason);
+        }
         return true;
     }
 
@@ -1048,13 +1123,16 @@ public class PlayerWeaponAbility : PlayerAbility
         return true;
     }
 
-    public bool IsWeaponTraitReady(WeaponBaseSO weapon)
+    public bool IsWeaponTraitReady(WeaponBaseSO weapon) => GetTraitBlock(weapon) == RejectionReason.None;
+
+    private RejectionReason GetTraitBlock(WeaponBaseSO weapon)
     {
-        if (weapon is SwordFinisherWeaponSO) return Traits.Resolve >= PlayerWeaponTraits.ResolveCapacity;
-        if (weapon is RailgunWeaponSO || weapon is RailgunChargeWeaponSO
-            || weapon is StarSpearWeaponSO || weapon is LaserWeaponSO)
-            return Traits.OverheatRemaining <= 0f;
-        return true;
+        if (GetFinisherRequirementStacks(weapon) >= 0) return RejectionReason.Resolve;
+        if (Traits != null && Traits.OverheatRemaining > 0f
+            && (weapon is RailgunWeaponSO || weapon is RailgunChargeWeaponSO
+                || weapon is StarSpearWeaponSO || weapon is LaserWeaponSO))
+            return RejectionReason.Overheated;
+        return RejectionReason.None;
     }
     #endregion
 
@@ -1400,11 +1478,13 @@ public class PlayerWeaponAbility : PlayerAbility
         bool cooldownReady = IsWeaponCooldownReady(gearWeapon);
         bool ready = gaugeReady && cooldownReady;
 
+        int stacks = GetResolveRequirementStacks(gearWeapon, out int required);
         gearUI.SetStageWeaponCooldown(
             gearWeapon.weaponSprite,
             GetWeaponCooldownRemaining(gearWeapon),
             GetWeaponCooldown(gearWeapon),
-            ready);
+            ready,
+            stacks, required);
     }
     #endregion
     private event System.Action grabCleanup;
@@ -1670,8 +1750,8 @@ public class PlayerWeaponAbility : PlayerAbility
     private void TryStoreGearSkill()
     {
         var weapon = weaponData.weaponSets[currentSetIndex].GetGearWeapon(gearStage);
-        if (weapon == null || skillGauge < weapon.skillGauge
-            || weaponData.skillStoreAnimation == null) return;
+        if (RejectAttack(weapon == null || weaponData.skillStoreAnimation == null ? RejectionReason.Unavailable
+            : skillGauge < weapon.skillGauge ? RejectionReason.Gauge : RejectionReason.None)) return;
         FinishModelReturn();
         pendingSkill = new StoredGearSkill(weapon, currentSetIndex, gearStage,
             gearUI != null ? gearUI.GetStageColor(gearStage) : Color.cyan);
@@ -1720,7 +1800,7 @@ public class PlayerWeaponAbility : PlayerAbility
         while (storedSkills.Count > 0 && storedSkills[0].Weapon == null) storedSkills.RemoveAt(0);   // 무기가 사라진 항목이 맨 앞을 막지 않게
         if (storedSkills.Count == 0) { StoredSkillsChanged?.Invoke(); return; }
         var skill = storedSkills[0];
-        if (!IsWeaponCooldownReady(skill.Weapon)) return;
+        if (RejectAttack(GetWeaponReadinessBlock(skill.Weapon))) return;
         if (currentSetIndex != skill.SetIndex) ApplyWeaponSet(skill.SetIndex, true);
         MarkWeaponUsed(skill.Weapon);
         storedSkills.RemoveAt(0);
@@ -1733,6 +1813,7 @@ public class PlayerWeaponAbility : PlayerAbility
         CancelGear(selectedWeapon is HandCannonWeaponSO
             ? PlayerGearVisual.EndReason.Silent : PlayerGearVisual.EndReason.Fired);
         StartWindup();
+        StoredSkillUsed?.Invoke();
     }
     // 동작이 끝나거나 끊긴 뒤 이 세트의 대기 모형으로 되돌린다.
     // hammerLeaving: 공격용 해머가 보이는 채 끝까지 재생된 경우(해머 1·2타에서 멈춤, 어느 세트의 것이든 HammerSkill·SpinningHammer).

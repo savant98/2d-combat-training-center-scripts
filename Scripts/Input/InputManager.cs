@@ -24,6 +24,15 @@ public class InputManager : MonoBehaviour
     public Vector2 MenuMove => inputActions.UI.Navigate.ReadValue<Vector2>();
     private readonly ButtonData menuConfirm = new();
     private readonly ButtonData menuCancel = new();
+    private readonly ButtonData storeSkill = new();
+    private InputAction storeSkillAction;
+    public static event System.Action BindingsChanged;
+    public static void NotifyBindingsChanged() => BindingsChanged?.Invoke();
+
+    public bool HasStoreSkillBinding => storeSkillAction != null && storeSkillAction.bindings.Count > 0
+        && !string.IsNullOrEmpty(storeSkillAction.bindings[0].effectivePath);
+
+    public static bool StoreSkillPressed() => Instance != null && Instance.HasStoreSkillBinding && ConsumeMenuButton(Instance.storeSkill);
 
     public static bool MenuConfirmPressed() => Instance != null && ConsumeMenuButton(Instance.menuConfirm);
     public static bool MenuCancelPressed() => Instance != null && ConsumeMenuButton(Instance.menuCancel);
@@ -49,6 +58,7 @@ public class InputManager : MonoBehaviour
         DontDestroyOnLoad(gameObject);
 
         inputActions = new PlayerInputActions();
+        storeSkillAction = inputActions.asset.FindAction("Player/StoreSkill", true);
         // 기존 UI map을 메뉴 입력의 원본으로 사용한다. gameplay 키를 바꿔도 메뉴 Z/X는 유지한다.
         inputActions.UI.Submit.AddBinding("<Keyboard>/z");
         inputActions.UI.Cancel.AddBinding("<Keyboard>/x");
@@ -90,6 +100,9 @@ public class InputManager : MonoBehaviour
         inputActions.Player.Move.performed += ctx => Move = ctx.ReadValue<Vector2>();
         inputActions.Player.Move.canceled += ctx => Move = Vector2.zero;
 
+        storeSkillAction.started += _ => { storeSkill.state = ButtonState.Pressed; storeSkill.pressedThisFrame = true; };
+        storeSkillAction.canceled += _ => storeSkill.state = ButtonState.Released;
+
         // NormalAttack
         inputActions.Player.Attack.started += ctx => { buttonDatas[Button.Attack].state = ButtonState.Pressed; buttonDatas[Button.Attack].pressedThisFrame = true; };
         inputActions.Player.Attack.canceled += ctx => buttonDatas[Button.Attack].state = ButtonState.Released;
@@ -122,13 +135,16 @@ public class InputManager : MonoBehaviour
     public void LoadBindings(string json)
     {
         inputActions.asset.RemoveAllBindingOverrides();
-        if (string.IsNullOrEmpty(json)) return;
-        try { inputActions.asset.LoadBindingOverridesFromJson(json); }
+        try
+        {
+            if (!string.IsNullOrEmpty(json)) inputActions.asset.LoadBindingOverridesFromJson(json);
+        }
         catch (System.Exception e)
         {
             inputActions.asset.RemoveAllBindingOverrides();
             Debug.LogWarning("[InputManager] 저장된 키 설정을 읽지 못해 기본키를 사용합니다: " + e.Message);
         }
+        NotifyBindingsChanged();
     }
 
     public void SuspendForRebind(bool suspend)
@@ -152,8 +168,8 @@ public class InputManager : MonoBehaviour
     public void ClearButtonStates()
     {
         Move = Vector2.zero;
-        menuConfirm.state = menuCancel.state = ButtonState.None;
-        menuConfirm.pressedThisFrame = menuCancel.pressedThisFrame = false;
+        menuConfirm.state = menuCancel.state = storeSkill.state = ButtonState.None;
+        menuConfirm.pressedThisFrame = menuCancel.pressedThisFrame = storeSkill.pressedThisFrame = false;
         foreach (var data in buttonDatas.Values) { data.state = ButtonState.None; data.pressedThisFrame = false; }
     }
 
@@ -168,6 +184,7 @@ public class InputManager : MonoBehaviour
     {
         UpdateButton(menuConfirm);
         UpdateButton(menuCancel);
+        UpdateButton(storeSkill);
         // Pressed/Released는 한 프레임만 유지
         // 매 프레임 키 목록(List)을 새로 만들던 것을 값 직접 순회로 바꿔 할당을 없앤다.
         // UpdateButton은 ButtonData의 필드만 바꾸고 Dictionary에 넣거나 빼지 않으므로 순회 중 수정 예외가 없고, 순서도 키 목록과 같다.

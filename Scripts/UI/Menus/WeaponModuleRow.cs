@@ -22,6 +22,7 @@ public sealed class WeaponModuleRow : MonoBehaviour
     [SerializeField] private TextMeshProUGUI titleText;
     [SerializeField] private TextMeshProUGUI descriptionText;
     [SerializeField] private TextMeshProUGUI costText;
+    private Transform cachedCostIcon;
     [SerializeField] private TextMeshProUGUI statusText;
 
     public RectTransform HitArea => hitArea;
@@ -42,6 +43,8 @@ public sealed class WeaponModuleRow : MonoBehaviour
             costText.text = cost;
             costText.color = costColor;
         }
+        if (cachedCostIcon == null) cachedCostIcon = transform.Find("CostIcon");
+        if (cachedCostIcon != null) cachedCostIcon.gameObject.SetActive(!string.IsNullOrEmpty(cost));
         if (statusText != null)
         {
             statusText.text = status;

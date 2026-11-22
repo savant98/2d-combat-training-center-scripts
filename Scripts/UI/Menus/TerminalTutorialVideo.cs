@@ -11,7 +11,7 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
     [SerializeField] private VideoClip clip;
     [SerializeField] private UnityEngine.UI.RawImage image;
     [SerializeField] private TextMeshProUGUI stateLabel, bindingLabel, timeLabel;
-    [SerializeField] private string[] actions;
+    [SerializeField] private string[] actions, alternativeActions;
     [SerializeField] private TerminalVideoSeekBar seekBar;
     [UnityEngine.Serialization.FormerlySerializedAs("pauseButton")]
     [SerializeField] private UnityEngine.UI.Button playbackButton;
@@ -20,21 +20,33 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
     [SerializeField] private FeedbackDataSO controlFeedback;
     [SerializeField] private AudioSource audioOutput;
     private VideoPlayer player;
+    private VideoClip alternativeClip;
     private RenderTexture texture;
     private bool wantsPlay, seeking, scrubbing, ended, hasPendingSeek, seekCompleted, seekMuted, previousMute, playbackFailed;
     private bool decodedSeekFrame, preparing, hasPrepared, hasDecodedFrame;
     private double pendingTime, activeSeekTime, seekDeadline;
     private InventoryTerminalMenu menu;
-    public VideoClip Clip => clip;
+    private string confirmKey, seekKeys;
+    public VideoClip Clip => alternativeClip == null ? clip : alternativeClip;
     public bool IsPlaying => player != null && player.isPlaying;
     public bool IsSeeking => seeking || hasPendingSeek;
     public bool IsScrubbing => scrubbing;
     public bool IsPaused => !wantsPlay;
-    public double Duration => player != null && player.isPrepared ? player.length : clip != null ? clip.length : 0;
+    public double Duration => player != null && player.isPrepared ? player.length : Clip != null ? Clip.length : 0;
     public double Position => ended ? Duration : player != null && player.isPrepared ? player.time : 0;
+
+    public void SetAlternativeClip(VideoClip value)
+    {
+        if (alternativeClip == value) return;
+        bool active = isActiveAndEnabled;
+        if (active) enabled = false;
+        alternativeClip = value;
+        if (active) enabled = true;
+    }
 
     private void OnEnable()
     {
+        var clip = Clip;
         if (clip == null || image == null) return;
         menu = GetComponentInParent<InventoryTerminalMenu>();
         if (player == null)
@@ -56,21 +68,46 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
         wantsPlay = true; seeking = scrubbing = ended = hasPendingSeek = seekCompleted = playbackFailed = false;
         preparing = hasPrepared = decodedSeekFrame = hasDecodedFrame = false;
         if (seekBar != null) { seekBar.interactable = false; seekBar.SetValueWithoutNotify(0); seekBar.onValueChanged.AddListener(SeekValueChanged); }
+        InputManager.BindingsChanged += RefreshBindings;
         RefreshBindings(); RefreshControls(); EnsurePrepared();
     }
     private void RefreshBindings()
     {
-        if (bindingLabel == null || InputManager.Instance == null) return;
-        var labels = new System.Collections.Generic.List<string>();
-        foreach (string name in actions ?? Array.Empty<string>())
+        confirmKey = InputBindingDisplay.Confirm;
+        seekKeys = InputBindingDisplay.Format("{MenuLeft}/{MenuRight}");
+        if (bindingLabel == null) return;
+        var displayed = alternativeClip != null && alternativeActions != null && alternativeActions.Length > 0 ? alternativeActions : actions;
+        var rows = new System.Collections.Generic.List<string>();
+        foreach (string name in displayed ?? Array.Empty<string>())
         {
-            var action = InputManager.Instance.Actions.FindAction("Player/" + name);
-            int index = OptionMenu.FindBinding(action, name == "Move" ? "left" : "");
-            if (index >= 0) labels.Add(action.GetBindingDisplayString(index));
-            if (name == "Move") { index = OptionMenu.FindBinding(action, "right"); if (index >= 0) labels.Add(action.GetBindingDisplayString(index)); }
+            var (title, recorded, current) = name switch
+            {
+                "MoveLeft" => ("왼쪽", "←", InputBindingDisplay.Get("Move", "left")),
+                "MoveRight" => ("오른쪽", "→", InputBindingDisplay.Get("Move", "right")),
+                "MoveUp" => ("위", "↑", InputBindingDisplay.Get("Move", "up")),
+                "MoveDown" => ("아래", "↓", InputBindingDisplay.Get("Move", "down")),
+                "Move" => ("이동", "← / →", InputBindingDisplay.Get("Move")),
+                _ => (InputBindingDisplay.Title(name), RecordedKey(name), InputBindingDisplay.Get(name))
+            };
+            if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(current)) continue;
+            string keys = string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(recorded)
+                ? current : "<color=#A5B6C5>" + recorded + "</color> → " + current;
+            rows.Add($"<color=#A4D8F2>[{title}]</color>   <b>{keys}</b>");
         }
-        bindingLabel.text = "현재 설정 키  " + string.Join(" / ", labels) + "  ·  영상의 키는 기본 설정 기준";
+        bindingLabel.text = string.Join("\n", rows);
     }
+
+    private static string RecordedKey(string action) => action switch
+    {
+        "Attack" => "X",
+        "Jump" => "Z",
+        "Dash" => "C",
+        "Gear" => "Space",
+        "SwapWeapon" => "S",
+        "SecondaryWeapon" => "A",
+        "StoreSkill" => "↓ + X",
+        _ => ""
+    };
     private void Prepared(VideoPlayer source)
     {
         if (!isActiveAndEnabled) return;
@@ -137,6 +174,7 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
     public void SeekToNormalized(float value) => SeekToTime(Mathf.Clamp01(value) * Duration);
     private void SeekToTime(double target)
     {
+        var clip = Clip;
         if (player == null || clip == null || playbackFailed) return;
         double lastFrame = Math.Max(0, Math.Min(Duration - 1.0 / Math.Max(1, clip.frameRate), ((double)clip.frameCount - 1) / Math.Max(1, clip.frameRate)));
         pendingTime = Math.Max(0, Math.Min(lastFrame, target));
@@ -171,7 +209,7 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
         if (!isActiveAndEnabled) return;
         hasDecodedFrame = true;
         if (!seeking) return;
-        long target = (long)Math.Floor(activeSeekTime * clip.frameRate);
+        long target = (long)Math.Floor(activeSeekTime * Clip.frameRate);
         if (Math.Abs(frame - target) > 3) return;
         decodedSeekFrame = true; TryCompleteSeek();
     }
@@ -202,8 +240,8 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
         if (IsSeeking)
         {
             // 마지막 프레임에서는 새 frameReady가 더 오지 않을 수 있다.
-            if (seeking && activeSeekTime >= Duration - 4.0 / Math.Max(1,clip.frameRate)
-                && Math.Abs(source.frame - Math.Floor(activeSeekTime * clip.frameRate)) <= 3)
+            if (seeking && activeSeekTime >= Duration - 4.0 / Math.Max(1, Clip.frameRate)
+                && Math.Abs(source.frame - Math.Floor(activeSeekTime * Clip.frameRate)) <= 3)
             { seekCompleted = decodedSeekFrame = true; TryCompleteSeek(); }
             if (IsSeeking) return;
         }
@@ -215,11 +253,14 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
     {
         bool ready = player != null && player.isPrepared && !playbackFailed;
         bool input = menu == null || menu.CanControlTutorialVideo;
-        if (playbackButton != null) playbackButton.interactable = input && clip != null;
-        if (restartButton != null) restartButton.interactable = input && clip != null;
+        if (playbackButton != null) playbackButton.interactable = input && Clip != null;
+        if (restartButton != null) restartButton.interactable = input && Clip != null;
         if (seekBar != null) seekBar.interactable = input && hasPrepared && !playbackFailed;
         if (playbackView != null) playbackView.SetState(IsPaused, ended, ready);
-        if (stateLabel != null) stateLabel.text = playbackFailed ? "영상 재생 실패 · 처음부터를 눌러 주세요" : ended ? "재생 완료 · 확인: 처음부터 · ←/→: 1초 이동" : !ready ? "영상 준비 중…" : scrubbing ? "재생 위치 선택 중" : IsSeeking ? "선택한 위치로 이동 중…" : wantsPlay ? "재생 중  ·  확인: 일시정지  ·  ←/→: 1초 이동" : "일시정지  ·  확인: 재생  ·  ←/→: 1초 이동";
+        if (stateLabel != null) stateLabel.text = playbackFailed ? "영상 재생 실패 · 처음부터를 눌러 주세요"
+            : ended ? $"재생 완료  ·  {confirmKey} 처음부터  ·  {seekKeys} 위치 이동"
+            : !ready ? "영상 준비 중…" : scrubbing ? "재생 위치 선택 중" : IsSeeking ? "선택한 위치로 이동 중…"
+            : wantsPlay ? $"재생 중  ·  {confirmKey} 일시정지  ·  {seekKeys} 위치 이동" : $"일시정지  ·  {confirmKey} 재생  ·  {seekKeys} 위치 이동";
         double time = scrubbing && seekBar != null ? seekBar.value * Duration : IsSeeking ? pendingTime : Position;
         if (timeLabel != null) timeLabel.text = FormatTime(time) + " / " + FormatTime(Duration);
     }
@@ -240,6 +281,7 @@ public sealed class TerminalTutorialVideo : MonoBehaviour
     }
     private void OnDisable()
     {
+        InputManager.BindingsChanged -= RefreshBindings;
         wantsPlay = seeking = scrubbing = ended = hasPendingSeek = seekCompleted = preparing = hasPrepared = decodedSeekFrame = hasDecodedFrame = false;
         RestoreSeekAudio();
         if (seekBar != null) { seekBar.onValueChanged.RemoveListener(SeekValueChanged); seekBar.interactable = false; }

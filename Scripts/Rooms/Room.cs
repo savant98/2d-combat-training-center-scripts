@@ -28,6 +28,10 @@ public class Room : MonoBehaviour
     private Tween bossEntryCameraTween;
     private bool ownsBossWarning;
     private uint bossEntryVersion;
+    private Coroutine bossPhaseRoutine;
+    private Transform phasePreviousFollow;
+    private Transform phaseFocus;
+    private Material phaseWarningMaterial;
     private Vector3 currentSpawnPoint;
     private Coroutine waveCompleteRoutine;
     public void ReleaseContent()
@@ -39,7 +43,7 @@ public class Room : MonoBehaviour
         }
         StopAllCoroutines();
         waveCompleteRoutine = null;
-        if (virtualCamera != null) ResetBossEntryCamera();
+        ResetBossEntryCamera();
     }
     private void HandleWavesCleared()
     {
@@ -146,6 +150,107 @@ public class Room : MonoBehaviour
             defaultOrthographicSize,
             0.3f);
     }
+    public void PresentBossPhase(EnemyController boss)
+    {
+        if (ownsBossWarning || virtualCamera == null || !virtualCamera.isActiveAndEnabled
+            || virtualCamera.Follow == null || RoomManager.Instance?.CurrentRoom != this) return;
+
+        CancelBossPhase();
+        bossPhaseRoutine = StartCoroutine(ShowBossPhase(boss, virtualCamera.Follow));
+    }
+
+    private IEnumerator ShowBossPhase(EnemyController boss, Transform previousFollow)
+    {
+        const float focusTime = 0.26f;
+        const float holdTime = 0.36f;
+        const float returnTime = 0.38f;
+        var health = boss.Health;
+        uint lifeVersion = health.LifeVersion;
+        var hitbox = health.GetComponent<Collider2D>();
+        phasePreviousFollow = previousFollow;
+        phaseFocus = new GameObject("BossPhaseFocus").transform;
+        phaseFocus.SetParent(transform, false);
+        phaseFocus.position = previousFollow.position;
+        virtualCamera.Follow = phaseFocus;
+
+        Transform warning = new GameObject("BossPhaseWarning").transform;
+        warning.SetParent(phaseFocus, false);
+        var marks = CreatePhaseWarning(warning);
+        var warningColor = new Color(1f, 0.32f, 0.16f);
+        float elapsed = 0f;
+        while (elapsed < focusTime + holdTime + returnTime && virtualCamera.Follow == phaseFocus
+            && health != null && health.isActiveAndEnabled && health.currentHP > 0f && health.LifeVersion == lifeVersion
+            && previousFollow != null)
+        {
+            float towardBoss = Mathf.SmoothStep(0f, 1f, elapsed / focusTime);
+            float towardPlayer = Mathf.SmoothStep(0f, 1f, (elapsed - focusTime - holdTime) / returnTime);
+            phaseFocus.position = Vector3.Lerp(previousFollow.position, boss.transform.position, towardBoss * (1f - towardPlayer));
+            var bounds = hitbox != null ? hitbox.bounds : new Bounds(boss.transform.position, Vector3.one * 4f);
+            warning.position = new Vector3(bounds.center.x, bounds.max.y + 0.48f, bounds.center.z);
+            float pulse = Mathf.Sin(Mathf.PI * Mathf.Clamp01(elapsed / (focusTime + holdTime + 0.1f)));
+            warning.localScale = Vector3.one * Mathf.Lerp(0.78f, 1.05f, towardBoss);
+            warningColor.a = pulse;
+            foreach (var mark in marks) mark.startColor = mark.endColor = warningColor;
+            yield return null;
+            elapsed += Time.unscaledDeltaTime;
+        }
+
+        bossPhaseRoutine = null;
+        ReleaseBossPhase();
+    }
+
+    private LineRenderer[] CreatePhaseWarning(Transform marker)
+    {
+        var shader = Shader.Find("Sprites/Default");
+        if (shader == null) return System.Array.Empty<LineRenderer>();
+        phaseWarningMaterial = new Material(shader);
+        return new[]
+        {
+            CreateMark(marker, "Outline", 0.034f, true, new Vector3(0f, 0.36f), new Vector3(0.43f, -0.22f), new Vector3(-0.43f, -0.22f)),
+            CreateMark(marker, "Stem", 0.059f, false, new Vector3(0f, 0.18f), new Vector3(0f, -0.012f)),
+            CreateMark(marker, "Dot", 0.066f, false, new Vector3(0f, -0.124f), new Vector3(0f, -0.087f))
+        };
+    }
+
+    private LineRenderer CreateMark(Transform marker, string name, float width, bool loop, params Vector3[] points)
+    {
+        var mark = new GameObject(name).AddComponent<LineRenderer>();
+        mark.transform.SetParent(marker, false);
+        mark.useWorldSpace = false;
+        mark.sortingLayerName = "Particle";
+        mark.sortingOrder = 40;
+        mark.sharedMaterial = phaseWarningMaterial;
+        mark.widthMultiplier = width;
+        mark.numCornerVertices = 2;
+        mark.numCapVertices = 3;
+        mark.loop = loop;
+        mark.positionCount = points.Length;
+        mark.SetPositions(points);
+        return mark;
+    }
+
+    private void CancelBossPhase()
+    {
+        if (bossPhaseRoutine != null) StopCoroutine(bossPhaseRoutine);
+        bossPhaseRoutine = null;
+        ReleaseBossPhase();
+    }
+
+    private void ReleaseBossPhase()
+    {
+        if (phaseFocus != null)
+        {
+            if (virtualCamera != null && virtualCamera.Follow == phaseFocus) virtualCamera.Follow = phasePreviousFollow;
+            Destroy(phaseFocus.gameObject);
+        }
+        if (phaseWarningMaterial != null) Destroy(phaseWarningMaterial);
+        phaseFocus = null;
+        phasePreviousFollow = null;
+        phaseWarningMaterial = null;
+    }
+
+    private void OnDisable() => CancelBossPhase();
+
     private void SetCameraSize(float size)
     {
         virtualCamera.Lens.OrthographicSize = size;
@@ -153,6 +258,7 @@ public class Room : MonoBehaviour
     }
     public void ResetBossEntryCamera()
     {
+        CancelBossPhase();
         bossEntryVersion++;
         if (ownsBossWarning && UIManager.Instance != null) UIManager.Instance.HideWarningLine();
         ownsBossWarning = false;

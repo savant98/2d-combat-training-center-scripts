@@ -142,7 +142,7 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
         if (secondaryShown.Count == 0 || secondaryShown.Count > cards.Length) return false;
         host = owner; ability = weaponAbility; setIndex = slot; returnIndex = focusBack;
         if (titleText != null) titleText.text = "보조 무기 교체";
-        if (captionText != null) captionText.text = "무장 종류와 관계없이 이 자리의 보조 무기를 선택합니다.";
+        if (captionText != null) captionText.text = "";
         RefreshCards(); LayoutCards(); ShowPage(); Open();
         // 처음 선택: 지금 장착한 카드(빈 자리면 첫 카드)
         FocusSilently(Mathf.Max(0, secondaryShown.IndexOf(weaponAbility.GetWeaponSet(slot)?.secondary)));
@@ -320,7 +320,11 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
         var entry = UnlockEntry(index);
         if (entry == null) { Warn("해금 정보를 찾을 수 없습니다.", index, "무장 해금"); return; }
         var data = DataManager.Instance;
-        if (data == null || data.TrainingCertificates < entry.price) { Warn(ArmamentUnlocks.ShortageMessage, index, "무장 해금"); return; }
+        if (data.TrainingCertificates < entry.price)
+        {
+            Warn(UpgradePurchaseDialog.CertificateShortage(data.TrainingCertificates, entry.price), index, "무장 해금");
+            return;
+        }
         if (dialog == null)
         {
             Debug.LogError("업그레이드 구매 확인 창 연결이 필요합니다.", this);

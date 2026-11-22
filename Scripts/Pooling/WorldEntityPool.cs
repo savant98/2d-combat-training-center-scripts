@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -108,15 +109,30 @@ public class WorldEntityPool : MonoBehaviour
     {
         return activeWorldEntities.ToArray();
     }
-    public void DespawnAll()
+    public void DespawnAll(bool preservePlayerAttacks = false)
     {
-        foreach (WorldEntityBase projectile in activeWorldEntities.ToArray())
+        List<(WorldEntityBase entity, uint lease)> preserved = null;
+        foreach (var entity in activeWorldEntities.ToArray())
         {
-            if (projectile != null)
-                projectile.ForceReturnToPool();
+            if (entity == null || !activeWorldEntities.Contains(entity)) continue;
+            if (preservePlayerAttacks && entity.PreserveAfterBossDefeat)
+            {
+                preserved ??= new List<(WorldEntityBase, uint)>();
+                preserved.Add((entity, entity.PoolLease));
+            }
+            else entity.ForceReturnToPool();
         }
 
-        //activeWorldEntities.Clear();
+        if (preserved != null) StartCoroutine(ReturnBossFinishers(preserved));
+    }
+
+    private IEnumerator ReturnBossFinishers(List<(WorldEntityBase entity, uint lease)> preserved)
+    {
+        yield return new WaitForSeconds(3f);
+        // 원래 수명이 끝나 먼저 돌아갔거나 다음 전투에서 다시 받은 인스턴스는 건드리지 않는다.
+        foreach (var (entity, lease) in preserved)
+            if (entity != null && entity.PoolLease == lease && activeWorldEntities.Contains(entity))
+                entity.ForceReturnToPool();
     }
 
     // ───────────────────────────────────────

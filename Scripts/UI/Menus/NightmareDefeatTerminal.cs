@@ -82,7 +82,7 @@ public sealed class NightmareDefeatTerminal : MonoBehaviour, IUIInputReceiver
         ContinueRequested?.Invoke();
     }
 
-    public void OnCancel() { }
+    public void OnCancel() => OnConfirm();
     public void OnMove(Vector2 direction) { }
 
     public void Dismiss()

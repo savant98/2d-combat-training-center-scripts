@@ -223,6 +223,16 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
                     ""priority"": 0
                 },
                 {
+                    ""name"": ""StoreSkill"",
+                    ""type"": ""Button"",
+                    ""id"": ""dcb93463-457e-43a0-9271-67f2634d1237"",
+                    ""expectedControlType"": ""Button"",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": false,
+                    ""priority"": 0
+                },
+                {
                     ""name"": ""Escape"",
                     ""type"": ""Button"",
                     ""id"": ""3970c5ed-7365-44de-be6f-a404001077f9"",
@@ -234,6 +244,17 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
                 }
             ],
             ""bindings"": [
+                {
+                    ""name"": """",
+                    ""id"": ""ed98d38e-dbb6-49ad-a536-196d7492c04c"",
+                    ""path"": """",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": ""Keyboard&Mouse"",
+                    ""action"": ""StoreSkill"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                },
                 {
                     ""name"": """",
                     ""id"": ""978bfe49-cc26-4a3d-ab7b-7d7a29327403"",
@@ -1292,6 +1313,7 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
         m_Player_Sprint = m_Player.FindAction("Sprint", throwIfNotFound: true);
         m_Player_Dash = m_Player.FindAction("Dash", throwIfNotFound: true);
         m_Player_SwapWeapon = m_Player.FindAction("SwapWeapon", throwIfNotFound: true);
+        m_Player_StoreSkill = m_Player.FindAction("StoreSkill", throwIfNotFound: true);
         m_Player_Escape = m_Player.FindAction("Escape", throwIfNotFound: true);
         // UI
         m_UI = asset.FindActionMap("UI", throwIfNotFound: true);
@@ -1399,6 +1421,7 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
     private readonly InputAction m_Player_Sprint;
     private readonly InputAction m_Player_Dash;
     private readonly InputAction m_Player_SwapWeapon;
+    private readonly InputAction m_Player_StoreSkill;
     private readonly InputAction m_Player_Escape;
     /// <summary>
     /// Provides access to input actions defined in input action map "Player".
@@ -1463,6 +1486,10 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
         /// Provides access to the underlying input action "Player/SwapWeapon".
         /// </summary>
         public InputAction @SwapWeapon => m_Wrapper.m_Player_SwapWeapon;
+        /// <summary>
+        /// Provides access to the underlying input action "Player/StoreSkill".
+        /// </summary>
+        public InputAction @StoreSkill => m_Wrapper.m_Player_StoreSkill;
         /// <summary>
         /// Provides access to the underlying input action "Player/Escape".
         /// </summary>
@@ -1532,6 +1559,9 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
             @SwapWeapon.started += instance.OnSwapWeapon;
             @SwapWeapon.performed += instance.OnSwapWeapon;
             @SwapWeapon.canceled += instance.OnSwapWeapon;
+            @StoreSkill.started += instance.OnStoreSkill;
+            @StoreSkill.performed += instance.OnStoreSkill;
+            @StoreSkill.canceled += instance.OnStoreSkill;
             @Escape.started += instance.OnEscape;
             @Escape.performed += instance.OnEscape;
             @Escape.canceled += instance.OnEscape;
@@ -1585,6 +1615,9 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
             @SwapWeapon.started -= instance.OnSwapWeapon;
             @SwapWeapon.performed -= instance.OnSwapWeapon;
             @SwapWeapon.canceled -= instance.OnSwapWeapon;
+            @StoreSkill.started -= instance.OnStoreSkill;
+            @StoreSkill.performed -= instance.OnStoreSkill;
+            @StoreSkill.canceled -= instance.OnStoreSkill;
             @Escape.started -= instance.OnEscape;
             @Escape.performed -= instance.OnEscape;
             @Escape.canceled -= instance.OnEscape;
@@ -1979,6 +2012,13 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
         /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
         /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
         void OnSwapWeapon(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "StoreSkill" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnStoreSkill(InputAction.CallbackContext context);
         /// <summary>
         /// Method invoked when associated input action "Escape" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
         /// </summary>

@@ -66,11 +66,11 @@ public class PlayerController : CharacterController2D
         motor.RefitConfinement();
         Velocity = Vector2.zero;
     }
-    public void ResetPlayerStatus()
+    public void ResetPlayerStatus(bool preserveExecutingAttack = false)
     {
         if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);
-        health.ResetHealth();
-        abilityManager.AttackAbility.ResetSkillGauge();
+        health.ResetHealth(preserveExecutingAttack);
+        abilityManager.AttackAbility.ResetSkillGauge(preserveExecutingAttack);
     }
     public void ApplyWeaponAnimation(AnimationSetSO set, string animName)
     {

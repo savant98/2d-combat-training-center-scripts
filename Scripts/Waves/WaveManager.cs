@@ -59,6 +59,7 @@ public class WaveManager : MonoBehaviour
     private Coroutine coroutine;
     private bool isWaveActive = false;
     private bool isSpawnActive = false;
+    private bool bossDefeatedThisWave;
     private Wave currentWave;
     private List<EnemyController> activeEnemies = new List<EnemyController>();
     private List<WorldEntityBase> currentWaveEntities = new List<WorldEntityBase>();
@@ -235,6 +236,7 @@ public class WaveManager : MonoBehaviour
     private void SpawnWave(Wave wave)
     {
         currentWave = wave;
+        bossDefeatedThisWave = false;
         aliveTargets = 0;
         isWaveActive = true;
         isSpawnActive = true;
@@ -286,8 +288,7 @@ public class WaveManager : MonoBehaviour
                 // Enemy인 경우
                 if (info.prefab.TryGetComponent(out EnemyController enemyPrefab))
                 {
-                    EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, spawnPos);
-                    enemyInstance.Health.IsBossEnemy = info.isBossEnemy;
+                    EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, spawnPos, info.isBossEnemy);
                     if (!info.keepAfterWave) currentWaveEnemies.Add(enemyInstance);
                     else currentWaveEnemies.Remove(enemyInstance);
                     EnemySpawned?.Invoke(enemyInstance);
@@ -403,6 +404,9 @@ public class WaveManager : MonoBehaviour
         if (!isWaveActive)
             return;
 
+        if (deadEnemy.Health.IsBossEnemy && deadEnemy.Health.currentHP <= 0f)
+            bossDefeatedThisWave = true;
+
         aliveTargets--;
 
         if (aliveTargets > 0 || isSpawnActive)
@@ -481,8 +485,8 @@ public class WaveManager : MonoBehaviour
         {
             // 마지막 웨이브 완료
             Debug.Log("All Waves Cleared!");
-            GameManager.Instance.Player.ResetPlayerStatus();
-            WorldEntityPool.Instance.DespawnAll();
+            GameManager.Instance.Player.ResetPlayerStatus(preserveExecutingAttack: bossDefeatedThisWave);
+            WorldEntityPool.Instance.DespawnAll(preservePlayerAttacks: bossDefeatedThisWave);
 
             OnAllWavesCleared?.Invoke();
 

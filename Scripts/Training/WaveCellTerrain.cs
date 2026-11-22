@@ -134,6 +134,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private bool roomSpaceReset;
     // 크레인이 Player를 옮기는 동안: 출발·도착 지점(방 좌표)과 들어 올린 높이. 카메라와 배경 범위에 경로까지 넣는다.
     private bool carrying;
+    private WaveTransitBackdrop transitBackdrop;
     private Vector2 carryFrom, carryTo;
     private float carryLift;
     // 다음 연결 공간 갱신은 지형이 그대로여도 건너뛰지 않는다(옮기기를 시작하고 끝낼 때 범위가 달라진다).
@@ -453,6 +454,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private void LateUpdate()
     {
         UpdateCameraSettlement();
+        if (!carrying && !IsCameraSettling && !IsTransitioning) transitBackdrop?.Hide();
         UpdatePanels();
         TrackGroupMotion();
         if (groundDirty) RebuildGround();
@@ -858,12 +860,14 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private void OnDisable()
     {
         CancelCameraSettlement(true);
+        transitBackdrop?.Hide();
         if (IsPreloaded) ClearPanels();
     }
 
     private void ResetMap()
     {
         CancelCameraSettlement(true);
+        transitBackdrop?.Hide();
         roomSpaceReset = true;
         StopAllCoroutines(); ClearPanels(); ClearGround(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); eventAdded.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
         ApplyBackground(0);
@@ -934,6 +938,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         CancelCameraSettlement(true);
         carrying = true; carryFrom = from; carryTo = to; carryLift = Mathf.Max(0f, lift);
+        PrepareTransitBackdrop(from, to);
         if (carryFollow == null && roomConfiner != null && roomConfiner.TryGetComponent(out carryFollow))
         {
             carryFollowDamping = carryFollow.TrackerSettings.PositionDamping;
@@ -944,6 +949,29 @@ public sealed class WaveCellTerrain : MonoBehaviour
         forceRoomSpace = true;
         RefreshRoomSpace();
     }
+    private void PrepareTransitBackdrop(Vector2 from, Vector2 to)
+    {
+        transitBackdrop?.Hide();
+        int index = waves.currentWaveIndex;
+        if (index <= 0) return;
+        Rect leaving = WaveRoomState.LayoutAt(data, index - 1).bounds;
+        Rect arriving = WaveRoomState.LayoutAt(data, index).bounds;
+        if (!leaving.Contains(from) || !arriving.Contains(to) || !WaveTransitBackdrop.Separated(leaving, arriving))
+        {
+            // 명시 범위보다 셀이 결정하는 실내를 쓸 때에는 실제 연결 공간 두 곳을 비교한다.
+            if (!automaticRoomSpace || !ConnectedBounds.HasValue || !ConnectedBounds.Value.Contains(from)) return;
+            leaving = ConnectedBounds.Value;
+            var next = WaveCellState.Initial(data, index);
+            var cells = new HashSet<Vector2Int>(next.Where(cell => cell.kind == WaveCellKind.Platform
+                && (cell.group == 0 || owners.ContainsKey(cell))).Select(RoomCell));
+            if (!WaveCellRoomSpace.TryGetBounds(cells, to, out arriving) || !WaveTransitBackdrop.Separated(leaving, arriving)) return;
+        }
+        var material = WaveRoomRulesSO.Default != null ? WaveRoomRulesSO.Default.panelRigMaterial : null;
+        if (material == null) return;
+        transitBackdrop ??= new WaveTransitBackdrop(transform, material);
+        transitBackdrop.Show(leaving, arriving);
+    }
+
     /// <summary>
     /// 크레인 이동이 끝났다. 카메라와 배경을 Player가 있는 공간에 맞춘다.
     /// 도중에 끊겨 Player가 시작 좌표에 닿지 못했으면(arrived = false) 커스텀 실내의 카메라 범위는 새 실내 크기로 줄이지 않고 넓혀 둔 채로 둔다
@@ -1766,6 +1794,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     }
     private void OnDestroy()
     {
+        transitBackdrop?.Release();
         if (waves != null) { waves.WavesReset -= ResetMap; waves.WaveStarted -= BeginEvents; waves.WaveEnded -= EndEvents; waves.EnemySpawned -= FaceCenter; }
         if (oneWayTile != null) Destroy(oneWayTile);
     }

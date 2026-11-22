@@ -76,7 +76,7 @@ public sealed class HammerBarrierVisual : MonoBehaviour
     [SerializeField, Range(0.05f, 0.9f)] private float lowCharge = 0.3f;
     [SerializeField, Range(0f, 0.2f)] private float hitCompress = 0.035f;
     [SerializeField, Range(0f, 0.2f)] private float pulseGrow = 0.025f;
-    [Tooltip("한 번에 막은 양이 이 값 이상이면 피격 연출(섬광·눌림·파문)이 가장 세다. 4차부터 피해를 방어막 양만큼 전부 막아 한 번에 최대 60까지 줄어든다")]
+    [Tooltip("한 번에 막은 양이 이 값 이상이면 피격 연출(섬광·눌림·파문)이 가장 세다. 한 번에 막는 피해의 상한은 방어막 용량이다")]
     [SerializeField, Min(1f)] private float hitFullAbsorb = 30f;
 
     private PlayerController player;

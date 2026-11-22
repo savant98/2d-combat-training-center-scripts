@@ -40,6 +40,7 @@ public sealed class FieldElevatorTrigger : MonoBehaviour, IInteractable
 
     private void Awake()
     {
+        WorldInteractionBindingHint.Bind(interactUI);
         if (interactUI != null) interactUI.alpha = 0f;
         if (noticeLabel != null) { noticeColor = noticeLabel.color; noticeLabel.alpha = 0f; }
     }

@@ -61,6 +61,7 @@ public sealed class TitlePanelMotion : MonoBehaviour
 
     private void Awake()
     {
+        InputBindingHint.Bind(plate, "Footer/Controls", "{MenuDirections} 선택   ·   {Confirm} 확인   ·   마우스 클릭");
         Cache();
         SnapHidden();
     }

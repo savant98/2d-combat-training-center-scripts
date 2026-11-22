@@ -5,7 +5,7 @@ using UnityEngine;
 public sealed class TerminalEquipmentGlyph : UnityEngine.UI.MaskableGraphic
 {
     // 직렬화된 정수 값을 지키기 위해 새 아이콘은 항상 끝에 붙인다(Shield=7, Breakable=8, Break=9).
-    public enum Glyph { Move, Jump, Dash, Attack, Swap, Gear, Secondary, Shield, Breakable, Break }
+    public enum Glyph { Move, Jump, Dash, Attack, Swap, Gear, Secondary, Shield, Breakable, Break, Burn, Resolve, Heat }
     [SerializeField] private Glyph glyph;
     [SerializeField] private float thickness=2.8f;
     private Rect drawingRect;
@@ -60,6 +60,28 @@ public sealed class TerminalEquipmentGlyph : UnityEngine.UI.MaskableGraphic
                 Outline(vh,LeftShard,new Vector2(-6,-2),.76f,8,true);Outline(vh,RightShard,new Vector2(6,-4),.76f,-8,true);
                 foreach(float degrees in new[]{90f,48f,132f,232f,308f})
                 {float a=degrees*Mathf.Deg2Rad;var d=new Vector2(Mathf.Cos(a),Mathf.Sin(a));Line(vh,d*32,d*38.5f);}
+                break;
+            case Glyph.Burn:
+                Outline(vh, new Vector2[] { new(-18,-21), new(-27,-7), new(-22,8), new(-13,16), new(-9,4), new(0,14),
+                    new(4,31), new(19,17), new(28,0), new(24,-14), new(10,-26), new(-9,-26) }, Vector2.zero, 1f, 0f, true);
+                Outline(vh, new Vector2[] { new(-10,-19), new(-12,-8), new(0,-12), new(8,0), new(12,-12), new(7,-22) }, Vector2.zero, 1f, 0f, false);
+                break;
+            case Glyph.Resolve:
+                Blade(vh, new Vector2(-25,-25), new Vector2(26,26));
+                for (int i = 0; i < 3; i++)
+                {
+                    float x = -18 + i * 15;
+                    Line(vh, new Vector2(x,25), new Vector2(x+8,25));
+                }
+                break;
+            case Glyph.Heat:
+                Plate(vh, new Vector2(0,-4), new Vector2(52,30), 6);
+                for (int i = -1; i <= 1; i++)
+                {
+                    float x = i * 14;
+                    Line(vh, new Vector2(x,-11), new Vector2(x,3));
+                    Line(vh, new Vector2(x-4,15), new Vector2(x+3,24));
+                }
                 break;
         }
     }

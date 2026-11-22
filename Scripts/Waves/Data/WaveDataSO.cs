@@ -99,6 +99,8 @@ public class Wave
     public Vector2 playerStart;
     [Tooltip("지형 준비가 끝나면 이 Wave 시작 좌표로 이동하며 원본 Spawn 연출을 재생합니다.")]
     public bool teleportAtStart;
+    [Tooltip("직전 전투가 다음 입장 발판 근처에서 끝나도 크레인으로 옮깁니다.")]
+    public bool alwaysCarryToStart;
     public bool overrideCellMap;
     public WaveMapCell[] cells = System.Array.Empty<WaveMapCell>();
     public WaveCellBatch[] cellBatches = System.Array.Empty<WaveCellBatch>();

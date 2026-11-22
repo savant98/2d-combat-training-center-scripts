@@ -164,7 +164,11 @@ public abstract class UpgradeMenuPage : SelectableMenuUI
 
     public void ApplyHint()
     {
-        if (hintText != null && !string.IsNullOrEmpty(hint)) hintText.text = hint;
+        if (hintText == null || string.IsNullOrEmpty(hint)) return;
+        InputBindingHint.Bind(hintText, hint
+            .Replace("방향키", "{MenuDirections}")
+            .Replace(" · Z ", " · {Confirm} ")
+            .Replace(" · X ", " · {Cancel} "));
     }
 
     protected static void SetGroupVisible(CanvasGroup group, bool visible, float duration)

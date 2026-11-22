@@ -85,9 +85,10 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         artHome = art.localPosition;
         var old = art.GetComponent<LobbyBackdropParallax>();
         if (old != null) old.enabled = false;
-        AddLayer("FarStructure", .92f, new Vector2(60, 34));
-        AddLayer("TrainingChambers", .68f, new Vector2(24, 17.5f));
-        AddLayer("RecoveryMachinery", .4f, new Vector2(32, 17.5f));
+        var pattern = art.GetComponent<WaveBackdropPattern>();
+        AddLayer("FarStructure", pattern != null ? pattern.FarFollow : .92f, pattern != null ? pattern.Repeat : new Vector2(60, 34));
+        AddLayer("TrainingChambers", pattern != null ? pattern.FrameFollow : .68f, pattern != null ? pattern.Repeat : new Vector2(24, 17.5f));
+        AddLayer("RecoveryMachinery", pattern != null ? pattern.EquipmentFollow : .4f, pattern != null ? pattern.Repeat : new Vector2(32, 17.5f));
         foreach (var constraint in art.GetComponentsInChildren<PositionConstraint>(true)) constraint.enabled = false;
         foreach (var layer in layers) HideExtensions(layer.original);
         // 실행 중 변형된 제작물 자세·임시 Material을 다음 복제의 원본으로 쓰지 않는다.
@@ -164,7 +165,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         var ambient = copy.GetComponent<Animator>();
         if (ambient != null && ambient.enabled) { module.animator = ambient; module.cullingMode = ambient.cullingMode; }
         if (flow != null && flow.enabled) module.flow = flow;
-        var cables = copy.GetComponent<LobbyCableScroll>();
+        var cables = depth.GetComponent<LobbyCableScroll>();
+        if (cables == null) cables = copy.GetComponent<LobbyCableScroll>();
         if (cables != null && cables.enabled) module.scroll = cables;
         if (shown) { module.shownFrame = Time.frameCount; copy.gameObject.SetActive(true); }
         return module;
@@ -347,16 +349,18 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         if (art != null) art.gameObject.SetActive(visible);
         foreach (var layer in layers) layer.root.gameObject.SetActive(visible);
     }
-    // 작은 이동에서는 기존 레이어별 깊이감을 유지하되 큰 맵에서는 설비가 화면 밖으로 계속 밀려나지 않는다.
-    // 세로 여유는 더 작게 잡아 제작·회수 설비의 높이가 장거리 이동에도 유지되게 한다.
+    // 가까운 이동에는 원래 레이어 가중치를 적용한다. 멀리 이동해도 양축의 시차가 남도록
+    // 일부는 선형으로 유지하고, 나머지는 반복 모듈의 수와 이음새 노출을 줄이도록 완만하게 제한한다.
     private Vector2 Residual(Layer layer, Vector2 delta) => Residual(layer, delta, MeasureViewport());
     private static Vector2 Residual(Layer layer, Vector2 delta, Vector2 extent)
     {
         float rest = Mathf.Clamp01(1f - layer.parallax);
-        Vector2 limit = new Vector2(extent.x * (.1f + .5f * rest), extent.y * (.06f + .3f * rest));
-        return new Vector2(
-            limit.x * (float)System.Math.Tanh(delta.x * rest / limit.x),
-            limit.y * (float)System.Math.Tanh(delta.y * rest / limit.y));
+        Vector2 travel = delta * rest;
+        Vector2 limit = new Vector2(extent.x * (.1f + .5f * rest), extent.y * (.25f + .6f * rest));
+        Vector2 limited = new Vector2(
+            limit.x * (float)System.Math.Tanh(travel.x / limit.x),
+            limit.y * (float)System.Math.Tanh(travel.y / limit.y));
+        return Vector2.Lerp(limited, travel, .35f);
     }
     private Vector2 Follow(Layer layer, Vector2 delta) => delta - Residual(layer, delta);
     private static Vector2 Follow(Layer layer, Vector2 delta, Vector2 extent) => delta - Residual(layer, delta, extent);

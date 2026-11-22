@@ -14,6 +14,9 @@ public abstract class WorldEntityBase : MonoBehaviour
     protected int spawnCount;
     protected bool isReturning = false;
 
+    internal virtual bool PreserveAfterBossDefeat => owner is PlayerController;
+    internal uint PoolLease { get; private set; }
+
     protected virtual void Awake()
     {
         col = GetComponent<Collider2D>();
@@ -21,6 +24,9 @@ public abstract class WorldEntityBase : MonoBehaviour
     public virtual void OnSpawnedFromPool()
     {
         isReturning = false;
+        PoolLease++;
+        owner = null;
+        ownerFaction = Faction.Enemy;
         StopAllCoroutines();
     }
     public virtual void Initialize(CharacterController2D owner, WeaponBaseSO.DamageInfo damageInfo, int count = 0)

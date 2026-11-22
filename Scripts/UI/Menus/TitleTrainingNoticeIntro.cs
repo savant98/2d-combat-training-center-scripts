@@ -147,6 +147,17 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
 
     private void Awake()
     {
+        var phone = phoneCanvas != null ? phoneCanvas.transform.Find("PhoneScreen") : null;
+        InputBindingHint.Bind(phone, "MailReceiveGroup/InputHint", "{Confirm} 키 또는 수신 버튼");
+        InputBindingHint.Bind(phone, "MissedCallGroup/InputHint", "{Confirm} 키 또는 확인 버튼");
+        InputBindingHint.Bind(phone, "NotificationGroup/Description", "{Confirm} 키를 눌러 휴대폰을 확인하세요.");
+        InputBindingHint.Bind(phone, "NoticeGroup/ScrollHint", "{MenuVertical} 스크롤  ·  하단에서 수신 확인");
+        InputBindingHint.Bind(phone, "NoticeGroup/NoticeScroll/Viewport/Content/SignatureSection/SigningHint",
+            "{MenuHorizontal} 선택  /  {Confirm} 확인");
+        var warningDimmer = refusalGroup != null ? refusalGroup.transform.Find("Dimmer") : null;
+        if (warningDimmer != null && !warningDimmer.TryGetComponent<FullViewportDimmer>(out _))
+            warningDimmer.gameObject.AddComponent<FullViewportDimmer>();
+
         // 타이틀의 Update와 Animation Event가 새 연출을 건너뛰지 않게 먼저 진입을 보류한다.
         if (titleIntro != null) titleIntro.SetExternalIntroActive(true);
         if (signButton != null) signButton.onClick.AddListener(SignNotice);
@@ -512,7 +523,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         FinishScreenBlend(missedCallGroup, notificationGroup);
         CurrentStage = IntroStage.WaitingForPhone;
         Play(mailArrivalFeedback != null ? mailArrivalFeedback : notificationFeedback);
-        SetStatus("Z키를 눌러 휴대폰을 확인하세요");
+        SetStatus(InputBindingDisplay.Format("{Confirm} 키를 눌러 휴대폰을 확인하세요"));
         inputGuardUntil = Time.unscaledTime + .2f;
         RefreshControls();
     }

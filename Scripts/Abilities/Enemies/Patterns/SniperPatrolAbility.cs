@@ -211,7 +211,7 @@ public class SniperPatrolAbility : AiAbility
         Vector2 player = target.position;
         Vector2 anchor = player + Vector2.up * AvailableDistance(player, Vector2.up, PatrolData.playerOffset.y);
         float wantedDistance = Mathf.Max(PatrolData.playerOffset.x,
-            Mathf.Abs(transform.position.x - player.x) + PatrolData.playerOffset.x * .5f);
+            Mathf.Abs(transform.position.x - player.x) + PatrolData.retreatExtraDistance);
         float distance = AvailableDistance(anchor, Vector2.right * nextSide, wantedDistance);
         float otherDistance = AvailableDistance(anchor, Vector2.right * -nextSide, wantedDistance);
         Vector2 point = anchor + Vector2.right * (nextSide * distance);

@@ -33,6 +33,10 @@ public class UpgradeMenu : SelectableMenuUI
     // 메뉴를 열면 보이는 무장 개요 페이지. 개요는 이 메뉴를 입력 스택 아래에 둔 채 위에 쌓인다.
     [SerializeField] private ArmamentOverviewPage overviewPage;
 
+    private Transform boardRoot;
+    private RectTransform boardSurface;
+    private Vector3 authoredBoardScale;
+
     private bool CanReceiveInput => IsActive && isActiveAndEnabled
         && (purchaseDialog == null || !purchaseDialog.IsActive)
         && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked
@@ -41,6 +45,12 @@ public class UpgradeMenu : SelectableMenuUI
     protected override void Awake()
     {
         base.Awake();
+        boardRoot = transform.Find("Root");
+        if (boardRoot != null)
+        {
+            authoredBoardScale = boardRoot.localScale;
+            boardSurface = boardRoot.Find("UpgradePanel/HologramBoardStyle/HologramDisplaySurface") as RectTransform;
+        }
         if (purchaseDialog == null) purchaseDialog = GetComponentInChildren<UpgradePurchaseDialog>(true);
         if (buttons == null || buttons.Length == 0)
             Debug.LogError($"[{name}] 선택 대상(MenuFocusAnchor) 연결이 필요합니다. tools/Unity/ArmamentMenuSetup.Run을 실행하세요.", this);
@@ -57,7 +67,7 @@ public class UpgradeMenu : SelectableMenuUI
     {
         if (certificateCountText != null)
         {
-            certificateCountText.text = "x" + DataManager.Instance.TrainingCertificates;
+            certificateCountText.text = $"보유 {DataManager.Instance.TrainingCertificates:N0}개";
         }
     }
 
@@ -82,11 +92,29 @@ public class UpgradeMenu : SelectableMenuUI
         if (certificateIconImage != null && sprite != null) certificateIconImage.sprite = sprite;
         if (certificateNameText != null) certificateNameText.text = TrainingCatalogSO.CertificateName;
     }
+    private void SizeBoardToViewport()
+    {
+        Camera camera = Camera.main;
+        if (boardRoot == null || boardSurface == null || virtualCamera == null || camera == null) return;
+
+        Transform parent = boardRoot.parent;
+        float width = parent.TransformVector(Vector3.right * (authoredBoardScale.x * boardSurface.rect.width)).magnitude;
+        float height = parent.TransformVector(Vector3.up * (authoredBoardScale.y * boardSurface.rect.height)).magnitude;
+        float viewHeight = 2f * virtualCamera.Lens.OrthographicSize;
+        float viewWidth = viewHeight * camera.aspect;
+        if (width <= 0f || height <= 0f || viewWidth <= 0f || viewHeight <= 0f) return;
+
+        float scale = Mathf.Sqrt(.5f * viewWidth * viewHeight / (width * height));
+        scale = Mathf.Min(scale, .82f * viewWidth / width, .88f * viewHeight / height);
+        boardRoot.localScale = new Vector3(authoredBoardScale.x * scale, authoredBoardScale.y * scale, authoredBoardScale.z);
+    }
+
     public void OpenMenu()
     {
         if (IsActive)
             return;
 
+        SizeBoardToViewport();
         animator.SetBool("Open", true);
         virtualCamera.Priority = 999;
         UIManager.Instance.HUDVisible(false);

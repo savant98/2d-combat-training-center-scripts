@@ -1,6 +1,5 @@
 using TMPro;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 /// <summary>
 /// Nightmare 방의 시작 지점 벽면에 흰 발광선으로 그린 좌·우 이동 안내(키캡 두 개와 "이동").
@@ -22,7 +21,7 @@ public sealed class NightmareMoveHint : MonoBehaviour
 
     private static readonly int VisibilityId = Shader.PropertyToID("_Visibility");
     private static readonly string[] MoveParts = { "left", "right" };
-    private static readonly string[] DefaultPaths = { "<Keyboard>/leftArrow", "<Keyboard>/rightArrow" };
+    private static readonly string[] DefaultArrows = { "←", "→" };
 
     private MaterialPropertyBlock block;
     private readonly bool[] usesArrow = { true, true };
@@ -37,6 +36,9 @@ public sealed class NightmareMoveHint : MonoBehaviour
     {
         Apply(0f);
     }
+
+    private void OnEnable() => InputManager.BindingsChanged += RefreshKeys;
+    private void OnDisable() => InputManager.BindingsChanged -= RefreshKeys;
 
     /// <summary>잠시 뒤 서서히 켠다.</summary>
     public void Show()
@@ -63,14 +65,12 @@ public sealed class NightmareMoveHint : MonoBehaviour
     // 이동 키가 기본 방향키면 화살표를, 바꿨으면 그 키의 이름을 보여 준다.
     private void RefreshKeys()
     {
-        InputAction move = InputManager.Instance != null ? InputManager.Instance.Actions.FindAction("Player/Move") : null;
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < MoveParts.Length; i++)
         {
-            int index = OptionMenu.FindBinding(move, MoveParts[i]);
-            bool arrow = index < 0 || string.Equals(move.bindings[index].effectivePath, DefaultPaths[i], System.StringComparison.OrdinalIgnoreCase);
-            usesArrow[i] = arrow;
-            if (!arrow && keyLabels != null && i < keyLabels.Length && keyLabels[i] != null)
-                keyLabels[i].text = move.GetBindingDisplayString(index).ToUpperInvariant();
+            string key = InputBindingDisplay.Get("Move", MoveParts[i]);
+            usesArrow[i] = key == DefaultArrows[i];
+            if (!usesArrow[i] && keyLabels != null && i < keyLabels.Length && keyLabels[i] != null)
+                keyLabels[i].text = key;
         }
     }
 

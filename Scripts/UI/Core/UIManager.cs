@@ -83,53 +83,31 @@ public class UIManager : MonoBehaviour
     public void Update()
     {
         // UI 입력 차단
-        if (IsUIInputBlocked)
+        if (IsUIInputBlocked || InputManager.Instance == null)
             return;
 
-        HandlePauseInput();
-        HandleUIInput();
+        if (!HandleEscapeInput()) HandleUIInput();
     }
-    private void HandlePauseInput()
+
+    private bool HandleEscapeInput()
     {
-        if (!InputManager.Pressed(Button.Escape))
-            return;
+        var current = GetCurrentEntry();
+        if (current == null && (PauseInputBlocked || pauseMenuController == null)) return false;
+        if (!InputManager.Pressed(Button.Escape)) return false;
+        if (IsInputLocked()) return true;
 
-        // 이미 열려 있는 일시정지 메뉴를 닫는 것은 막지 않는다.
-        if (PauseInputBlocked && !HasPauseLayer())
-            return;
-
-        if (IsInputLocked())
-            return;
-
-        UIInputEntry current = GetCurrentEntry();
-
-        // System UI가 최상단이면 Pause 입력을 먹지 않는다.
-        // 예: DeathUI, LoadingUI, 강제 ConfirmPopup 등
-        if (current != null && current.layer == UIInputLayer.System)
-            return;
-
-        // Pause 계층이 이미 열려 있으면,
-        // ESC는 Pause 계층의 최상단 UI를 닫는다.
-        if (HasPauseLayer())
+        // Esc는 현재 최상단 UI 한 곳에만 전달하고, 같은 프레임에 아래 UI로 넘어가지 않는다.
+        if (current != null)
         {
-            UIInputEntry topPause = GetTopEntryOfLayer(UIInputLayer.Pause);
-
-            if (topPause != null)
-            {
-                topPause.receiver.OnCancel();
-                LockInput();
-            }
-
-            return;
+            current.receiver.OnCancel();
+            LockInput();
         }
-
-        // Pause 계층이 없으면,
-        // Gameplay UI가 열려 있어도 그 위에 Pause를 연다.
-        if (pauseMenuController != null)
+        else
         {
             pauseMenuController.Show();
             LockInput();
         }
+        return true;
     }
     private void HandleUIInput()
     {
@@ -147,6 +125,20 @@ public class UIManager : MonoBehaviour
 
         if (!IsInputLocked())
         {
+            if (InputManager.MenuCancelPressed())
+            {
+                receiver.OnCancel();
+                LockInput();
+                lastMoveInput = move;
+                return;
+            }
+            if (InputManager.MenuConfirmPressed())
+            {
+                receiver.OnConfirm();
+                LockInput();
+                lastMoveInput = move;
+                return;
+            }
             if (hasMoveInput)
             {
                 Vector2 moveDir = GetDominantMoveDir(move);
@@ -168,18 +160,6 @@ public class UIManager : MonoBehaviour
             else
             {
                 heldMoveDir = Vector2.zero;
-            }
-
-            if (InputManager.MenuConfirmPressed())
-            {
-                receiver.OnConfirm();
-                LockInput();
-            }
-
-            if (InputManager.MenuCancelPressed())
-            {
-                receiver.OnCancel();
-                LockInput();
             }
         }
         else
@@ -212,23 +192,6 @@ public class UIManager : MonoBehaviour
             return null;
 
         return inputStack[inputStack.Count - 1];
-    }
-
-    private UIInputEntry GetTopEntryOfLayer(UIInputLayer layer)
-    {
-        CleanupInvalidEntries();
-
-        for (int i = inputStack.Count - 1; i >= 0; i--)
-        {
-            if (inputStack[i].layer == layer)
-                return inputStack[i];
-        }
-
-        return null;
-    }
-    private bool HasPauseLayer()
-    {
-        return GetTopEntryOfLayer(UIInputLayer.Pause) != null;
     }
 
     private void CleanupInvalidEntries()

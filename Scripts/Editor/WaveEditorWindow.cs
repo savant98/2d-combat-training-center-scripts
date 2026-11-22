@@ -955,6 +955,8 @@ public sealed class WaveEditorWindow : EditorWindow
             Vector2 nextStart = EditorGUILayout.Vector2Field("Wave 시작 좌표", startOverride.boolValue ? startPoint.vector2Value : data.playerStart);
             if (EditorGUI.EndChangeCheck()) { startOverride.boolValue = true; startPoint.vector2Value = nextStart; }
             Property(wave, "teleportAtStart", "시작 시 텔레포트 · Spawn 연출");
+            if (wave.FindPropertyRelative("teleportAtStart")?.boolValue == true)
+                Property(wave, "alwaysCarryToStart", "시작점 근처에서도 크레인 이동");
             EditorGUILayout.HelpBox("지형 준비 중에는 Player를 구속 상자에 가둬 이동만 막습니다(공격·회복·드론 소환은 계속 쓸 수 있고 진행 중인 무장도 끊기지 않습니다). 체크하면 준비가 끝난 뒤 시작 좌표로 이동하고 기존 Spawn 연출을 재생한 다음 Wave를 시작합니다. 체크하지 않으면 현재 위치를 유지합니다.", MessageType.None);
             GUILayout.Space(6);
             GUILayout.Label("모든 Wave 완료 · Lobby 복귀", EditorStyles.boldLabel);
@@ -977,9 +979,12 @@ public sealed class WaveEditorWindow : EditorWindow
             {
                 Property(tutorial, "title", "설명 제목");
                 Property(tutorial, "description", "설명 / 실습 안내");
+                Property(tutorial, "wallInstructions", "실습 안내를 벽면 패널에 표시");
                 Property(tutorial, "focusEnabled", "포커스 설명 사용");
                 Property(tutorial, "action", "실습 행동");
-                Property(tutorial, "requiredDistance", "이동 실습 거리");
+                var action = (TutorialAction)tutorial.FindPropertyRelative("action").enumValueIndex;
+                if (action == TutorialAction.Move) Property(tutorial, "requiredDistance", "이동 실습 거리");
+                if (action == TutorialAction.Dash) Property(tutorial, "dashCrossingOffset", "대시 도달 거리");
                 var steps = tutorial.FindPropertyRelative("steps");
                 if (steps != null) EditorGUILayout.PropertyField(steps, new GUIContent("포커스 설명 단계"), true);
                 EditorGUILayout.HelpBox("포커스를 끄면 게임을 멈추지 않고 짧은 안내와 실습을 시작합니다. 설명 단계가 비어 있으면 위 제목·설명 한 개를 사용합니다. 단계마다 Player·목표·HUD 또는 격자 영역을 포커스할 수 있습니다. GridArea/Platform의 중심은 생성 기준점 대비 좌표이고 크기는 월드 단위입니다. 설명을 확인하고 실습을 마쳐야 WaveGoal로 완료됩니다.", MessageType.Info);

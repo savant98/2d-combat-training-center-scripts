@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // PlayerHUD 체력 바 바로 위의 해머 방어막 바(2026-11-21 4차, 사용자 요청 "쉴드 값은 playerHUD에 체력부분 위에 쉴드바를 넣어줘. 체력위에 쉴드바가 있는거야").
-// - 값: PlayerWeaponTraits.Barrier / BarrierCapacity(60). 방어막이 없을 때는 충전량(BarrierCharge / 60)을 어두운 칸으로 보인다.
+// - 값: PlayerWeaponTraits.Barrier / BarrierCapacity. 방어막이 없을 때는 충전 비율을 어두운 칸으로 보인다.
 // - 모양(셰이더 UI/PlayerHudShieldBar): 체력 칸과 같은 20° 사선 칸이 체력 칸의 사선을 위로 그대로 잇는다. 체력 첫 칸 위는 비워(SkippedCells)
 //   본 슬롯 조준경과 떨어지고, 칸 15개(한 칸 = 방어막 4)가 체력 칸 2~16번 위에 선다. 칸 높이는 체력 칸의 절반 아래(반높이 5)라 보조 바로 읽힌다.
 //   자리는 메인 판 위 변 안쪽 점선(HUD y -67)과 체력 레일 위 테두리(-85.8) 사이(칸 -72 ~ -82). 메인 판·체력 바와 같은 HUD 단위다.

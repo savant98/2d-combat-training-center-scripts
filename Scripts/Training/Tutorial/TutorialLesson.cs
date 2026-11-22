@@ -3,7 +3,7 @@ using UnityEngine;
 
 public enum TutorialAction
 {
-    None, Move, Jump, DoubleJump, Dash, SwapWeapon, SecondaryWeapon, Shield, Break, Gear, Platforms, Trap
+    None, Move, Jump, DoubleJump, Dash, SwapWeapon, SecondaryWeapon, Shield, Break, Gear, Platforms, Trap, ShieldBreakGear, SkillStorage
 }
 
 public enum TutorialFocusTarget
@@ -31,9 +31,11 @@ public sealed class TutorialLesson
 {
     public bool enabled;
     public bool focusEnabled = true;
+    public bool wallInstructions;
     public string title;
     [TextArea(3, 8)] public string description;
     public TutorialAction action;
     [Min(.1f)] public float requiredDistance = 4f;
+    [Min(0f)] public float dashCrossingOffset;
     public TutorialFocusStep[] steps = Array.Empty<TutorialFocusStep>();
 }

@@ -18,11 +18,21 @@ public class EnemyController : CharacterController2D
     public string DisplayName => !string.IsNullOrWhiteSpace(displayName) ? displayName : name.Replace("(Clone)", string.Empty).Trim();
 
     public EnemyController Poolkey { get; set; }
+
+    // 자율훈련장과 전투 훈련은 외형이 같은 훈련 표적을 공유합니다.
+    public string CodexId => name switch
+    {
+        "SelfTrainingDummy" => "TrainingDummy",
+        "SelfTrainingDummy_Shield" => "TrainingDummy_Shield",
+        _ => name
+    };
     public EnemyHealth Health => enemyHealth;
     public AiBrain Brain => brain;
     [SerializeField, Tooltip("TrainingDummy는 종류와 쉴드 상태에 관계없이 끕니다.")]
     private bool weaponKnockbackEnabled = true;
     public bool CanReceiveWeaponKnockback => weaponKnockbackEnabled && !(enemyHealth is TrainingDummyHealth);
+    [SerializeField, Tooltip("풀에서 다시 등장할 때 첫 렌더링 전에 Animator의 기본 포즈를 복구합니다.")]
+    private bool rebindAnimatorOnSpawn;
     private AnimatorOverrideController animatorOverride;
     // 패턴 Animation 교체용 캐시. Attack0_Windup·Execute·Recover 원본 Clip을 처음 교체할 때 한 번만 이름으로 찾아 둔다.
     private AnimationClip[] attackOriginals;
@@ -297,6 +307,9 @@ public class EnemyController : CharacterController2D
         {
             // 비키 관절도 Prefab 기준으로 돌린 뒤 새 등장 상태를 시작한다.
             trainingDummy.RestoreSpawnPose();
+        }
+        if (rebindAnimatorOnSpawn || enemyHealth is TrainingDummyHealth)
+        {
             animator.Rebind();
             animator.Update(0f);
         }

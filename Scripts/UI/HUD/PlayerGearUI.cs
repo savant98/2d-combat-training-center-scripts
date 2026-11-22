@@ -196,9 +196,14 @@ public class PlayerGearUI : MonoBehaviour
         RotateStageWeaponCircle();
         UpdateWarningBlink();
     }
-    public void SetStageWeaponCooldown(Sprite icon, float remaining, float duration, bool ready)
+    private TMPro.TextMeshProUGUI finisherRequirement;
+
+    public void SetStageWeaponCooldown(Sprite icon, float remaining, float duration, bool ready, int resolveStacks = -1,
+        int resolveRequirement = PlayerWeaponTraits.ResolveCapacity)
     {
         bool hasIcon = icon != null;
+        PlayerHUD.SetResolveRequirement(ref finisherRequirement, stageWeaponIcon?.rectTransform,
+            stageWeaponCooldownText?.font, hasIcon ? resolveStacks : -1, resolveRequirement);
 
         if (stageWeaponIcon != null)
         {

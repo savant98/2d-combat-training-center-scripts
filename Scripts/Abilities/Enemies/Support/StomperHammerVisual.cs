@@ -1,7 +1,8 @@
+using System.Collections.Generic;
 using UnityEngine;
 
-// Animator가 swingProgress를 기록하고, 표시 전용 해머는 손잡이 끝의 고정 월드 축으로 돈다.
-// 적의 이동·충돌·공격 타이밍은 기존 ParabolicDashAbility와 RaycastMotor2D가 그대로 담당한다.
+// Animator가 swingProgress를 기록하고, 해머는 손잡이 끝의 고정 월드 축으로 돈다.
+// 두 포물선 대시에서 해머 머리의 내리치기만 별도 공격 판정을 가진다.
 // Model의 몸통 회전·부모 반전·점프 이동이 별도로 생성한 해머에 전파되지 않는다.
 [DefaultExecutionOrder(-1000)]
 public class StomperHammerVisual : MonoBehaviour
@@ -13,8 +14,11 @@ public class StomperHammerVisual : MonoBehaviour
     [SerializeField] private GameObject visualPrefab;
     [SerializeField] private Transform impactPoint;
 
-    [Header("비공격 표시")]
-    [SerializeField, Range(0f, 1f)] private float visualOpacity = .35f;
+    [Header("공격 외형")]
+    [SerializeField] private Material dangerMaterial;
+    [SerializeField] private Material swingArcMaterial;
+    [SerializeField] private Sprite swingArcSprite;
+    [SerializeField, Range(0f, 1f)] private float visualOpacity = 1f;
     public float VisualOpacity => visualOpacity;
 
     [Header("Animator 구동")]
@@ -25,6 +29,7 @@ public class StomperHammerVisual : MonoBehaviour
     const float HeadHalfWidth = 0.22f;
     const float HeadBottom = 0.72f;
     const float HeadTop = 1f;
+    const float SweepBoxTop = .95f;
     // 원본 Windup의 0→1/3→2/3→1초 박자에 맞춰 낮은 준비 자세→들기→젖힘→타격으로 돈다.
     // swingProgress는 현재 회전 범위(20°~-180°)의 정규화 값이며 원본 관절 값은 복사하지 않는다.
     const float RestAngle = -135f;
@@ -33,8 +38,32 @@ public class StomperHammerVisual : MonoBehaviour
     const float BodySideClearance = 0.175f;
     const float ImpactFadeDuration = 0.5f;
     const float WindupProgressLimit = 0.999f;
+    const float DownswingStart = 2f / 3f;
+    const float MaximumSweepStep = 5f;
+    const float TrailDuration = .2f;
+    const float ArcQuadSize = 14f;
+
+    static readonly int ArcHeadId = Shader.PropertyToID("_Head");
+    static readonly int ArcTailId = Shader.PropertyToID("_Tail");
+    static readonly int ArcAlphaId = Shader.PropertyToID("_Alpha");
+    static readonly int ArcTipScaleId = Shader.PropertyToID("_TipScale");
 
     GameObject detachedVisual;
+    PolygonCollider2D attackHead;
+    LineRenderer dangerOutline;
+    SpriteRenderer swingArc;
+    MaterialPropertyBlock arcProperties;
+    Vector2[] headPath;
+    Vector3[] outlinePositions;
+    LayerMask playerLayer;
+    ContactFilter2D playerFilter;
+    readonly List<Collider2D> headHits = new List<Collider2D>(4);
+    readonly Collider2D[] sweepHits = new Collider2D[8];
+    readonly HashSet<PlayerHealth> playersStruck = new HashSet<PlayerHealth>();
+    readonly List<Vector2> trailSamples = new List<Vector2>(32);
+    float windupStartedAt;
+    float lastAttackAngle;
+    float trailHead;
     StomperHammerAfterimage afterimage;
     bool cycleActive;
     int ownerFacing = 1;
@@ -70,6 +99,9 @@ public class StomperHammerVisual : MonoBehaviour
     public float ImpactTime { get; private set; } = -1f;
     public int CycleCount { get; private set; }
     public StomperHammerAfterimage Afterimage => afterimage;
+    public bool IsHeadAttackActive => attackHead != null && attackHead.enabled && attackHead.gameObject.activeInHierarchy;
+    public bool IsDangerOutlineVisible => dangerOutline != null && dangerOutline.enabled;
+    public bool IsSwingTrailVisible => swingArc != null && swingArc.enabled;
     public bool IsPrimaryVisible => detachedVisual != null && detachedVisual.activeSelf;
     public bool IsVisible => IsPrimaryVisible || (afterimage != null && afterimage.IsVisible);
 
@@ -81,6 +113,13 @@ public class StomperHammerVisual : MonoBehaviour
         this.bodyCollider = bodyCollider;
         this.visualPrefab = visualPrefab;
         this.impactPoint = impactPoint;
+    }
+
+    void Awake()
+    {
+        playerLayer = LayerMask.GetMask("Player");
+        playerFilter.SetLayerMask(playerLayer);
+        playerFilter.useTriggers = true;
     }
 
     void OnEnable()
@@ -113,6 +152,9 @@ public class StomperHammerVisual : MonoBehaviour
             SetVisible(true);
             // 준비 Clip의 끝 키를 먼저 읽어도 실제 접촉은 Execute 첫 프레임에만 일어난다.
             ApplyPose(Mathf.Lerp(RaisedAngle, contactAngle, Mathf.Min(Mathf.Clamp01(swingProgress), WindupProgressLimit)));
+            // 낮게 시작하는 준비 자세도 진행도가 높으므로 실제 내려치기가 시작되는 마지막 1/3만 검사한다.
+            if (Time.time - windupStartedAt >= ability.Data.windupTime * DownswingStart)
+                TickHeadSweep();
         }
         else if (ability.State == AbilityState.Execute && cycleActive)
         {
@@ -124,24 +166,33 @@ public class StomperHammerVisual : MonoBehaviour
                 SetVisible(true);
                 ApplyPose(contactAngle);
                 ImpactGroundGap = GroundGap;
-                // 최종 타격 자세를 그 프레임에 복제한다. 잔상에는 소유자 참조가 없어 점프·Pool 반환과 독립적이다.
-                afterimage = StomperHammerAfterimage.Spawn(detachedVisual.transform, ImpactFadeDuration);
+                TickHeadSweep();
+                SetHeadAttackActive(false);
+                // 잔상에는 피해 판정이 없고, 점프나 Pool 반환과 독립적으로 사라진다.
+                if (CanDisplay())
+                    afterimage = StomperHammerAfterimage.Spawn(detachedVisual.transform, ImpactFadeDuration);
                 SetVisible(false);
             }
         }
-        else EndCycle();
+        else if (!cycleActive || ImpactFrame < 0 || ability.State != AbilityState.Recover) EndCycle();
+        DrawSwingTrail();
         if (cycleActive && impactPoint != null) impactPoint.position = contactPoint;
     }
 
     bool CanDisplay()
     {
         return owner != null && ability != null && bodyCollider != null && visualPrefab != null
-            && owner.gameObject.activeInHierarchy && owner.Brain != null && !owner.Brain.IsPaused;
+            && owner.gameObject.activeInHierarchy && owner.Brain != null && !owner.Brain.IsPaused
+            && owner.Brain.current == ability;
     }
 
     void BeginCycle()
     {
         cycleActive = true;
+        windupStartedAt = Time.time;
+        lastAttackAngle = RaisedAngle;
+        playersStruck.Clear();
+        trailSamples.Clear();
         ownerFacing = owner.Facing >= 0 ? 1 : -1;
         // 원래 점프 방향은 그대로 두고, 해머만 그 반대쪽에서 몸체 옆 지면을 친다.
         strikeSide = -ownerFacing;
@@ -205,6 +256,44 @@ public class StomperHammerVisual : MonoBehaviour
         detachedVisual.name = owner.name + "_StomperHammerVisual";
         detachedVisual.transform.SetParent(null, false);
         detachedVisual.SetActive(false);
+        attackHead = detachedVisual.GetComponent<PolygonCollider2D>();
+        if (attackHead != null)
+        {
+            headPath = attackHead.GetPath(0);
+            outlinePositions = new Vector3[headPath.Length];
+            if (dangerMaterial != null)
+            {
+                var outlineObject = new GameObject(owner.name + "_HammerDanger");
+                dangerOutline = outlineObject.AddComponent<LineRenderer>();
+                dangerOutline.sharedMaterial = dangerMaterial;
+                dangerOutline.loop = true;
+                dangerOutline.positionCount = headPath.Length;
+                dangerOutline.numCornerVertices = 3;
+                dangerOutline.sortingLayerName = "Particle";
+                dangerOutline.sortingOrder = 3;
+                dangerOutline.widthMultiplier = .12f;
+                dangerOutline.enabled = false;
+            }
+        }
+        if (swingArcSprite != null && swingArcMaterial != null)
+        {
+            var trailObject = new GameObject(owner.name + "_HammerSwingArc");
+            swingArc = trailObject.AddComponent<SpriteRenderer>();
+            swingArc.sprite = swingArcSprite;
+            swingArc.sharedMaterial = swingArcMaterial;
+            swingArc.sortingLayerName = "Player";
+            swingArc.sortingOrder = 1;
+            swingArc.enabled = false;
+
+            arcProperties = new MaterialPropertyBlock();
+            arcProperties.SetFloat(Shader.PropertyToID("_Arms"), 1f);
+            arcProperties.SetFloat(Shader.PropertyToID("_QuadSize"), ArcQuadSize);
+            arcProperties.SetFloat(Shader.PropertyToID("_Outer"), Length);
+            arcProperties.SetFloat(Shader.PropertyToID("_HeadWidth"), Length * (HeadTop - HeadBottom));
+            arcProperties.SetFloat(Shader.PropertyToID("_TailWidth"), .06f);
+            arcProperties.SetFloat(Shader.PropertyToID("_RimWidth"), .062f);
+        }
+        if (visualOpacity >= 1f) return;
         // 별도 표시 개체에만 적용한다. Additive 셰이더도 흐려지도록 알파와 발광을 함께 낮춘다.
         foreach (var sprite in detachedVisual.GetComponentsInChildren<SpriteRenderer>(true))
         {
@@ -232,16 +321,110 @@ public class StomperHammerVisual : MonoBehaviour
         MaxPivotDrift = Mathf.Max(MaxPivotDrift, Vector3.Distance(target.position, fixedPivot));
     }
 
+    void TickHeadSweep()
+    {
+        RecordSwingSample(SwingAngle * strikeSide);
+        if (attackHead == null || !owner.CanDealContactDamage || owner.Motor == null
+            || !(ability.Data is ParabolicDashDataSO settings) || settings.hammerDamage <= 0f
+            || owner.ResolveContactDamage(settings.hammerDamage) <= 0f)
+        {
+            SetHeadAttackActive(false);
+            return;
+        }
+
+        SetHeadAttackActive(true);
+        RaycastMotor2D.InvalidateAttackQuerySync();
+        // 가변 프레임 사이에는 머리 곡면에 들어가는 직사각형만 이어서 검사한다.
+        // 현재 자세에서는 실제 다각형을 사용해 붉은 경계에서만 맞는다.
+        int steps = Mathf.CeilToInt(Mathf.Abs(lastAttackAngle - SwingAngle) / MaximumSweepStep);
+        Vector2 sweepSize = new Vector2(HeadHalfWidth * 2f, SweepBoxTop - HeadBottom) * Length;
+        Vector3 localSweepCenter = Vector3.up * ((SweepBoxTop + HeadBottom) * .5f * Length);
+        for (int i = 1; i < steps; i++)
+        {
+            float angle = Mathf.Lerp(lastAttackAngle, SwingAngle, (float)i / steps) * strikeSide;
+            Vector2 center = fixedPivot + Quaternion.Euler(0f, 0f, angle) * localSweepCenter;
+            int count = owner.Motor.OverlapAttackBox(center, sweepSize, angle, sweepHits, playerLayer);
+            for (int hitIndex = 0; hitIndex < count; hitIndex++)
+                ApplyHeadContact(sweepHits[hitIndex], settings.hammerDamage);
+        }
+        owner.Motor.OverlapAttackCollider(attackHead, playerFilter, headHits);
+        foreach (var hit in headHits)
+            ApplyHeadContact(hit, settings.hammerDamage);
+        lastAttackAngle = SwingAngle;
+    }
+
+    void ApplyHeadContact(Collider2D hit, float damage)
+    {
+        if (!CanDisplay() || !owner.CanDealContactDamage) return;
+        var health = hit.GetComponentInParent<PlayerHealth>();
+        if (health != null && playersStruck.Add(health))
+            owner.RequestTouchDamage(health, damage, false);
+    }
+
+    void SetHeadAttackActive(bool active)
+    {
+        if (attackHead != null) attackHead.enabled = active;
+        if (dangerOutline == null) return;
+        dangerOutline.enabled = active;
+        if (!active) return;
+        for (int i = 0; i < headPath.Length; i++)
+            outlinePositions[i] = attackHead.transform.TransformPoint(headPath[i]);
+        dangerOutline.SetPositions(outlinePositions);
+    }
+
+    void RecordSwingSample(float angle)
+    {
+        if (swingArc == null) return;
+        if (trailSamples.Count == 0)
+            trailSamples.Add(new Vector2(windupStartedAt + ability.Data.windupTime * DownswingStart, RaisedAngle * strikeSide));
+        trailHead = angle;
+        trailSamples.Add(new Vector2(Time.time, angle));
+    }
+
+    void DrawSwingTrail()
+    {
+        if (swingArc == null) return;
+        if (trailSamples.Count < 2) { swingArc.enabled = false; return; }
+
+        float tailTime = Time.time - TrailDuration;
+        while (trailSamples.Count > 2 && trailSamples[1].x <= tailTime)
+            trailSamples.RemoveAt(0);
+        Vector2 first = trailSamples[0];
+        Vector2 second = trailSamples[1];
+        float tail = Mathf.Lerp(first.y, second.y, Mathf.InverseLerp(first.x, second.x, tailTime));
+        float alpha = ImpactFrame < 0 ? 1f : 1f - Mathf.Clamp01((Time.time - ImpactTime) / TrailDuration);
+        swingArc.enabled = alpha > 0f && Mathf.Abs(trailHead - tail) >= .5f;
+        if (!swingArc.enabled) return;
+
+        swingArc.transform.position = fixedPivot;
+        swingArc.transform.localScale = new Vector3(ArcQuadSize / swingArcSprite.bounds.size.x,
+            ArcQuadSize / swingArcSprite.bounds.size.y, 1f);
+        arcProperties.SetFloat(ArcHeadId, trailHead);
+        arcProperties.SetFloat(ArcTailId, tail);
+        arcProperties.SetFloat(ArcAlphaId, alpha);
+        arcProperties.SetFloat(ArcTipScaleId, ImpactFrame < 0 ? 1f : 0f);
+        swingArc.SetPropertyBlock(arcProperties);
+    }
+
     void SetVisible(bool visible)
     {
         if (detachedVisual != null && detachedVisual.activeSelf != visible) detachedVisual.SetActive(visible);
     }
 
     void Hide() => SetVisible(false);
-    void EndCycle() { cycleActive = false; Hide(); }
+    void EndCycle()
+    {
+        cycleActive = false;
+        SetHeadAttackActive(false);
+        if (swingArc != null) swingArc.enabled = false;
+        trailSamples.Clear();
+        Hide();
+    }
     void OnDisable() => EndCycle();
     void OnDestroy()
     {
         if (detachedVisual != null) Destroy(detachedVisual);
+        if (dangerOutline != null) Destroy(dangerOutline.gameObject);
+        if (swingArc != null) Destroy(swingArc.gameObject);
     }
 }

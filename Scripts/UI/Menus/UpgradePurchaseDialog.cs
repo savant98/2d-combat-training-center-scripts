@@ -12,6 +12,10 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
     [SerializeField] private TextMeshProUGUI titleText;
     [SerializeField] private TextMeshProUGUI messageText;
     [SerializeField] private TextMeshProUGUI priceText;
+    [SerializeField] private TextMeshProUGUI contextText;
+    [SerializeField] private TextMeshProUGUI certificateOwned;
+    [SerializeField] private TextMeshProUGUI certificateCost;
+    [SerializeField] private TextMeshProUGUI certificateResult;
 
     [Header("Choices")]
     [SerializeField] private RectTransform confirmButton;
@@ -42,6 +46,8 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
             Debug.LogError("업그레이드 확인 창의 표시·선택 참조가 필요합니다.", this);
             return;
         }
+        InputBindingHint.Bind(rootObject.transform, "Window/InputHint", "{MenuDirections} 이동     {Confirm} 확인     {Cancel} 취소");
+        InputBindingHint.Bind(rootObject.transform, "Window/Close/Label", "{Cancel}  닫기");
         confirmHome = confirmButton.anchoredPosition;
         cancelHome = cancelButton.anchoredPosition;
         ConfigureChoices(false);
@@ -55,14 +61,22 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
     public bool ShowConfirmation(string purchaseName, int price, Action onAccepted, Action onCanceled)
     {
         if (!CanShow()) return false;
+        if (price < 0) return ShowWarning("구매 비용을 확인할 수 없습니다.", onCanceled);
+        int owned = DataManager.Instance.TrainingCertificates;
+        if (owned < price) return ShowWarning(CertificateShortage(owned, price), onCanceled);
         accepted = onAccepted;
         canceled = onCanceled;
         warningOnly = false;
         ConfigureChoices(false);
         titleText.text = "업그레이드 구매 확인";
-        messageText.text = purchaseName + "\n구매하시겠습니까?";
-        messageText.color = Color.white;
-        priceText.text = "구매 가격  " + TrainingCatalogSO.CertificateName + " " + price.ToString("N0") + "개";
+        messageText.text = purchaseName;
+        messageText.color = new Color32(211, 235, 242, 255);
+        if (contextText != null)
+        {
+            contextText.text = TrainingCatalogSO.CertificateName;
+            contextText.gameObject.SetActive(true);
+        }
+        UpdateQuote(owned, price);
         ApplyCertificateIcon();
         priceText.gameObject.SetActive(true);
         SetAccents(normalTint);
@@ -81,6 +95,7 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
         titleText.text = title;
         messageText.text = message;
         messageText.color = warningTint;
+        if (contextText != null) contextText.gameObject.SetActive(false);
         priceText.gameObject.SetActive(false);
         SetAccents(warningTint);
         ShowVisual();
@@ -98,9 +113,9 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
         cancelButton.anchoredPosition = cancelHome;
         confirmButton.localScale = cancelButton.localScale = Vector3.one;
         cancelButton.gameObject.SetActive(!warning);
-        confirmLabel.text = warning ? "확인" : "예";
-        cancelLabel.text = "아니오";
-        // 왼쪽 아니오가 기본 선택이다. 경고에서는 남은 확인 버튼만 선택 대상으로 삼는다.
+        confirmLabel.text = warning ? "확인" : "구매";
+        cancelLabel.text = "취소";
+        // 구매는 취소를 기본 선택으로 두고 경고는 확인으로 닫는다.
         buttons = warning ? new[] { confirmButton } : new[] { cancelButton, confirmButton };
         images = warning ? new[] { confirmHighlight } : new[] { cancelHighlight, confirmHighlight };
         texts = warning ? new[] { confirmLabel } : new[] { cancelLabel, confirmLabel };
@@ -114,6 +129,27 @@ public sealed class UpgradePurchaseDialog : SelectableMenuUI
         Transform slot = icon != null ? priceText.transform.Find("CurrencyIcon") : null;
         if (slot != null && slot.TryGetComponent(out UnityEngine.UI.Image image)) image.sprite = icon;
     }
+
+    public static string CertificateShortage(int owned, int price) =>
+        $"{TrainingCatalogSO.CertificateName}이 {Mathf.Max(0, price - owned):N0}개 부족합니다.\n보유 {owned:N0}개  ·  필요 {price:N0}개";
+
+    private void UpdateQuote(int owned, int price)
+    {
+        int remaining = owned - price;
+        if (certificateOwned == null || certificateCost == null || certificateResult == null)
+        {
+            priceText.text = $"{TrainingCatalogSO.CertificateName}  ·  보유 {owned:N0}개  ·  비용 {price:N0}개  ·  구매 후 {remaining:N0}개";
+            return;
+        }
+
+        priceText.text = string.Empty;
+        certificateOwned.text = Metric("보유", owned);
+        certificateCost.text = Metric("비용", price);
+        certificateResult.text = Metric("구매 후", remaining);
+    }
+
+    private static string Metric(string label, int value) =>
+        $"<size=17><color=#9BBCC9>{label}</color></size>\n{value:N0}개";
 
     private void SetAccents(Color color)
     {

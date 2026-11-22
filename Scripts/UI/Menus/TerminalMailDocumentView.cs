@@ -19,6 +19,8 @@ public sealed class TerminalMailDocumentView : MonoBehaviour
     public float WidthRatio => widthRatio;
     private void OnEnable()
     {
+        InputBindingHint.Bind(transform, "DocumentHint", fitWholeForm
+            ? "{Cancel}  닫기" : "{MenuVertical} · 휠  문서 읽기     {Cancel}  닫기");
         frame = (RectTransform)transform;
         var canvas = GetComponentInParent<Canvas>();
         canvasRect = canvas != null ? (RectTransform)canvas.rootCanvas.transform : null;

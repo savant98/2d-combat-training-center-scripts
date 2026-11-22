@@ -53,9 +53,12 @@ public sealed class IncendiaryShot : StarShot
         if (health is not EnemyHealth enemy || !targets.Add(enemy)) return;
         // 이 탄이 닿기 전(그리고 기본 피해로 죽어 스택이 지워지기 전)의 스택으로 판정한다.
         int stacks = StacksBeforeThisShot(enemy);
-        if (!WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint)) return;
+        bool directHit = WeaponTraitEffects.ApplyEnemyHit(enemy, damageInfo, hitPoint);
+        // 화상 중인 브레이크 가능 대상에게는 일반 피해가 막혀도 폭발을 발동한다.
+        bool canBlast = directHit || (enemy.enemyShieldSystem?.IsBreakable == true && !enemy.IsDamageBlocked);
+        if (stacks >= 1 && ownerFaction == Faction.Player && canBlast) Blast(enemy, hitPoint);
+        if (!directHit) return;
 
-        if (stacks >= 1 && ownerFaction == Faction.Player) Blast(enemy, hitPoint);
         Burn(enemy);
         OnHitEnemy?.Invoke(owner, hitPoint);
         WeaponTraitFeedbackSO.Play(WeaponTraitCue.IncendiaryHit, hitPoint, velocity);
@@ -76,6 +79,7 @@ public sealed class IncendiaryShot : StarShot
         float radius = BlastRadius;
         var blast = damageInfo;
         blast.damage *= weapon != null ? weapon.blastDamageScale : 1f;
+        blast.damageType = DamageType.Skill;
         blast.knockbackFacing = 0;
         blast.knockbackOrigin = center;
 
