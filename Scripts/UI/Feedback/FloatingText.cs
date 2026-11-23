@@ -25,6 +25,8 @@ public class FloatingText : MonoBehaviour
         public Color topColor;
         public Color bottomColor;
     }
+    private Vector2 textOrigin;
+    private float inkCenterX, inkTop, inkBottom;
     private Sequence seq;
     // 표시가 끝나면 풀로 돌려보내는 콜백. 피격마다 람다를 새로 만들지 않도록 Awake에서 한 번만 만든다.
     private TweenCallback returnToPool;
@@ -34,6 +36,7 @@ public class FloatingText : MonoBehaviour
         rect = GetComponent<RectTransform>();
         txt = GetComponentInChildren<TextMeshProUGUI>();
         group = GetComponent<CanvasGroup>();
+        textOrigin = txt.rectTransform.anchoredPosition;
         returnToPool = ReturnToPool;
     }
 
@@ -48,6 +51,7 @@ public class FloatingText : MonoBehaviour
 
         // 초기 투명도와 스케일
         txt.alpha = 1f;
+        txt.rectTransform.anchoredPosition = textOrigin;
         transform.localScale = Vector3.one;
 
         // Vertical Gradient 초기 설정
@@ -68,9 +72,10 @@ public class FloatingText : MonoBehaviour
         seq = DOTween.Sequence();
 
         // 스폰 시 Scale Punch
-        seq.Append(transform.DOPunchScale(damageInfo.damageType == DamageType.Normal 
-            ? punchScale * Vector3.one 
-            : 2f * punchScale * Vector3.one, punchDuration).SetEase(Ease.OutQuad));
+        float punch = damageInfo.damageType == DamageType.Normal ? punchScale : 2f * punchScale;
+        if (damageInfo.popupGroup != 0 && !damageInfo.popupAnchorOnly)
+            punch = Mathf.Min(punch, .15f);
+        seq.Append(transform.DOPunchScale(punch * Vector3.one, punchDuration).SetEase(Ease.OutQuad));
 
         // 위로 이동
         seq.Append(transform.DOMoveY(transform.position.y + moveUpDistance, lifeTime)
@@ -80,6 +85,41 @@ public class FloatingText : MonoBehaviour
         seq.Join(txt.DOFade(0f, lifeTime));
 
         seq.OnComplete(returnToPool);
+    }
+
+    internal void MeasureStackInk()
+    {
+        txt.ForceMeshUpdate();
+        inkCenterX = txt.textBounds.center.x;
+        inkBottom = float.PositiveInfinity;
+        inkTop = float.NegativeInfinity;
+        for (int i = 0; i < txt.textInfo.characterCount; i++)
+        {
+            var character = txt.textInfo.characterInfo[i];
+            if (!character.isVisible) continue;
+
+            var metrics = character.textElement.glyph.metrics;
+            float top = character.baseLine + metrics.horizontalBearingY * character.scale;
+            inkTop = Mathf.Max(inkTop, top);
+            inkBottom = Mathf.Min(inkBottom, top - metrics.height * character.scale);
+        }
+        if (inkBottom > inkTop) inkBottom = inkTop = 0f;
+    }
+
+    internal float StackRise => rect.TransformVector(txt.rectTransform.anchoredPosition - textOrigin).y;
+
+    internal void PlaceAbove(FloatingText previous)
+    {
+        var previousRect = previous.txt.rectTransform;
+        var currentRect = txt.rectTransform;
+        var previousTop = previousRect.TransformPoint(previous.inkCenterX, previous.inkTop, 0f);
+        var currentBottom = currentRect.TransformPoint(inkCenterX, inkBottom, 0f);
+
+        // 실제 두 숫자 중 작은 쪽 높이의 10%만 겹쳐 촘촘하게 쌓는다.
+        float previousHeight = previousRect.TransformVector(0f, previous.inkTop - previous.inkBottom, 0f).y;
+        float currentHeight = currentRect.TransformVector(0f, inkTop - inkBottom, 0f).y;
+        float overlap = .1f * Mathf.Min(previousHeight, currentHeight);
+        currentRect.position += previousTop - currentBottom - Vector3.up * overlap;
     }
 
     // 기존에는 끝나면 비활성화만 하고 풀에 돌려보내지 않아(Return 호출처 0곳) 풀 20개를 다 쓴 뒤

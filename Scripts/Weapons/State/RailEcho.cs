@@ -15,6 +15,7 @@ public sealed class RailEchoRequest
     public RailgunWeaponSO rail;
     public RailEchoKind kind;
     public RailEchoShot prefab;
+    public SoundOptions fireSound;
     public WeaponBaseSO.DamageInfo damage;
     public int count;
     public float interval;
@@ -51,7 +52,7 @@ public sealed class RailEchoRequest
 //   Player 둘레의 자리(RailEchoShot.slots — 몸 위쪽·아래쪽 바깥)에 작은 소환 문양이 나타나 목표를 겨눈다. 시간차라 한 발씩 따로 보인다.
 // - 목표: 본 공격이 맞힌 적 → (사라졌으면) 조준 방향의 가장 가까운 적 → (없으면) 본 공격 끝점. 자리마다 쏘는 방향이 달라 목표로 모여든다.
 // - 멈춤: Player가 꺼지거나 쓰러지거나 무장 특성이 초기화되면(PlayerWeaponTraits.Generation), 기본 사격 추가타는 과열 잠금이 걸리면,
-//   파괴 광선 추가타는 본 레이저가 꺼지면 아직 쏘지 않은 발을 버린다. 무장을 바꿔도(레일건을 내려놓아도) 이미 시작한 추가타는 끝까지 쏜다 —
+//   파괴 광선 추가타는 본 레이저를 중단하면 예약된 발을 버린다. 정상 종료 직전에 예약된 발은 마저 쏜다. 무장을 바꿔도(레일건을 내려놓아도) 이미 시작한 추가타는 끝까지 쏜다 —
 //   총구가 아니라 Player 둘레에서 나가고, 본 공격 때 이미 정해진 몫이기 때문이다(판단값).
 // - 시간은 Time.deltaTime이라 히트스톱 때 함께 멈춘다. 기술 게이지(OnHitEnemy)·넉백은 주지 않는다.
 // 판정 공용 함수 Cast: 벽은 모터의 RaycastEnvironment, 적은 모터의 OverlapAttackBox(물리 판정 규칙). 목표 찾기도 모터의 OverlapAttackBox·OverlapAttackCircle.
@@ -73,6 +74,16 @@ public static class RailEcho
         var traits = request.owner.AbilityManager?.AttackAbility?.Traits;
         if (traits == null) return 0;
         if (request.kind == RailEchoKind.Spear && (request.spearPrefab == null || request.spearWeapon == null)) return 0;
+        if (request.damage.popupGroup == 0) request.damage.popupGroup = WeaponBaseSO.NewPopupGroup();
+        request.damage.popupAnchorOnly = false;
+        if (request.fireSound?.clip != null)
+        {
+            request.fireSound = request.fireSound.WithPitchMultiplier(1.2f);
+            // 본타와 같은 클립을 짧게 연달아 쓰므로 추가타에만 중복 제한을 완화한다.
+            request.fireSound.minInterval = 0f;
+            int voices = request.kind == RailEchoKind.Laser ? 24 : 16;
+            request.fireSound.maxSimultaneous = Mathf.Max(request.fireSound.maxSimultaneous, voices);
+        }
         request.facing = request.facing < 0f ? -1f : 1f;
         float interval = Mathf.Max(0.01f, request.interval);
         for (int k = 0; k < request.count; k++)

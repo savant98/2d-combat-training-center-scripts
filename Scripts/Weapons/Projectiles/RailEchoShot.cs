@@ -404,7 +404,8 @@ public sealed class RailEchoShot : WorldEntityBase
                 request.damage, out length, out blocked);
             EmitSparks();
         }
-        WeaponTraitFeedbackSO.Play(kind == RailEchoKind.Laser ? WeaponTraitCue.RailCross : WeaponTraitCue.RailEcho, emitter, direction);
+        WeaponTraitFeedbackSO.Play(kind == RailEchoKind.Laser ? WeaponTraitCue.RailCross : WeaponTraitCue.RailEcho,
+            emitter, direction, soundOverride: request.fireSound);
         if (kind == RailEchoKind.Rail && request.rail != null) request.rail.RecordEcho(emitter, direction, HitCount);
         var aim = RailgunWeaponSO.FindAim(player);
         if (aim != null && aim.isActiveAndEnabled) aim.Barrel.Echo();   // 총 코일도 분홍으로 번쩍(충전에서 나온 추가타임을 잇는다)

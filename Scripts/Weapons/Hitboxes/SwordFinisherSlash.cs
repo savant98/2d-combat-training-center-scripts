@@ -8,6 +8,9 @@ using UnityEngine;
 // 풀 반환·비활성·중단 시 화면 분할과 자신이 소유한 정지를 해제한다.
 public class SwordFinisherSlash : WorldEntityBase
 {
+    public const int HitCount = 8;
+    private const float HitInterval = .055f;
+
     private static readonly int RectId = Shader.PropertyToID("_Rect");
     private static readonly int SpanId = Shader.PropertyToID("_Span");
     private static readonly int FullSpanId = Shader.PropertyToID("_FullSpan");
@@ -65,6 +68,8 @@ public class SwordFinisherSlash : WorldEntityBase
     {
         public EnemyHealth health;
         public Collider2D body;
+        public uint lifeVersion;
+        public bool struck;
     }
 
     private readonly List<Target> targets = new();
@@ -81,12 +86,14 @@ public class SwordFinisherSlash : WorldEntityBase
     private int cinematicGeneration;
     private int facing = 1, beginFrame, rewardedHits = int.MaxValue, rewarded, struck;
     private float lineStart, length, head, clock;
+    private int strikes;
     private bool running, drawn, cracked, splitStarted, splitEnded, cut, cancelled;
 
     public bool IsRunning => running && !isReturning;
     public bool IsDrawn => drawn;
     public bool IsCracked => cracked;
     public bool IsCut => cut;
+    public bool IsStrikeComplete => strikes == HitCount;
     public bool WasCancelled => cancelled;
     public bool IsSplitting => splitStarted && !splitEnded;
 
@@ -138,7 +145,7 @@ public class SwordFinisherSlash : WorldEntityBase
         running = drawn = cracked = splitStarted = splitEnded = cut = cancelled = false;
         lineStart = length = head = clock = 0f;
         rewardedHits = int.MaxValue;
-        rewarded = struck = 0;
+        rewarded = struck = strikes = 0;
         hitRect = default;
         if (trail != null) trail.enabled = false;
     }
@@ -219,18 +226,18 @@ public class SwordFinisherSlash : WorldEntityBase
         if (!IsRunning) return;
         var cinematic = SwordFinisherCinematic.For(owner);
         bool ownsCinematic = cinematic != null && cinematic.IsRunning && cinematic.Generation == cinematicGeneration;
-        if (!cut && (!IsAttackAlive() || !ownsCinematic))
+        if (!IsStrikeComplete && (!IsAttackAlive() || !ownsCinematic))
         {
             cancelled = true;
             ForceReturnToPool();
             return;
         }
-        if (cut && cinematic != null && cinematic.IsRunning && !ownsCinematic)
+        if (IsStrikeComplete && cinematic != null && cinematic.IsRunning && !ownsCinematic)
         {
             ForceReturnToPool();
             return;
         }
-        if (Time.frameCount != beginFrame && !SwordFinisherCinematic.MenuBlocked && (!cut || Time.timeScale > 0f))
+        if (Time.frameCount != beginFrame && !SwordFinisherCinematic.MenuBlocked && (ownsCinematic || Time.timeScale > 0f))
             clock += Time.unscaledDeltaTime;
 
         if (!drawn)
@@ -249,8 +256,10 @@ public class SwordFinisherSlash : WorldEntityBase
         if (!cut)
         {
             if (cracked) cinematic.SetCrackProgress(Mathf.InverseLerp(crackDelay, cutDelay, clock));
-            if (clock >= cutDelay) BreakGlassAndStrike();
+            if (clock >= cutDelay) BreakGlass();
         }
+
+        if (cut && !IsStrikeComplete) ApplyStrikes();
 
         if (IsSplitting)
         {
@@ -259,7 +268,7 @@ public class SwordFinisherSlash : WorldEntityBase
             else
                 ScreenSplitRenderer.UpdateState(this, SplitState());
         }
-        if (cut && clock >= cutDelay + lifeAfterCut)
+        if (IsStrikeComplete && clock >= cutDelay + lifeAfterCut)
         {
             ForceReturnToPool();
             return;
@@ -267,7 +276,7 @@ public class SwordFinisherSlash : WorldEntityBase
         Apply();
     }
 
-    private void BreakGlassAndStrike()
+    private void BreakGlass()
     {
         cut = true;
         head = length;
@@ -278,8 +287,34 @@ public class SwordFinisherSlash : WorldEntityBase
         }
         PlayFeedback(impactFeedback, OwnerPosition());
         Collect();
-        foreach (var target in targets) Strike(target);
-        SwordFinisherCinematic.End(owner, cinematicGeneration);
+    }
+
+    private void ApplyStrikes()
+    {
+        while (!IsStrikeComplete && clock >= cutDelay + strikes * HitInterval)
+        {
+            var hit = damageInfo;
+            // 누적 피해를 정수 경계에서 나눠 표시된 피해 합도 기존 총피해와 맞춘다.
+            float perHit = damageInfo.damage / HitCount;
+            float before = perHit * strikes;
+            float after = strikes + 1 == HitCount ? damageInfo.damage : perHit * (strikes + 1);
+            if (perHit >= 1f)
+            {
+                before = Mathf.Round(before);
+                if (strikes + 1 < HitCount) after = Mathf.Round(after);
+            }
+            hit.damage = after - before;
+
+            for (int i = 0; i < targets.Count; i++)
+            {
+                Strike(i, hit);
+                if (!IsRunning) return;
+            }
+
+            strikes++;
+        }
+
+        if (IsStrikeComplete) SwordFinisherCinematic.End(owner, cinematicGeneration);
     }
 
     private float SplitAmount()
@@ -373,7 +408,7 @@ public class SwordFinisherSlash : WorldEntityBase
             overlapResults[i] = null;
             if (hit == null) continue;
             if (hit.GetComponentInParent<HealthBase>() is not EnemyHealth enemy || !seen.Add(enemy)) continue;
-            targets.Add(new Target { health = enemy, body = hit });
+            targets.Add(new Target { health = enemy, body = hit, lifeVersion = enemy.LifeVersion });
         }
     }
 
@@ -382,20 +417,27 @@ public class SwordFinisherSlash : WorldEntityBase
         return owner != null && owner.gameObject.activeInHierarchy ? owner.transform.position : transform.position;
     }
 
-    private static void PlayFeedback(FeedbackDataSO feedback, Vector3 position)
+    private void PlayFeedback(FeedbackDataSO feedback, Vector3 position)
     {
-        if (feedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(feedback, position);
+        if (feedback != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(feedback, position, owner);
     }
 
-    private void Strike(Target target)
+    private void Strike(int index, WeaponBaseSO.DamageInfo hit)
     {
+        var target = targets[index];
         EnemyHealth enemy = target.health;
-        if (enemy == null || !enemy.isActiveAndEnabled || enemy.currentHP <= 0f) return;   // 그사이 쓰러졌다
+        if (enemy == null || enemy.LifeVersion != target.lifeVersion || !enemy.isActiveAndEnabled || enemy.currentHP <= 0f) return;   // 그사이 쓰러졌다
         // 피해가 막힌 적(무적·등장 잠금)은 피해·게이지 보상·적중 효과를 모두 건너뛴다. 무적 적으로 게이지를 되찾지 않게 한다.
         if (enemy.IsDamageBlocked || (enemy.enemyShieldSystem != null && enemy.enemyShieldSystem.IsSpawnLocked)) return;
         Vector2 point = HitPoint(target);
-        if (enemy.enemyShieldSystem == null) enemy.TakeDamage(damageInfo, point);
-        else enemy.enemyShieldSystem.TakeDamage(damageInfo, point);
+        if (target.struck) hit.knockbackFacing = 0;
+        if (enemy.enemyShieldSystem == null) enemy.TakeDamage(hit, point);
+        else enemy.enemyShieldSystem.TakeDamage(hit, point);
+        if (!IsRunning) return;
+        PlayFeedback(hitFeedback, point);
+        if (target.struck) return;
+        target.struck = true;
+        targets[index] = target;
         struck++;
         // 게이지 보상은 한 번 쓸 때 rewardedHits명까지만(적 수만큼 쌓여 비용이 다 돌아오지 않게)
         if (rewarded < rewardedHits)
@@ -403,7 +445,6 @@ public class SwordFinisherSlash : WorldEntityBase
             rewarded++;
             onHitEnemy?.Invoke(owner, point);
         }
-        PlayFeedback(hitFeedback, point);
     }
 
     // 맞은 자리: 적의 몸 가운데를 판정 사각형(화면) 안으로 당긴 점(화면에 걸친 큰 적도 화면 안에서 이펙트가 난다)
@@ -440,7 +481,7 @@ public class SwordFinisherSlash : WorldEntityBase
     {
         running = false;
         EndSplit();
-        if (!cut) SwordFinisherCinematic.End(owner, cinematicGeneration);
+        if (!IsStrikeComplete) SwordFinisherCinematic.End(owner, cinematicGeneration);
         base.ForceReturnToPool();
     }
 
@@ -448,7 +489,7 @@ public class SwordFinisherSlash : WorldEntityBase
     {
         running = false;
         EndSplit();
-        if (!cut) SwordFinisherCinematic.End(owner, cinematicGeneration);
+        if (!IsStrikeComplete) SwordFinisherCinematic.End(owner, cinematicGeneration);
         targets.Clear();
         seen.Clear();
     }

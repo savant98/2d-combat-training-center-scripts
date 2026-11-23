@@ -275,7 +275,8 @@ public sealed class SwordWave : WorldEntityBase
             float r = arcR - w * 0.5f;
             var local = new Vector2(-arcR + r * Mathf.Cos(theta), r * Mathf.Sin(theta));
             var size = new Vector2(distance + w + 0.3f * scale, spacing * 1.2f);
-            int count = player.Motor.OverlapAttackBox(center + ToWorld(local), size, angle, overlaps, damageMask);
+            Vector2 sliceCenter = center + ToWorld(local);
+            int count = player.Motor.OverlapAttackBox(sliceCenter, size, angle, overlaps, damageMask);
             for (int c = 0; c < count; c++)
             {
                 var collider = overlaps[c];
@@ -283,15 +284,16 @@ public sealed class SwordWave : WorldEntityBase
                 if (!SameLife || collider == null) continue;
                 var enemy = collider.GetComponentInParent<EnemyHealth>();
                 if (enemy != null && (!targets.TryGetValue(enemy, out uint previousLife) || previousLife != enemy.LifeVersion))
-                    StartCoroutine(Strike(enemy, collider, enemy.LifeVersion));
+                    StartCoroutine(Strike(enemy, collider, enemy.LifeVersion, collider.ClosestPoint(sliceCenter)));
             }
         }
     }
 
-    private IEnumerator Strike(EnemyHealth enemy, Collider2D body, uint targetLife)
+    private IEnumerator Strike(EnemyHealth enemy, Collider2D body, uint targetLife, Vector2 popupContact)
     {
         Vector2 point = HitPoint(enemy, body);
         var first = damageInfo;
+        first.popupPathPoint = popupContact;
         first.knockbackFacing = facing;
         first.knockbackOrigin = point - new Vector2(facing * 2f, 0f);
         if (!WeaponTraitEffects.ApplyEnemyHit(enemy, first, point) || !SameLife) yield break;
@@ -304,11 +306,11 @@ public sealed class SwordWave : WorldEntityBase
         }
         onHit?.Invoke(player, point);
         var cue = empowered ? WeaponTraitCue.SwordWaveHeavyHit : WeaponTraitCue.SwordWaveHit;
-        WeaponTraitFeedbackSO.Play(cue, point, direction);
+        PlayStackedHit(cue, popupContact, enemy, targetLife);
 
         // 거리·겹침을 다시 검사하지 않는다. 풀에서 재사용된 적은 이전 타격을 이어받지 않는다.
         activeSequences++;
-        var followUp = damageInfo;
+        var followUp = first;
         followUp.knockbackFacing = 0;
         var delay = new WaitForSeconds(hitInterval);
         int total = HitsPerTarget;
@@ -319,9 +321,15 @@ public sealed class SwordWave : WorldEntityBase
                 break;
             point = HitPoint(enemy, body);
             if (WeaponTraitEffects.ApplyEnemyHit(enemy, followUp, point))
-                WeaponTraitFeedbackSO.Play(cue, point, direction);
+                PlayStackedHit(cue, popupContact, enemy, targetLife);
         }
         activeSequences--;
+    }
+
+    private void PlayStackedHit(WeaponTraitCue cue, Vector2 contact, EnemyHealth enemy, uint targetLife)
+    {
+        float rise = FloatingTextManager.Instance?.GetStackRise(damageInfo.popupGroup, enemy, targetLife) ?? 0f;
+        WeaponTraitFeedbackSO.Play(cue, contact + Vector2.up * rise, direction);
     }
 
     // 맞은 자리: 적의 몸에서 검기 앞점에 가장 가까운 점(적이 밀려나도 몸을 따라간다)

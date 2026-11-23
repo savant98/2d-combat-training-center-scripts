@@ -16,6 +16,7 @@ public abstract class WorldEntityBase : MonoBehaviour
 
     internal virtual bool PreserveAfterBossDefeat => owner is PlayerController;
     internal uint PoolLease { get; private set; }
+    internal bool IsOwnedBy(CharacterController2D actor) => owner == actor;
 
     protected virtual void Awake()
     {
@@ -58,7 +59,7 @@ public abstract class WorldEntityBase : MonoBehaviour
         }
 
         Vector3 pos = transform.position + offset;
-        FeedbackPlayer.Instance.PlayExact(launchFeedbackData, pos, transform.rotation);
+        FeedbackPlayer.Instance.PlayExact(launchFeedbackData, pos, transform.rotation, owner);
 
         transform.position += offset;
     }

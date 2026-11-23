@@ -114,6 +114,7 @@ public sealed class SwordWaveWeaponSO : WeaponBaseSO
         if (wave != null)
         {
             var info = WithSource(damageInfo, player);
+            info.popupGroup = NewPopupGroup();
             if (empowered) info.damage *= empoweredDamageMultiplier;
             info.knockbackOrigin = center;
             info.knockbackFacing = facing;

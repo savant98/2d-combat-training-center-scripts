@@ -1677,7 +1677,7 @@ public class PlayerWeaponAbility : PlayerAbility
             if (run != attackRun || !IsActive) yield break;
             elapsed += SwordFinisherCinematic.DeltaFor(controller);
         }
-        feedbackPlayer.Play(feedback, transform);
+        feedbackPlayer.Play(feedback, transform, controller);
     }
     private void StartExecute()
     {
@@ -1690,12 +1690,13 @@ public class PlayerWeaponAbility : PlayerAbility
             // 한 단계에서 판정이 여러 번 열리는 무기(이도류 칼)는 그 단계의 판정을 모두 준비한다. 여닫는 시각은 실행 Clip이 정한다.
             var boxes = GetHitBoxes(melee);
             int hits = Mathf.Max(1, melee.hitsPerStep);
+            int popupGroup = melee.weaponName == swordWeaponName && hits > 1 ? WeaponBaseSO.NewPopupGroup() : 0;
             for (int h = 0; h < hits; h++)
             {
                 // 묶음이 단계 × hitsPerStep보다 모자라면(데이터가 어긋난 경우) 없는 판정은 건너뛴다.
                 int index = meleeComboIndex * hits + h;
                 if (boxes != null && index < boxes.Length && boxes[index] != null)
-                    melee.BindMeleeHitboxes(boxes[index], controller, meleeComboIndex);
+                    melee.BindMeleeHitboxes(boxes[index], controller, meleeComboIndex, popupGroup);
             }
         }
         else
@@ -1721,7 +1722,7 @@ public class PlayerWeaponAbility : PlayerAbility
         {
             offset.x *= -1f;
         }
-        feedbackPlayer.PlayExact(executeFeedback, transform.position + offset, feedbackRotation);
+        feedbackPlayer.PlayExact(executeFeedback, transform.position + offset, feedbackRotation, controller);
     }
 
     private void StartRecover()

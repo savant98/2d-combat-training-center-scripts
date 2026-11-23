@@ -53,7 +53,9 @@ public class SwordDashWeaponSO : WeaponBaseSO
         Vector3 start = controller.transform.position;
         SwordDashSlash slash = WorldEntityPool.Instance.Spawn(slashPrefab, start, Quaternion.identity);
         slash.SetHit(hitFeedback, finalHitFeedback, sheatheFeedback, cutFeedback, (owner, point) => OnHitEnemy?.Invoke(owner, point));
-        slash.Initialize(controller, WithSource(damageInfo));   // 밀리는 방향은 돌진을 시작한 자리와 방향을 기준으로 한다
+        var info = WithSource(damageInfo);
+        info.popupGroup = NewPopupGroup();
+        slash.Initialize(controller, info);   // 밀리는 방향은 돌진을 시작한 자리와 방향을 기준으로 한다
         slash.Begin(facing, dashDistance);
 
         // 공격이 끊기면(피격·잡기) 이 코루틴들은 StopAllCoroutines로 멈춘다. 그때 외부 힘 무시는 PlayerWeaponAbility.Interrupt가 되돌리고,

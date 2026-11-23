@@ -21,12 +21,14 @@ public class MeleeWeaponSO : WeaponBaseSO
     {
         yield return null;
     }
-    public void BindMeleeHitboxes(MeleeHitbox meleeHitbox, CharacterController2D controller, int currentComboIndex)
+    public void BindMeleeHitboxes(MeleeHitbox meleeHitbox, CharacterController2D controller, int currentComboIndex, int popupGroup = 0)
     {
         // 현재 콤보 스텝
 
         MeleeComboStep step = comboSteps[currentComboIndex];
-        meleeHitbox.Initialize(controller, WithSource(step.damageInfo, controller));
+        var info = WithSource(step.damageInfo, controller);
+        info.popupGroup = popupGroup;
+        meleeHitbox.Initialize(controller, info);
         meleeHitbox.SetHitFeedback(step.hitFeedbackData, (owner, hitPoint) => OnHitEnemy?.Invoke(owner, hitPoint));
     }
 }

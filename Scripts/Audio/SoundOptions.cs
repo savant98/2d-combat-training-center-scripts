@@ -26,4 +26,13 @@ public class SoundOptions
     public float minInterval = 0.03f;
     public int maxSimultaneous = 5;
     [Range(0f, 1f)] public float crowdedVolumeMultiplier = 0.7f;
+
+    internal SoundOptions WithPitchMultiplier(float multiplier)
+    {
+        var copy = (SoundOptions)MemberwiseClone();
+        copy.pitch = Mathf.Clamp(pitch * multiplier, .1f, 3f);
+        copy.pitchRange = new Vector2(Mathf.Clamp(pitchRange.x * multiplier, .1f, 3f),
+            Mathf.Clamp(pitchRange.y * multiplier, .1f, 3f));
+        return copy;
+    }
 }

@@ -31,6 +31,7 @@ public class FeedbackPlayer : MonoBehaviour
     private readonly List<CinemachineImpulseSource> continuousImpulsePool = new();
     private readonly Dictionary<GameObject, Queue<GameObject>> particlePools = new();
     private readonly List<ParticleSystem> particleClearBuffer = new();
+    private readonly Dictionary<GameObject, CharacterController2D> particleOwners = new();
 
     private Transform impulseRoot;
     private Transform particleRoot;
@@ -192,6 +193,7 @@ public class FeedbackPlayer : MonoBehaviour
         foreach (var particles in particleClearBuffer)
             particles.Clear(false);
         particleClearBuffer.Clear();
+        particleOwners.Remove(obj);
         obj.SetActive(false);
         particlePools[prefab].Enqueue(obj);
     }
@@ -200,31 +202,40 @@ public class FeedbackPlayer : MonoBehaviour
     // ─────────────────────────────────
     // 외부에서 호출하는 API
     // ─────────────────────────────────
-    public void Play(FeedbackDataSO data, Transform spawnPoint)
+    public void Play(FeedbackDataSO data, Transform spawnPoint, CharacterController2D owner = null)
     {
         if (data == null || spawnPoint == null) return;
 
         Vector3 pos = spawnPoint.TransformPoint(data.offset);
-        PlayInternal(data, pos, spawnPoint.rotation);
+        PlayInternal(data, pos, spawnPoint.rotation, owner);
     }
 
     // Offset 적용
-    public void Play(FeedbackDataSO data, Vector3 worldPos)
+    public void Play(FeedbackDataSO data, Vector3 worldPos, CharacterController2D owner = null)
     {
         if (data == null) return;
 
         Vector3 pos = worldPos + data.offset;
-        PlayInternal(data, pos, Quaternion.identity);
+        PlayInternal(data, pos, Quaternion.identity, owner);
     }
 
     // Offset 미적용시
-    public void PlayExact(FeedbackDataSO data, Vector3 worldPos, Quaternion rot)
+    public void PlayExact(FeedbackDataSO data, Vector3 worldPos, Quaternion rot, CharacterController2D owner = null,
+        SoundOptions soundOverride = null)
     {
         if (data == null) return;
 
-        PlayInternal(data, worldPos, rot);
+        PlayInternal(data, worldPos, rot, owner, soundOverride);
     }
-    private void PlayInternal(FeedbackDataSO data, Vector3 pos, Quaternion rot)
+    internal void PromoteOwnedParticles(CharacterController2D owner, SwordFinisherCinematic cinematic)
+    {
+        foreach (var (effect, source) in particleOwners)
+            if (source == owner && effect != null && effect.activeInHierarchy)
+                cinematic.PromoteFeedback(effect);
+    }
+
+    private void PlayInternal(FeedbackDataSO data, Vector3 pos, Quaternion rot, CharacterController2D owner,
+        SoundOptions soundOverride = null)
     {
         // Particle
         foreach (var prefab in data.particlePrefabs)
@@ -232,16 +243,19 @@ public class FeedbackPlayer : MonoBehaviour
             GameObject obj = GetParticleObject(prefab);
 
             obj.transform.SetPositionAndRotation(pos, rot);
+            if (owner != null)
+            {
+                particleOwners[obj] = owner;
+                SwordFinisherCinematic.For(owner)?.PromoteFeedback(obj);
+            }
             obj.SetActive(true);
             StartCoroutine(ReturnWhenFinished(prefab, obj, data.lifeTime));
         }
 
         // Sound
-        if (data.sound != null && data.sound.clip != null)
-        {
-            if (SoundManager.Instance != null)
-                SoundManager.Instance.PlaySound(data.sound, pos);
-        }
+        var sound = soundOverride ?? data.sound;
+        if (sound != null && sound.clip != null)
+            SoundManager.Instance?.PlaySound(sound, pos);
 
         // Shake
         if (data.shakeIntensity > 0f)

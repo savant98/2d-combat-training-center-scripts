@@ -21,7 +21,7 @@ using UnityEngine;
 // - 보이는 빛줄기·잔광·전류 입자는 풀 개체 RailgunTracer가 그린다(판정과 분리). 발사 섬광·흔들림·소리는 총구에서 조준 방향으로 돌려 재생한다.
 // - 무장 특성(2026-11-21 3차, 사용자 요청 — 사용자 검수 전 시안):
 //   · 과열: 한 발마다 PlayerWeaponTraits.RailHeatPerShot(0.1) → 연속 10발에 과열 잠금. 총열이 달아오르는 표시는 RailgunBarrelVisual(모형에 붙음)이 맡는다.
-//   · 충전 추가타: 레일건 충전(기어 1단계, RailgunCharge) 상태로 쏘면 본 사격 뒤 echoInterval(0.2초)마다 echoCount(2)발의 미니 레일 사격을 쏜다.
+//   · 충전 추가타: 레일건 충전(기어 1단계, RailgunCharge) 상태로 쏘면 본 사격 뒤 echoInterval(약 0.067초)마다 echoCount(2)발의 미니 레일 사격을 쏜다.
 //     별창의 미니 별창·파괴 광선의 미니 레이저 값도 이 에셋이 가진다(같은 무장의 충전 추가타).
 //   · RailgunWeaponSO.FindFor로 Player의 레일건 무기 에셋을 찾는다(별창·파괴 광선은 Railgun 무장에만 있으므로 실행 중인 자리의 기본 무기가 레일건이다).
 // - 4차(2026-11-21, 사용자 요청 "추가타는 총구가 아니라 플레이어 주위에서 날아가는 거야, 시간차로, 각 공격 이펙트의 미니 사이즈로" — 사용자 화면 검수 전 시안):
@@ -52,7 +52,7 @@ public class RailgunWeaponSO : WeaponBaseSO
     [Tooltip("미니 레일 사격 한 발(소환 문양 + 본 레일건과 같은 재질의 가는 빛줄기)")]
     public RailEchoShot echoShotPrefab;
     [Min(0)] public int echoCount = 2;                              // 충전 사격 한 발 뒤 미니 레일 사격 수
-    [Min(0.01f)] public float echoInterval = 0.2f;                  // 추가타 간격(초, 본 공격 뒤 0.2·0.4초). 미니 별창·미니 레이저도 같은 간격
+    [Min(0.01f)] public float echoInterval = 1f / 15f;             // 돌진베기 연타와 같은 간격. 미니 별창·미니 레이저에도 사용한다.
     [Min(0f)] public float echoDamageScale = 0.45f;                 // 미니 레일 사격 피해 = 본 사격 × 이 값
     [Min(0.01f)] public float echoHalfWidth = 0.24f;                // 미니 레일 사격 판정 반폭(칸)
     [Min(0.1f)] public float echoSearchHalfWidth = 2.5f;            // 맞힌 적이 사라졌을 때 '조준 방향의 가장 가까운 적'을 찾는 상자 반폭(칸, 판단값)
@@ -69,7 +69,6 @@ public class RailgunWeaponSO : WeaponBaseSO
     [Tooltip("미니 레이저 한 발(조준선 → 본 레이저와 같은 재질의 작은 레이저)")]
     public RailEchoShot miniLaserShotPrefab;
     [Min(0)] public int miniLaserCount = 2;                         // 미니 레이저 한 묶음(순차 타격)의 발 수
-    [Min(1)] public int miniLaserVolleys = 5;                       // 파괴 광선 지속 시간 동안 묶음을 몇 번 쏘는지(5차 사용자 지시: 2발 순차 타격 × 5번)
     [Min(0f)] public float miniLaserDamageScale = 0.65f;            // 미니 레이저 피해 = 파괴 광선 한 틱 피해 × 이 값
     [Min(0.01f)] public float miniLaserHalfWidth = 0.35f;           // 미니 레이저 판정 반폭(칸)
 
@@ -157,6 +156,11 @@ public class RailgunWeaponSO : WeaponBaseSO
         bool charged = traits != null && traits.IsRailCharged;
         LastCharged = charged;
         WeaponBaseSO.DamageInfo info = ShotInfo(controller);
+        if (charged && echoShotPrefab != null && echoCount > 0)
+        {
+            info.popupGroup = NewPopupGroup();
+            info.popupAnchorOnly = true;
+        }
         LastHitCount = ApplyDamage(controller, from, direction, reach, angle, muzzle, length, info, out Collider2D firstHit);
         // 2026-11-21 사용자 지시 3차: 연속 10발에 과열 상한(한 발 = RailHeatPerShot)
         traits?.AddRailHeat(PlayerWeaponTraits.RailHeatPerShot);
@@ -191,6 +195,7 @@ public class RailgunWeaponSO : WeaponBaseSO
             rail = this,
             kind = RailEchoKind.Rail,
             prefab = echoShotPrefab,
+            fireSound = fireFeedback?.sound,
             damage = shot,
             count = echoCount,
             interval = echoInterval,

@@ -16,7 +16,7 @@ using UnityEngine;
 // - 끝: 모든 창을 쏜 뒤 발사점 별 문양이 줄어들며 사라지고 풀로 돌아간다. Player가 사라지면 남은 창을 거두고 끝낸다.
 // - 레일건 충전 추가타(2026-11-21 무장 특성 3차 → 4차 개편, 사용자 요청 "별창 발사 시의 추가타도 플레이어 주위에서 시간차로, 별창 이펙트의 미니 사이즈로"
 //   — 사용자 화면 검수 전 시안): 충전 상태(PlayerWeaponTraits.IsRailCharged)로 시작한 일제 사격이면 본 창을 쏠 때마다 본 창 뒤
-//   echoInterval(0.2·0.4초)에 miniSpearCount(2)발의 미니 별창을 RailEcho로 쏜다. 미니 별창은 머리 위 발사점이 아니라 Player 몸 위쪽·아래쪽 바깥에
+//   echoInterval(약 0.067·0.133초)에 miniSpearCount(2)발의 미니 별창을 RailEcho로 쏜다. 미니 별창은 머리 위 발사점이 아니라 Player 몸 위쪽·아래쪽 바깥에
 //   작은 별 문양(RailgunWeaponSO.miniSpearShotPrefab)과 함께 나타나 본 창의 목표(사라졌으면 Player 둘레의 가장 가까운 적, 없으면 본 창이 날아간 쪽)로
 //   날아간다. 본 창마다 다른 자리부터 써서 겹치지 않는다. 피해 = 별창 × miniSpearDamageScale, 폭발 반경 = 별창 × miniSpearRadiusScale.
 //   미니 별창을 다 쏠 때까지(또는 버려질 때까지) 일제 사격이 남는다(검증 값 MiniLaunchedCount를 읽을 수 있게). Player가 쓰러지거나
@@ -44,6 +44,7 @@ public class StarSpearVolley : WorldEntityBase
 
     private sealed class Slot
     {
+        public int popupGroup;
         public StarSpear spear;
         public float angle, summonAt, launchAt = -1f;
         public bool summoned, launched, aiming;
@@ -231,7 +232,14 @@ public class StarSpearVolley : WorldEntityBase
         }
         Vector2 position = anchor + Direction(slot.angle) * weapon.fanRadius;
         var spear = WorldEntityPool.Instance.Spawn(weapon.spearPrefab, position, Quaternion.identity);
-        spear.Initialize(owner, damageInfo, weapon.spearSpeed, index, weapon.platformLayer);
+        var info = damageInfo;
+        if (rail != null && rail.miniSpearPrefab != null && rail.miniSpearShotPrefab != null && rail.miniSpearCount > 0)
+        {
+            slot.popupGroup = WeaponBaseSO.NewPopupGroup();
+            info.popupGroup = slot.popupGroup;
+            info.popupAnchorOnly = true;
+        }
+        spear.Initialize(owner, info, weapon.spearSpeed, index, weapon.platformLayer);
         spear.RailCharged = railCharged;
         spear.ConfigureFlight(weapon.turnRateDegrees, weapon.maxFlightTime, weapon.explosionRadius, weapon.targetSearchRadius);
         if (onHitEnemy != null) spear.OnHitEnemy += (character, hitPoint) => onHitEnemy(character, hitPoint);
@@ -283,6 +291,7 @@ public class StarSpearVolley : WorldEntityBase
         if (!railCharged || rail == null || rail.miniSpearPrefab == null || rail.miniSpearShotPrefab == null || rail.miniSpearCount <= 0) return;
         if (owner is not PlayerController player) return;
         var info = damageInfo;
+        info.popupGroup = slots[index].popupGroup;
         info.damage *= rail.miniSpearDamageScale;
         info.knockbackFacing = 0;
         int serial = miniSerial;
@@ -292,6 +301,7 @@ public class StarSpearVolley : WorldEntityBase
             rail = rail,
             kind = RailEchoKind.Spear,
             prefab = rail.miniSpearShotPrefab,
+            fireSound = weapon.spearPrefab != null ? weapon.spearPrefab.FireSound : null,
             damage = info,
             count = rail.miniSpearCount,
             interval = rail.echoInterval,

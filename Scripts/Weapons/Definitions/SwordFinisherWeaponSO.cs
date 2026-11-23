@@ -49,9 +49,11 @@ public class SwordFinisherWeaponSO : WeaponBaseSO
         Vector3 origin = controller.transform.position + new Vector3(spawnOffset.x * facing, spawnOffset.y, 0f);
         SwordFinisherSlash slash = WorldEntityPool.Instance.Spawn(slashPrefab, origin, Quaternion.identity);
         slash.SetHit(hitFeedback, splitFeedback, impactFeedback, RewardedHitLimit, (owner, point) => OnHitEnemy?.Invoke(owner, point));
-        slash.Initialize(controller, WithSource(damageInfo));   // 밀리는 방향은 발도한 자리와 방향을 기준으로 한다
+        var info = WithSource(damageInfo);
+        info.popupGroup = NewPopupGroup();
+        slash.Initialize(controller, info);   // 밀리는 방향은 발도한 자리와 방향을 기준으로 한다
         slash.Begin(facing, damageMask);
-        while (slash.IsRunning && !slash.IsCut) yield return null;
-        if (slash.IsCut) forceRecover?.Invoke();
+        while (slash.IsRunning && !slash.IsStrikeComplete) yield return null;
+        if (slash.IsStrikeComplete) forceRecover?.Invoke();
     }
 }

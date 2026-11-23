@@ -202,7 +202,8 @@ public class EnemyShieldSystem : MonoBehaviour
 
         // UI 표시
         enemyUI.ShowShield(CurrentShield / MaximumShield, health.IsBossEnemy);
-        FloatingTextManager.Instance.ShowDamage(dmgInfo, hitPosition + Vector3.up * 0.5f);
+        FloatingTextManager.Instance.ShowDamage(dmgInfo, (dmgInfo.popupPathPoint ?? hitPosition) + Vector3.up * 0.5f,
+            target: health, targetLife: health.LifeVersion);
 
         if (CurrentShield > 0)
         {

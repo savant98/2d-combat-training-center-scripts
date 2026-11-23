@@ -19,7 +19,7 @@ using UnityEngine;
 // - 취소: Player가 맞거나 대시·잡기 등으로 공격 상태에서 벗어나면 그 자리에서 빠르게 꺼진다. 코루틴에 기대지 않고 공격 상태를 직접 본다.
 // - 외형: 값은 MaterialPropertyBlock으로 셰이더(Player/Laser, Player/LaserPreview)에 넘긴다. 시간은 Time 기준이라 히트스톱 때 함께 멈춘다.
 // - 레일건 충전 추가타(2026-11-21 무장 특성 3차 → 4차 개편, 사용자 요청 "레이저 발사 시의 추가타도 플레이어 주위에서 시간차로, 레이저 이펙트의 미니 사이즈로"
-//   — 사용자 화면 검수 전 시안): 충전 상태로 쏘면 발사 echoInterval(0.2·0.4초)에 miniLaserCount(2)발의 미니 레이저를 RailEcho로 쏜다.
+//   — 사용자 화면 검수 전 시안): 충전 상태로 쏘면 발사 echoInterval(약 0.067·0.133초)에 miniLaserCount(2)발의 미니 레이저를 RailEcho로 쏜다.
 //   미니 레이저는 본 레이저 안이 아니라 Player 몸 위쪽·아래쪽 바깥(굵은 본 레이저 밖)의 작은 별 문양(RailgunWeaponSO.miniLaserShotPrefab)에서
 //   조준선을 먼저 그은 뒤, 본 레이저가 지금 맞히는 적(가장 앞, 없으면 조준 방향의 가장 가까운 적, 없으면 본 레이저 끝)으로 모이듯 쏜다.
 //   판정은 RailEcho.Cast(모터 경로, 관통, 쏘는 순간 적마다 한 번), 피해 = 한 틱 피해 × miniLaserDamageScale, 쏠 때 RailCross 큐, 맞으면 RailEchoHit 큐.
@@ -104,7 +104,6 @@ public class PlayerLaserBeam : WorldEntityBase
     private bool railCharged;
     private RailgunWeaponSO rail;          // 충전 상태로 쏠 때만: 미니 레이저 값
     private int fireSerial;                // 풀에서 다시 쓰일 때 늦게 온 미니 레이저 알림을 버리기 위한 번호
-    private int miniVolleysFired;          // 이번 발사에서 시작한 미니 레이저 묶음 수
     private Collider2D lastTarget;         // 가장 최근 틱에 맞힌 적 가운데 포구에서 가장 가까운 것(미니 레이저의 목표)
 
     private MaterialPropertyBlock block;
@@ -264,8 +263,6 @@ public class PlayerLaserBeam : WorldEntityBase
         StartHeldShake();
         PlayImpact();
         ApplyVisuals();
-        miniVolleysFired = 0;
-        UpdateMiniLaserVolleys();
     }
 
     private void FixedUpdate()
@@ -299,7 +296,6 @@ public class PlayerLaserBeam : WorldEntityBase
                 UpdateBlock();
                 EvaluateBeam();
                 UpdateDamage();
-                UpdateMiniLaserVolleys();
                 EmitSparks(dt);
                 if (!endImpactPlayed && phaseAge >= weapon.executeTime - fadeOutDuration - Epsilon)
                 {
@@ -386,11 +382,16 @@ public class PlayerLaserBeam : WorldEntityBase
     // ===== 판정 =====
     private void UpdateDamage()
     {
-        while (phaseAge >= nextTickAt - Epsilon && phaseAge < weapon.executeTime + Epsilon)
+        bool chargedEchoes = rail != null && rail.miniLaserShotPrefab != null && rail.miniLaserCount > 0 && player != null;
+        while (phase == Phase.Fire && phaseAge >= nextTickAt - Epsilon && phaseAge < weapon.executeTime + Epsilon)
         {
+            bool releasesEchoes = chargedEchoes && (TickCount + 1) % 2 == 0;
+            damageInfo.popupGroup = releasesEchoes ? WeaponBaseSO.NewPopupGroup() : 0;
+            damageInfo.popupAnchorOnly = chargedEchoes;
             ApplyDamage();
             TickCount++;
             nextTickAt += weapon.tickInterval;
+            if (releasesEchoes && phase == Phase.Fire && IsAttackAlive()) BeginMiniLasers();
         }
     }
 
@@ -436,26 +437,13 @@ public class PlayerLaserBeam : WorldEntityBase
         lastTarget = nearest;
     }
 
-    // ===== 레일건 충전 추가타: 미니 레이저(4차 — Player 둘레에서 시간차로, 5차 — 지속 시간 동안 묶음 miniLaserVolleys번) =====
-    // 묶음 i는 발사 뒤 i × 간격에 시작하고, 그 안의 k번째 발은 묶음 시작 (k + 1) × echoInterval 뒤에 나간다.
-    // 간격은 마지막 묶음의 마지막 발이 광선이 꺼지기 조금 전(0.05초)에 나가도록 지속 시간에 고르게 나눈다.
-    private void UpdateMiniLaserVolleys()
-    {
-        if (rail == null || rail.miniLaserCount <= 0 || miniVolleysFired >= rail.miniLaserVolleys) return;
-        int volleys = Mathf.Max(1, rail.miniLaserVolleys);
-        float span = weapon.executeTime - rail.echoInterval * rail.miniLaserCount - 0.05f;
-        float period = volleys > 1 ? Mathf.Max(rail.echoInterval, span / (volleys - 1)) : 0f;
-        while (miniVolleysFired < volleys && phaseAge + Epsilon >= miniVolleysFired * period)
-        {
-            miniVolleysFired++;
-            BeginMiniLasers();
-        }
-    }
+    // 정상 종료 뒤에는 마지막으로 예약된 추가타를 마저 쏘고, 시전 취소나 풀 재사용 때는 버린다.
+    private bool CanFireMiniLaser(int serial) =>
+        serial == fireSerial && !isReturning &&
+        ((phase == Phase.Fire && IsAttackAlive()) || (phase == Phase.Linger && finishedNaturally));
 
-    // 발사 순간 miniLaserCount발을 예약한다. 각 발은 본 레이저가 꺼지면(끝·취소) 쏘지 않고 버려진다.
     private void BeginMiniLasers()
     {
-        if (rail == null || rail.miniLaserShotPrefab == null || rail.miniLaserCount <= 0 || player == null) return;
         int serial = fireSerial;
         var info = damageInfo;
         info.damage *= rail.miniLaserDamageScale;
@@ -466,11 +454,12 @@ public class PlayerLaserBeam : WorldEntityBase
             rail = rail,
             kind = RailEchoKind.Laser,
             prefab = rail.miniLaserShotPrefab,
+            fireSound = weapon.executeFeedback?.sound,
             damage = info,
             count = rail.miniLaserCount,
             interval = rail.echoInterval,
             facing = direction.x < 0f ? -1f : 1f,
-            liveTarget = () => serial == fireSerial && phase == Phase.Fire ? lastTarget : null,
+            liveTarget = () => CanFireMiniLaser(serial) ? lastTarget : null,
             fallbackPoint = origin + direction * blockedDistance,
             searchDirection = direction,
             searchRange = weapon.laserLength,
@@ -479,7 +468,7 @@ public class PlayerLaserBeam : WorldEntityBase
             halfWidth = rail.miniLaserHalfWidth,
             platformLayer = weapon.platformLayer,
             damageMask = weapon.damageMask,
-            guard = () => serial == fireSerial && phase == Phase.Fire && !isReturning,
+            guard = () => CanFireMiniLaser(serial),
             onFired = (shot, hits) =>
             {
                 if (serial != fireSerial) return;

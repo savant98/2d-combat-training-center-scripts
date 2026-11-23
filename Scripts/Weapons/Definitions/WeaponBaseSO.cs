@@ -60,6 +60,9 @@ public abstract class WeaponBaseSO : ScriptableObject
     {
         public float damage;
         public DamageType damageType;
+        [NonSerialized] public int popupGroup;
+        [NonSerialized] public bool popupAnchorOnly;
+        [NonSerialized] public Vector3? popupPathPoint;
 
         // 발사 시 복사된 출처를 유지하여 무기 교체 후 적중도 구분한다.
         [NonSerialized] public WeaponBaseSO sourceWeapon;
@@ -68,6 +71,15 @@ public abstract class WeaponBaseSO : ScriptableObject
         // 공격 시작 위치와 방향을 보관해 발사 후 플레이어가 이동해도 밀리는 방향을 유지한다.
         [NonSerialized] public Vector2 knockbackOrigin;
         [NonSerialized] public int knockbackFacing;
+    }
+
+    private static int nextPopupGroup;
+
+    internal static int NewPopupGroup()
+    {
+        nextPopupGroup = unchecked(nextPopupGroup + 1);
+        if (nextPopupGroup == 0) nextPopupGroup = 1;
+        return nextPopupGroup;
     }
 
     protected DamageInfo WithSource(DamageInfo info, CharacterController2D owner = null)

@@ -31,6 +31,7 @@ public class StarSpear : ProjectileBase
     [SerializeField] private Transform visualRoot;
     [SerializeField] private Transform body;
     [SerializeField] private FeedbackDataSO fireFeedbackData;
+    internal SoundOptions FireSound => fireFeedbackData?.sound;
     [SerializeField, Min(0.01f)] private float appearTime = 0.15f;
     [SerializeField, Min(1f)] private float appearOvershoot = 1.15f;
 

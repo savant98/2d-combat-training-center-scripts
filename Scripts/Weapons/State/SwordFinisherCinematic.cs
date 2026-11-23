@@ -14,6 +14,10 @@ public sealed class SwordFinisherCinematic : MonoBehaviour
     }
 
     private readonly List<Order> orders = new();
+    private readonly List<(ParticleSystem system, bool unscaled)> particles = new();
+    private Canvas damageCanvas;
+    private bool damageOverrideSorting;
+    private int damageSortingLayer, damageSortingOrder;
     private readonly List<CrackStroke> cracks = new();
     private CharacterController2D actor;
     private GameTimeController time;
@@ -74,10 +78,41 @@ public sealed class SwordFinisherCinematic : MonoBehaviour
         foreach (var enemy in FindObjectsByType<EnemyController>(FindObjectsSortMode.None))
             foreground.AddRange(enemy.GetComponentsInChildren<Renderer>(true));
         Promote(foreground.ToArray());
+        if (WorldEntityPool.Instance != null)
+        {
+            foreach (var entity in WorldEntityPool.Instance.ActiveSnapshot())
+                if (entity != null && entity.IsOwnedBy(owner))
+                    Promote(entity.GetComponentsInChildren<Renderer>(true));
+        }
+        FeedbackPlayer.Instance?.PromoteOwnedParticles(owner, this);
+
+        damageCanvas = FloatingTextManager.Instance?.DamageCanvas;
+        if (damageCanvas != null)
+        {
+            damageOverrideSorting = damageCanvas.overrideSorting;
+            damageSortingLayer = damageCanvas.sortingLayerID;
+            damageSortingOrder = damageCanvas.sortingOrder;
+            damageCanvas.overrideSorting = true;
+            damageCanvas.sortingLayerID = layer;
+            damageCanvas.sortingOrder = 32500;
+        }
         PositionBackdrop();
     }
+    internal void PromoteFeedback(GameObject effect)
+    {
+        if (!ownsPause) return;
+        Promote(effect.GetComponentsInChildren<Renderer>(true));
+        foreach (var system in effect.GetComponentsInChildren<ParticleSystem>(true))
+        {
+            var main = system.main;
+            particles.Add((system, main.useUnscaledTime));
+            main.useUnscaledTime = true;
+        }
+    }
+
     public void Promote(Renderer[] renderers)
     {
+        if (!ownsPause) return;
         foreach (var renderer in renderers.OrderBy(r => SortingLayer.GetLayerValueFromID(r.sortingLayerID)).ThenBy(r => r.sortingOrder))
         {
             bool exists = false;
@@ -203,6 +238,20 @@ public sealed class SwordFinisherCinematic : MonoBehaviour
         foreach (var order in orders)
             if (order.renderer != null) { order.renderer.sortingLayerID = order.layer; order.renderer.sortingOrder = order.order; }
         orders.Clear(); cracks.Clear();
+        foreach (var (system, unscaled) in particles)
+        {
+            if (system == null) continue;
+            var main = system.main;
+            main.useUnscaledTime = unscaled;
+        }
+        particles.Clear();
+        if (damageCanvas != null)
+        {
+            damageCanvas.sortingLayerID = damageSortingLayer;
+            damageCanvas.sortingOrder = damageSortingOrder;
+            damageCanvas.overrideSorting = damageOverrideSorting;
+            damageCanvas = null;
+        }
         if (backdrop != null)
         {
             backdrop.SetActive(false);

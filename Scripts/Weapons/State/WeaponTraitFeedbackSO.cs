@@ -69,7 +69,8 @@ public sealed class WeaponTraitFeedbackSO : ScriptableObject
     /// 큐 하나를 재생한다. cameraEffects가 false면 흔들림·화면 효과·입자 없이 소리와 절차 효과만 낸다
     /// (반격 성공처럼 더 큰 연출과 같은 순간에 겹칠 때).
     /// </summary>
-    public static void Play(WeaponTraitCue trigger, Vector3 position, Vector2 axis = default, float scale = 1f, bool cameraEffects = true)
+    public static void Play(WeaponTraitCue trigger, Vector3 position, Vector2 axis = default, float scale = 1f, bool cameraEffects = true,
+        SoundOptions soundOverride = null)
     {
         var table = Database;
         if (table == null || (uint)trigger >= (uint)CueCount) return;
@@ -93,9 +94,9 @@ public sealed class WeaponTraitFeedbackSO : ScriptableObject
                 (post.useFlash || post.useVignette || post.useBloom || post.useChromaticAberration || post.useSaturation))
                 || (feedback.particlePrefabs != null && feedback.particlePrefabs.Length > 0);
             if (cameraEffects && usesCamera && FeedbackPlayer.Instance != null)
-                FeedbackPlayer.Instance.PlayExact(feedback, position, rotation);
-            else if (feedback.sound != null)
-                SoundManager.Instance?.PlaySound(feedback.sound, position);
+                FeedbackPlayer.Instance.PlayExact(feedback, position, rotation, soundOverride: soundOverride);
+            else
+                SoundManager.Instance?.PlaySound(soundOverride ?? feedback.sound, position);
         }
         if (cue.size > 0f && cue.duration > 0f)
             WeaponTraitBurst.Spawn(position, rotation, cue.color, cue.size * scale,

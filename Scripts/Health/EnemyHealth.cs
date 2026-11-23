@@ -105,6 +105,7 @@ public class EnemyHealth : HealthBase
     public override void TakeDamage(WeaponBaseSO.DamageInfo damageInfo, Vector3 hitPosition)
     {
         if (IsDamageBlocked || (requiredDamageWeapon != null && damageInfo.sourceWeapon != requiredDamageWeapon)) return;
+        uint popupLife = LifeVersion;
         if (minimumHealth > 0f)
         {
             // Die 호출 전에 양의 피해만 남은 허용량으로 제한한다. 음수 피해는 기존 동작을 유지한다.
@@ -121,7 +122,8 @@ public class EnemyHealth : HealthBase
         base.TakeDamage(damageInfo, hitPosition);
 
         enemyUI.ShowHP(currentHP / maxHP, IsBossEnemy);
-        FloatingTextManager.Instance.ShowDamage(damageInfo, hitPosition + Vector3.up * 0.5f);
+        FloatingTextManager.Instance.ShowDamage(damageInfo, (damageInfo.popupPathPoint ?? hitPosition) + Vector3.up * 0.5f,
+            target: this, targetLife: popupLife);
 
         if (hitSprites != null)
         {
