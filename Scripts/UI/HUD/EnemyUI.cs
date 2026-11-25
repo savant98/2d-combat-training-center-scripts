@@ -135,6 +135,14 @@ public class EnemyUI : MonoBehaviour
         hideShieldTween = shieldGroup.DOFade(0, 0.5f).SetDelay(1f);
 
     }
+    // 쉴드 칸 막대가 normalized에서 (일부라도) 채우는 칸 수. 칸 막대가 없거나 아직 칸 수를 정하지 않았으면 -1이다.
+    // 쉴드 재생 표시(EnemyShieldSystem)가 칸이 바뀌는 순간에만 바로 갱신하려고 읽는다.
+    public int ShieldCellIndex(float normalized)
+    {
+        if (shieldCells == null || shieldCells.Cells <= 0)
+            return -1;
+        return Mathf.CeilToInt(Mathf.Clamp01(normalized) * shieldCells.Cells - 0.0001f);
+    }
     public void ShowHP(float normalized, bool isBoss)
     {
         if (isBoss)

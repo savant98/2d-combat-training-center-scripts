@@ -45,6 +45,7 @@ public abstract class CharacterController2D : MonoBehaviour
         motor = gameObject.AddComponent<RaycastMotor2D>();
         motor.SetRaycastMotor2D(col, collisionLayer, skinWidth, horizontalRayCount, verticalRayCount);
         motor.SupportsOneWayPlatforms = this is PlayerController || this is EnemyController enemy && enemy.GravityOn;
+        motor.SupportsMovingPlatforms = this is PlayerController; // 움직이는 발판(승강기)에 서서 운반되는 것은 Player만(적은 통과한다)
     }
     public void AddRecoil(float power, int facing)
     {
@@ -71,6 +72,12 @@ public abstract class CharacterController2D : MonoBehaviour
         Vector2 desiredMove = finalVelocity * Time.fixedDeltaTime;
 
         RaycastMoveResult2D result = motor.Move(desiredMove);
+        // 움직이는 발판에서 뛰어오른 순간: 발판의 위쪽 속도를 이어받는다(올라가는 승강기에서도 점프로 내릴 수 있게). 가로 속도는 외부 힘으로 남긴다.
+        if (motor.TryConsumeTakeoffVelocity(out Vector2 takeoff))
+        {
+            Velocity.y += takeoff.y;
+            if (!IgnoreExternalForces) externalForce.x += takeoff.x;
+        }
 
         transform.position += (Vector3)result.move;
         HandleCollisionResult(result.info);

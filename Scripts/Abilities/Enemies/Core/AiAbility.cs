@@ -73,6 +73,9 @@ public abstract class AiAbility : MonoBehaviour
 
     // 순찰처럼 시간으로 끝나지 않는 패턴은 true를 반환해 실행 중에도 AiPatternProfileSO의 전환 판단을 받는다.
     public virtual bool CanYieldToPattern => false;
+    // CanYieldToPattern이 참인 동안 AiBrain이 전환 판단을 다시 묻는 간격(초). 0이면 매 프레임 묻는다(기본).
+    // 지상 순찰(GroundPatrolAbility)은 데이터 SO의 값을 쓴다. 휴식 창이 짧은 Jumper(TumblePatrolAbility)는 0을 유지한다.
+    public virtual float YieldCheckInterval => 0f;
 
     public void Initialize(AiBrain brain, EnemyController controller)
     {

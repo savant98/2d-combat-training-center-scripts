@@ -578,4 +578,23 @@ public class WaveManager : MonoBehaviour
         looseObjects.Clear();
         currentWaveEntities.Clear(); // 비워주기
     }
+
+    // 던전 방(DungeonEncounter)이 적 1체를 지금 Wave의 적으로 생성한다. Wave가 끝나면 다른 적과 함께 회수된다(keepAfterWave 제외).
+    // 처치 처리기(SetWaveDeathHandler)는 부른 쪽이 건다. 보스면 보스 등장 카메라를 이 WaveManager에서 실행한다(Wave 종료·패배 때 함께 멈춘다).
+    // 던전 진행 자체는 DungeonManager가 맡고, 이 클래스에는 생성 API 하나만 둔다.
+    public EnemyController SpawnEnemy(WaveSpawnInfo info, Vector3 worldPosition)
+    {
+        if (info == null || info.prefab == null || EnemyPool.Instance == null) return null;
+        if (!info.prefab.TryGetComponent(out EnemyController enemyPrefab)) return null;
+        EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, worldPosition, info.isBossEnemy);
+        if (enemyInstance == null) return null;
+        if (!info.keepAfterWave) currentWaveEnemies.Add(enemyInstance);
+        else currentWaveEnemies.Remove(enemyInstance);
+        EnemySpawned?.Invoke(enemyInstance);
+        if (info.isBossEnemy && RoomManager.Instance != null && RoomManager.Instance.CurrentRoom != null)
+            StartCoroutine(RoomManager.Instance.CurrentRoom.ActivateBossEntryCamera(enemyInstance.transform));
+        return enemyInstance;
+    }
+    // Wave가 진행 중인지(시작 뒤 클리어·패배·초기화 전). 던전 진행이 방 이동·적 생성 가능 여부를 읽는다.
+    public bool IsWaveActive => isWaveActive;
 }

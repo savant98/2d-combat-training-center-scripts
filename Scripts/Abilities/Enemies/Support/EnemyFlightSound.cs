@@ -8,6 +8,8 @@ using UnityEngine;
 // - 순위 n의 음량은 volume × crowdedVolumeMultiplier^n이다(SoundManager 단발음의 혼잡 감쇠와 같은 식).
 //   SoundManager는 반복음을 시작할 때 한 번만 이 값을 정하므로, 가까운 적이 죽거나 다가와 순위가 바뀌면 여기서 다시 계산한다.
 //   음량은 fadeTime 동안 부드럽게 따라가고, 동시 수에서 밀려났던 적은 자리가 나면 다시 소리를 낸다.
+// - 순위와 카메라 거리는 rankInterval(기본 0.1초)마다 다시 매긴다(같은 Clip 무리당 한 번). 적이 새로 날거나 빠지면 바로 다시 매긴다.
+//   음량·음높이 보간은 매 프레임 한다. 자리 넘김은 최대 rankInterval 늦어지지만 fadeTime 겹침 안에서 들린다.
 // - 카메라 중심에서 멀어질수록 작아지고, 빠르게 날수록 음높이가 오른다.
 //   개체마다 음높이(randomizePitch)와 반복 시작 위치를 달리해 여러 마리가 겹쳐도 한 소리로 뭉치지 않는다.
 // - 등장 연출 등으로 AiBrain이 멈춘 동안과 일시정지(timeScale 0) 중에는 소리를 줄이고, 비활성화(Pool 반환)되면 반복음을 반환한다.
@@ -26,6 +28,7 @@ public class EnemyFlightSound : MonoBehaviour
     {
         public readonly List<EnemyFlightSound> members = new();
         public int rankedFrame = -1;
+        public float nextRankTime = float.NegativeInfinity;
     }
 
     private static readonly Dictionary<AudioClip, Group> groups = new();
@@ -56,6 +59,10 @@ public class EnemyFlightSound : MonoBehaviour
     [Header("Fade")]
     [Tooltip("소리를 켜고 끄거나 순위가 바뀔 때 음량이 바뀌는 시간(초)입니다.")]
     [SerializeField, Min(0.01f)] private float fadeTime = 0.2f;
+
+    [Header("Rank Interval")]
+    [Tooltip("같은 Clip 적끼리 카메라 거리 순위와 거리를 다시 매기는 간격(초)입니다. 음량·음높이 보간은 매 프레임 합니다. 0이면 매 프레임 순위를 매깁니다.")]
+    [SerializeField, Min(0f)] private float rankInterval = 0.1f;
 
     private Group group;
     private SoundHandle handle;
@@ -97,6 +104,7 @@ public class EnemyFlightSound : MonoBehaviour
             groups.Add(sound.clip, group);
         }
         group.members.Add(this);
+        group.nextRankTime = float.NegativeInfinity;
     }
 
     private void OnDisable()
@@ -106,6 +114,7 @@ public class EnemyFlightSound : MonoBehaviour
             return;
 
         group.members.Remove(this);
+        group.nextRankTime = float.NegativeInfinity;
         if (group.members.Count == 0 && sound != null && sound.clip != null)
             groups.Remove(sound.clip);
         group = null;
@@ -117,7 +126,8 @@ public class EnemyFlightSound : MonoBehaviour
         if (group == null)
             return;
 
-        RankGroup(group, ListenerPosition());
+        if (group.rankedFrame != Time.frameCount && Time.time >= group.nextRankTime)
+            RankGroup(group, ListenerPosition(), rankInterval);
 
         int voices = Mathf.Max(1, sound.maxSimultaneous);
         bool audible = IsFlying && Time.timeScale > 0f && rank < voices;
@@ -148,12 +158,12 @@ public class EnemyFlightSound : MonoBehaviour
         handle.SetPosition(transform.position);
     }
 
-    // 같은 Clip의 적을 프레임마다 한 번 정렬한다. 비행 중이 아닌 적은 순위에서 빠진다.
-    private static void RankGroup(Group target, Vector2 listener)
+    // 같은 Clip의 적을 간격마다(한 프레임에 한 번까지) 정렬한다. 비행 중이 아닌 적은 순위에서 빠진다.
+    private static void RankGroup(Group target, Vector2 listener, float interval)
     {
-        if (target.rankedFrame == Time.frameCount)
-            return;
         target.rankedFrame = Time.frameCount;
+        target.nextRankTime = Time.time + Mathf.Max(0f, interval);
+        EnemyCheckStats.Add(EnemyCheckKind.FlightSoundRank);
 
         foreach (EnemyFlightSound member in target.members)
             member.listenerDistance = ((Vector2)member.transform.position - listener).magnitude;

@@ -1143,6 +1143,7 @@ public class PlayerWeaponAbility : PlayerAbility
     {
         if (owner != controller)
             return;
+        if (DestructibleProp.ConsumeRewardHit(source, owner, hitPoint)) return;   // 파괴형 던전 Prop 적중은 기술 게이지를 주지 않는다
 
         if (source.skillGainPerHit <= 0)
             return;

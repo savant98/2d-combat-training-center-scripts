@@ -205,6 +205,7 @@ public class StarSpear : ProjectileBase
         if (target == null || !target.enabled || !target.gameObject.activeInHierarchy) return false;
         var health = target.GetComponentInParent<HealthBase>();
         if (health == null) return false;
+        if (DungeonPropTargeting.IsProp(health)) return false;   // 파괴형 던전 Prop은 유도하지 않는다
         return !(health is EnemyHealth enemy && enemy.enemyShieldSystem != null && enemy.enemyShieldSystem.IsSpawnLocked);
     }
 

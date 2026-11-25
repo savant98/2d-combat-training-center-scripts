@@ -7,6 +7,7 @@ using UnityEngine;
 // - 이동은 Velocity만 쓰고 실제 이동·충돌은 RaycastMotor2D가 한다. 순간이동 중에는 Teleporter가 쓰는 Velocity를 덮어쓰지 않는다.
 // - Admin처럼 통과 발판 위의 플레이어에게도 내려앉도록, 체공~낙하 동안만 EnemyController.SetOneWayLanding으로 통과 발판 착지를 켠다.
 // - 끝나면 다른 공격처럼 재배치(순간이동)로 넘긴다. 중단(브레이크·사망·풀 반환)은 순간이동·외형·무적·외력·예고를 모두 되돌린다.
+// - 시작 조건(CanBegin → 자리 찾기, 몸 겹침 검사 IsBodyBlockedAt 포함)은 Aegis 순찰이 candidateCheckInterval(기본 0.2초)마다만 묻는다.
 [RequireComponent(typeof(EnemyTeleporter))]
 public sealed class AegisDownAttackAbility : FlyingAbility
 {
@@ -22,6 +23,9 @@ public sealed class AegisDownAttackAbility : FlyingAbility
     private bool ownsTeleportState, wasInvincible, ownsMovement, previousIgnoreForces, landed;
     private float hoverAnchorY, windupElapsed;
     private LaserPreviewLine preview;
+    // 자리 찾기(TryFindSlamPoint)가 부를 때마다 하던 Player 몸 Collider 조회를 Player Health가 바뀔 때만 한다.
+    private PlayerHealth cachedPlayerHealth;
+    private Collider2D cachedPlayerBody;
 
     public override bool IsBodyAttackActive => State == AbilityState.Execute && controller.Velocity.y < -.01f;
     // 검증용 읽기 전용 상태
@@ -338,7 +342,13 @@ public sealed class AegisDownAttackAbility : FlyingAbility
     private float PlayerFeetY(float fallbackCenterY)
     {
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
-        var body = player != null && player.Health != null ? player.Health.GetComponent<Collider2D>() : null;
+        var health = player != null ? player.Health : null;
+        if (health != cachedPlayerHealth || (health != null && cachedPlayerBody == null))
+        {
+            cachedPlayerHealth = health;
+            cachedPlayerBody = health != null ? health.GetComponent<Collider2D>() : null;
+        }
+        var body = cachedPlayerBody;
         return body != null ? body.bounds.min.y : fallbackCenterY - .75f;
     }
 

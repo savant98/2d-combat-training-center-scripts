@@ -12,6 +12,10 @@ public class EnemyShieldDataSO : ScriptableObject
     public float breakableDuration = 3f; // 브레이크 가능 상태 유지 시간
     public float breakFailedRecoveryValue = 0.3f; // 브레이크 실패 시 쉴드 회복 계수
 
+    [Header("Regen Display")]
+    [Tooltip("쉴드 재생 중 머리 위 막대·보스 쉴드 막대를 갱신하는 간격(초)입니다. 칸 막대의 칸 수가 바뀌거나 가득 차면 바로 갱신합니다. 0이면 매 프레임 갱신합니다.")]
+    [Min(0f)] public float regenDisplayInterval = 0.1f;
+
     [Header("Feedbacks")]
     public FeedbackDataSO breakFeedback;
     public FeedbackDataSO shieldBreakFeedback;

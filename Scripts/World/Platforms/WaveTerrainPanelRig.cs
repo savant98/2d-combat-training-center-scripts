@@ -19,8 +19,11 @@ public sealed class WaveTerrainPanelRig : MonoBehaviour
     private static readonly Color ArmRod = new Color(.27f, .28f, .31f, 1f);
     private static readonly Color JointBody = new Color(.030f, .033f, .039f, 1f);
     private static readonly Color JointGlow = new Color(1.7f, 1.8f, 1.9f, 1f);
-    /// <summary>맞물림 섬광의 색. 일반 지형은 지형 선의 초록, 생성 외형·OneWay는 그 발판 발광의 주황 계열이다.</summary>
-    public static readonly Color TerrainFlash = new Color(.55f, 1f, .62f, 1f);
+    /// <summary>
+    /// 맞물림 섬광의 색. 일반 지형은 공장형 기본 플랫폼의 스틸 화이트 테두리선(PlatformEdgeLine)에서 유도한 흰색 계열, 생성 외형·OneWay는 그 발판 발광의 주황 계열이다.
+    /// (던전 3차: 녹색 폐기. 예전 값은 초록 .55, 1, .62였다. 선 재질을 정한 스타일·셀 Prefab은 FlashFrom으로 그 선의 색을 따른다.)
+    /// </summary>
+    public static readonly Color TerrainFlash = new Color(.94f, .97f, 1f, 1f);
     public static readonly Color GeneratedFlash = new Color(1f, .66f, .34f, 1f);
     /// <summary>
     /// 지형 선의 발광색(재질의 발광색 × 세기)에서 맞물림 섬광 색을 만든다. 스타일이 선 재질을 따로 정한 기본 지형에 쓴다.

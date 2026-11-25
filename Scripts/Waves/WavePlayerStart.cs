@@ -6,7 +6,8 @@ using UnityEngine;
 // 지형 준비 동안 Player를 구속 상자에 가두고, 시작 좌표로 옮기는 Wave에서는 크레인으로 그 상자를 들어 옮긴다.
 // 방 전환의 UI 잠금 초기화와 독립적이다.
 // 입력과 진행 중인 무장(회복·드론 소환 포함)은 건드리지 않는다. 이동만 RaycastMotor2D의 이동 구속이 막고,
-// 갇힌 동안의 피해는 PlayerHealth가 막는다. WaveManager와 코스 Stage가 함께 잡아도 상자는 Player마다 하나다.
+// 갇힌 동안의 피해는 PlayerHealth가 막는다(보호 없는 구속 HoldForPassage(false)는 피해를 받는다 — 전투 중 크레인). 잡기는 보호 여부와 관계없이 막는다.
+// WaveManager와 코스 Stage가 함께 잡아도 상자는 Player마다 하나다.
 // 크레인 이동은 구속 영역을 물리 틱마다 조금씩 옮기는 것이다(RaycastMotor2D.ShiftConfinement). Player는 기존 이동 경로로 상자에 실려 가므로
 // 위치를 직접 바꾸지 않고, 옮겨지는 동안에도 상자 안에서 움직이고 무장을 쓸 수 있다.
 [DisallowMultipleComponent]
@@ -31,6 +32,10 @@ public sealed class WavePlayerStart : MonoBehaviour
     private Coroutine presentationSampling;
     private WaveCarryPresentation carryPresentation;
     private bool terrainReady;
+    // 관 통과처럼 구속 상자를 그리지 않고 잡는 동안 true(HoldForPassage). Update가 상자를 조립하지 않는다. Release가 지운다.
+    private bool hideContainment;
+    // HoldForPassage(protectPlayer)로 받은 보호 여부(Hold는 늘 true). IsHoldingProtected가 읽는다. Release가 true로 되돌린다.
+    private bool protectWhileHolding = true;
     private bool lifted;            // 크레인이 상자를 들기 시작했는지(그 전에 끊기면 제자리에 둔다)
     private Vector3 carryOrigin, carryDestination;   // 들기 전에 서 있던 자리와 옮겨 놓을 시작 좌표(월드)
     private WaveCellTerrain carryTerrain;
@@ -54,6 +59,16 @@ public sealed class WavePlayerStart : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// Player를 '피해 보호가 있는' 구속으로 잡고 있는지(PlayerHealth의 피해 무시 판정용). 잡고 있는 것 가운데 하나라도 보호하면 true다
+    /// (보호 없는 크레인 탑승 중에 Wave 준비 구속이 겹치면 보호한다). 보호 없는 구속만 있으면 false — 피해는 받고 잡기는 <see cref="IsHolding"/>으로 계속 막힌다.
+    /// </summary>
+    public static bool IsHoldingProtected(PlayerController target)
+    {
+        foreach (var holder in holders) if (holder != null && holder.player == target && holder.protectWhileHolding) return true;
+        return false;
+    }
+
     public void Hold()
     {
         if (IsHoldingPlayer) return;
@@ -64,6 +79,25 @@ public sealed class WavePlayerStart : MonoBehaviour
         holders.Add(this);
         if (first) Confine(player);
     }
+
+    /// <summary>
+    /// 던전 관 통과용 구속. Hold와 같이 이동만 모터 구속으로 막고 피해 무시·잡기 차단 보호를 유지하지만, 구속 상자는 그리지 않는다
+    /// (관 입구가 Player를 빨아들이는 연출이 따로 있다). 이미 잡고 있으면 아무것도 하지 않는다. 해제는 기존 Release().
+    /// </summary>
+    /// <param name="protectPlayer">
+    /// true(기본, 기존 호출과 같음)면 잡힌 동안 피해를 무시한다. false면 피해는 받고 잡기만 막는다(전투 중 크레인, <see cref="IsHoldingProtected"/>).
+    /// </param>
+    public void HoldForPassage(bool protectPlayer = true)
+    {
+        if (IsHoldingPlayer) return;
+        hideContainment = true;
+        protectWhileHolding = protectPlayer;
+        Hold();
+        if (!IsHoldingPlayer) { hideContainment = false; protectWhileHolding = true; }
+    }
+
+    /// <summary>이 구속이 피해 보호를 하는지(HoldForPassage의 protectPlayer, Hold는 늘 true).</summary>
+    public bool ProtectsPlayer => protectWhileHolding;
 
     // 지금 서 있는(또는 떠 있는) 자리에 몸통보다 조금 큰 상자를 씌운다. 속도와 진행 중인 동작은 그대로 두고 상자가 막게 한다.
     private static void Confine(PlayerController target)
@@ -78,7 +112,7 @@ public sealed class WavePlayerStart : MonoBehaviour
     // 잠깐 기다려도 계속 갇혀 있으면 상자를 조립한다.
     private void Update()
     {
-        if (!IsHoldingPlayer || player == null || Time.time - confinedAt < ShowDelay) return;
+        if (!IsHoldingPlayer || hideContainment || player == null || Time.time - confinedAt < ShowDelay) return;
         ShowContainment(player);
     }
     // 구속 상자 표시를 켠다(이미 켜져 있으면 그대로 둔다).
@@ -347,6 +381,8 @@ public sealed class WavePlayerStart : MonoBehaviour
             StopCarryPresentation();
             holders.Remove(this);
             IsHoldingPlayer = false;
+            hideContainment = false;
+            protectWhileHolding = true;
             player = null;
             // 다른 곳이 아직 잡고 있으면 상자를 유지한다.
             if (held && !IsHolding(target)) Free(target);

@@ -92,6 +92,81 @@ public class RaycastMotor2D : MonoBehaviour
         return blocked;
     }
 
+    // 몸통을 Transform이 position에 있다고 보고 direction으로 distance만큼 쓸어 처음 막는 지형을 찾는다(없으면 collider가 null).
+    // 몸통은 이동 광선이 나가는 상자와 같다(Collider의 AABB를 skin만큼 줄인 상자). 걸러내기도 이동(RaycastMovement)과 같다:
+    // 이동 충돌 레이어만 막고, 통과 발판·움직이는 발판은 그 개체가 지원하고 아래로 쓸 때만 몸 바닥보다 낮은 것을 막는다. 자기 몸통은 건너뛴다.
+    // 시작 자리에서 이미 겹친 지형은 거리 0으로 맞는다(distance가 0이면 그 자리의 겹침만 본다).
+    // 물리 동기화(SyncTransforms)는 하지 않는다. 지형은 대부분 멈춰 있고, 움직이는 Prop은 한 물리 틱 늦게 보여도 되는 질의(비행 적 경로 찾기·순간이동 경로 검사)에 쓴다.
+    // 이동·다른 질의는 이 함수를 쓰지 않으므로 기존 개체의 동작은 그대로다.
+    public RaycastHit2D CastBody(Vector2 position, Vector2 direction, float distance)
+    {
+        if (col == null) return default;
+        GetBodyBox(position, out Vector2 center, out Vector2 size);
+        float inset = skinWidth * 2f;
+        size = new Vector2(Mathf.Max(.01f, size.x - inset), Mathf.Max(.01f, size.y - inset));
+        float length = direction.magnitude;
+        direction = length > 1e-5f ? direction / length : Vector2.up;
+        bool allowOneWay = direction.y < -.5f;
+        int movingBit = MovingLayer;
+        int moving = allowOneWay && SupportsMovingPlatforms ? movingBit : 0;
+        int mask = collisionLayer.value | (allowOneWay && SupportsOneWayPlatforms ? OneWayLayer : 0) | moving;
+        var filter = new ContactFilter2D();
+        filter.SetLayerMask(mask); filter.useTriggers = Physics2D.queriesHitTriggers;
+        movementHits.Clear();
+        Physics2D.BoxCast(center, size, 0f, direction, filter, movementHits, Mathf.Max(distance, 1e-4f));
+        // 통과 발판 규칙의 몸 바닥은 실제 몸통(줄이기 전) 바닥이다.
+        float bodyBottom = center.y - size.y * .5f - skinWidth;
+        RaycastHit2D nearest = default;
+        float nearestDistance = float.PositiveInfinity;
+        foreach (var hit in movementHits)
+        {
+            if (hit.collider == null || hit.collider == col) continue;
+            if (OneWayPlatform.IsSurface(hit.collider))
+            {
+                if (!allowOneWay || !SupportsOneWayPlatforms || hit.collider == ignoredOneWay) continue;
+                if (bodyBottom < hit.collider.bounds.max.y - skinWidth * 2f) continue;
+            }
+            else if ((mask & movingBit) != 0 && MovingPlatform.IsSurface(hit.collider))
+            {
+                if (moving == 0 || hit.collider == ignoredOneWay) continue;
+                if (bodyBottom < hit.collider.bounds.max.y - skinWidth * 2f) continue;
+            }
+            else if ((collisionLayer.value & (1 << hit.collider.gameObject.layer)) == 0) continue;
+            if (hit.distance >= nearestDistance) continue;
+            nearest = hit; nearestDistance = hit.distance;
+        }
+        movementHits.Clear();
+        return nearest;
+    }
+
+    // position에 놓인 몸통 상자(중심·크기). 원·상자·캡슐은 모양으로 계산해 꺼진 Collider나 물리 동기화 전의 Transform 이동도 반영한다.
+    private void GetBodyBox(Vector2 position, out Vector2 center, out Vector2 size)
+    {
+        Transform body = col.transform;
+        Vector3 lossy = body.lossyScale;
+        float scaleX = Mathf.Abs(lossy.x), scaleY = Mathf.Abs(lossy.y);
+        Vector2 local = (Vector2)body.TransformPoint(col.offset) - (Vector2)transform.position;
+        switch (col)
+        {
+            case CircleCollider2D circle:
+                float diameter = circle.radius * 2f * Mathf.Max(scaleX, scaleY);
+                size = new Vector2(diameter, diameter);
+                break;
+            case BoxCollider2D box:
+                size = new Vector2(box.size.x * scaleX, box.size.y * scaleY) + Vector2.one * (box.edgeRadius * 2f * Mathf.Max(scaleX, scaleY));
+                break;
+            case CapsuleCollider2D capsule:
+                size = new Vector2(capsule.size.x * scaleX, capsule.size.y * scaleY);
+                break;
+            default:
+                Bounds bounds = col.bounds;
+                size = bounds.size;
+                local = (Vector2)bounds.center - (Vector2)transform.position;
+                break;
+        }
+        center = position + local;
+    }
+
     private static readonly System.Collections.Generic.List<RaycastHit2D> environmentCastHits = new();
     private static readonly System.Collections.Generic.List<Collider2D> bodyOverlaps = new();
     private readonly System.Collections.Generic.List<RaycastHit2D> movementHits = new();
@@ -101,6 +176,22 @@ public class RaycastMotor2D : MonoBehaviour
     // 레이어 번호는 OneWayPlatform이 처음 한 번만 찾아 둔 값을 쓴다(광선마다 하던 NameToLayer 문자열 검색 제거, 값은 같다).
     private static int OneWayLayer => 1 << OneWayPlatform.SurfaceLayer;
     public bool SupportsOneWayPlatforms { get; set; }
+    // 자기 몸통(col)에 맞은 이동 광선을 건너뛴다. 기본은 꺼짐이라 기존 개체의 동작은 그대로다.
+    // 몸통이 충돌 레이어 안의 고체인 개체(던전 중력 Prop의 SolidMount)만 켠다: 광선이 몸통 안에서 시작해 거리 0으로 자기 몸통에 맞으면
+    // 아래로 움직일 때도 위로 밀려 올라가므로, 자기 몸통을 빼고 그 아래의 받침만 본다.
+    public bool IgnoreOwnBodyHits { get; set; }
+    // 움직이는 발판(MovingPlatform 레이어) 지원. 켠 개체만 그 발판 위에 서고(통과 발판과 같은 규칙: 위에서만 서고 아래·옆에서는 지나간다)
+    // 발판이 이번 물리 틱에 움직일 양만큼 함께 옮겨진다(운반 이동). 끈 개체(적·투사체)는 그 발판을 통과하고 이동 계산은 예전과 같다. 지금은 Player만 켠다.
+    public bool SupportsMovingPlatforms { get; set; }
+    // 레이어 번호는 MovingPlatform이 처음 한 번만 찾아 둔 값을 쓴다. 레이어가 없으면 0(아무 발판도 없는 것과 같다).
+    private static int MovingLayer => MovingPlatform.SurfaceLayer >= 0 ? 1 << MovingPlatform.SurfaceLayer : 0;
+    // 운반 이동을 계산하는 동안 건너뛰는 발판(운반하는 발판 자신). 계산이 끝나면 바로 지운다.
+    private Collider2D ignoredCarrier;
+    // 움직이는 발판에서 위로 뛰어오른 순간 캐릭터가 이어받을 발판 속도(CharacterController2D가 한 번 읽고 지운다).
+    private Vector2 takeoffVelocity;
+    private bool hasTakeoff;
+    // 마지막 이동에서 찾은 바닥 Collider(물리 질의 없음). 움직이는 발판이 자기 위에 선 Player를 알 때 쓴다.
+    public Collider2D GroundCollider => groundCollider;
 
     // 이동 구속: 켜져 있는 동안 몸통이 이 월드 사각형 밖으로 나가지 못한다.
     // 실제 Collider를 만들지 않고 이 모터의 이동량만 막으므로 탄환·적·다른 물리 질의에는 영향이 없다(Wave 준비 중 Player 구속 상자).
@@ -180,14 +271,22 @@ public class RaycastMotor2D : MonoBehaviour
 
     public void ResetOneWayState()
     {
-        groundCollider = ignoredOneWay = null;
+        // 순간이동하면 통과 발판 무시와 함께 운반 상태(서 있던 움직이는 발판)도 지운다. 다음 이동에서 바닥을 다시 찾는다.
+        groundCollider = ignoredOneWay = ignoredCarrier = null;
         ignoreOneWayUntil = 0f;
+        takeoffVelocity = Vector2.zero;
+        hasTakeoff = false;
     }
 
     public bool TryDropThroughOneWay()
     {
-        if (!SupportsOneWayPlatforms || groundCollider == null
-            || !OneWayPlatform.IsSurface(groundCollider)) return false;
+        // 움직이는 발판도 통과 발판처럼 아래 + 점프로 내려간다(지원하는 개체만).
+        if (groundCollider == null) return false;
+        bool oneWay = SupportsOneWayPlatforms && OneWayPlatform.IsSurface(groundCollider);
+        if (!oneWay && !(SupportsMovingPlatforms && MovingPlatform.IsSurface(groundCollider))) return false;
+        // 움직이는 발판 바로 아래에 단단한 바닥이 맞닿아 있으면(승강기 아래 정지점·출입구 바닥에 걸쳐 섬) 내려갈 곳이 없으므로
+        // 하차로 보지 않는다: 점프 입력이 사라지지 않고 보통 점프로 나간다.
+        if (!oneWay && HasSolidSupportBelow()) return false;
         ignoredOneWay = groundCollider;
         ignoreOneWayUntil = Time.time + .4f;
         groundCollider = null;
@@ -197,7 +296,9 @@ public class RaycastMotor2D : MonoBehaviour
     // bodyBottom을 주면 통과 발판을 막을지 정할 때 몸 바닥이 그 높이에 있는 것으로 본다(주지 않으면 지금 몸통).
     private RaycastHit2D RaycastMovement(Vector2 origin, Vector2 direction, float distance, bool allowOneWay, float bodyBottom = float.NaN)
     {
-        int mask = collisionLayer.value | (allowOneWay && SupportsOneWayPlatforms ? OneWayLayer : 0);
+        int movingBit = MovingLayer;
+        int moving = allowOneWay && SupportsMovingPlatforms ? movingBit : 0;
+        int mask = collisionLayer.value | (allowOneWay && SupportsOneWayPlatforms ? OneWayLayer : 0) | moving;
         var filter = new ContactFilter2D();
         filter.SetLayerMask(mask); filter.useTriggers = Physics2D.queriesHitTriggers;
         movementHits.Clear();
@@ -206,11 +307,18 @@ public class RaycastMotor2D : MonoBehaviour
         float nearestDistance = float.PositiveInfinity;
         foreach (var hit in movementHits)
         {
-            if (hit.collider == null) continue;
+            if (hit.collider == null || (IgnoreOwnBodyHits && hit.collider == col)) continue;
             bool oneWay = OneWayPlatform.IsSurface(hit.collider);
             if (oneWay)
             {
                 if (!allowOneWay || !SupportsOneWayPlatforms || hit.collider == ignoredOneWay) continue;
+                if (col == null || (float.IsNaN(bodyBottom) ? col.bounds.min.y : bodyBottom) < hit.collider.bounds.max.y - skinWidth * 2f) continue;
+            }
+            // 움직이는 발판: 지원하는 개체의 아래 방향 광선에서만 통과 발판과 같은 규칙으로 막는다. 지원하지 않으면 늘 통과한다
+            // (이동 충돌 레이어에 그 레이어가 들어 있어도). 마스크에 그 레이어가 없으면 이 검사 자체를 하지 않는다.
+            else if ((mask & movingBit) != 0 && MovingPlatform.IsSurface(hit.collider))
+            {
+                if (moving == 0 || hit.collider == ignoredOneWay || hit.collider == ignoredCarrier) continue;
                 if (col == null || (float.IsNaN(bodyBottom) ? col.bounds.min.y : bodyBottom) < hit.collider.bounds.max.y - skinWidth * 2f) continue;
             }
             else if ((collisionLayer.value & (1 << hit.collider.gameObject.layer)) == 0) continue;
@@ -319,6 +427,8 @@ public class RaycastMotor2D : MonoBehaviour
             || !ignoredOneWay.gameObject.activeInHierarchy || col.bounds.max.y < ignoredOneWay.bounds.min.y))
             ignoredOneWay = null;
         CalculateRaySpacing();
+        // 지난 이동에서 서 있던 바닥(움직이는 발판에서 뛰어오른 틱을 알기 위해 지우기 전에 둔다).
+        Collider2D previousGround = groundCollider;
         groundCollider = null;
 
         RaycastCollisionInfo2D collisionInfo = new();
@@ -334,6 +444,11 @@ public class RaycastMotor2D : MonoBehaviour
         else
             collisionInfo.down = HasGroundSupport(move.x);
 
+        // 공중에서 움직이는 발판으로 내려앉기: 발판은 이번 틱 끝(순서 100)에 PendingDelta만큼 움직이므로 발판 기준 상대 이동으로 다시 본다
+        // (올라오는 승강기로 떨어지거나, 올라가는 승강기에서 뛰었다가 내려앉을 때 발판을 뚫지 않게). 막 뛰어오른 그 발판은 이번 틱에 보지 않는다.
+        if (SupportsMovingPlatforms && !confined && groundCollider == null)
+            TryLandOnMovingPlatform(ref move, ref collisionInfo, desiredMove.y > 0f ? previousGround : null);
+
         if (confined)
         {
             ApplyConfinement(ref move, ref collisionInfo);
@@ -344,6 +459,19 @@ public class RaycastMotor2D : MonoBehaviour
                 move += confinementCarry;
                 confinementCarry = Vector2.zero;
             }
+        }
+        // 움직이는 발판 위에 섰으면 발판이 이번 틱에 움직일 양을 더한다. 구속 중에는 구속이 우선이라 운반하지 않는다.
+        else if (SupportsMovingPlatforms && groundCollider != null)
+            ApplyPlatformCarry(ref move, ref collisionInfo);
+        // 움직이는 발판에서 위로 뛰어오른 틱: 발판이 이번 틱에 오를 양을 함께 더하고, 발판의 위쪽 속도를 캐릭터가 이어받게 알린다.
+        // 이어받지 않으면 점프 속도보다 빨리 오르는 승강기에 곧바로 다시 붙잡혀 내릴 수 없다. 내려가는 발판의 속도는 이어받지 않는다.
+        else if (SupportsMovingPlatforms && previousGround != null && desiredMove.y > 0f && groundCollider == null
+                 && MovingPlatform.IsSurface(previousGround) && MovingPlatform.TryGet(previousGround, out var leftPlatform)
+                 && leftPlatform.Velocity.y > 0f)
+        {
+            move += TakeoffCarry(previousGround, new Vector2(0f, Mathf.Max(0f, leftPlatform.PendingDelta.y)), move);
+            takeoffVelocity = leftPlatform.Velocity;
+            hasTakeoff = true;
         }
 
         return new RaycastMoveResult2D
@@ -376,6 +504,111 @@ public class RaycastMotor2D : MonoBehaviour
         else if (move.y > up) { move.y = up; info.up = true; }
         // 구속 바닥에 닿아 서 있으면 실제 바닥처럼 접지로 본다(공중에서 갇혀도 그 자리에 선다).
         else if (move.y <= 0f && move.y - down <= skinWidth + 0.001f) info.down = true;
+    }
+
+    // 운반 이동: 서 있는 움직이는 발판(MovingPlatform)이 이번 물리 틱에 움직일 양(PendingDelta)을 자기 이동 뒤에 더한다.
+    // 발판은 계획(순서 -100) → 캐릭터 이동(순서 0) → 적용(순서 100)으로 움직이므로 여기서 보는 발판 Collider는 늘 틱 시작 자리다.
+    // 운반 양도 일반 이동과 같은 광선으로 벽·천장·아래 지형에 막히는지 본다(운반하는 발판 자신은 제외).
+    // 천장에 막히면 덜 올라가고 발판은 계속 올라가므로 몸은 발판 아래로 빠진다(위에서만 서는 발판이라 끼지 않는다).
+    // 몸 바로 아래(skin 두 배 안)에 이동 충돌 레이어의 고체가 있는지(통과 발판·움직이는 발판 제외).
+    private bool HasSolidSupportBelow()
+    {
+        CalculateRaySpacing();
+        for (int i = 0; i < verticalRayCount; i++)
+        {
+            Vector2 origin = new Vector2(bounds.min.x + verticalRaySpacing * i, bounds.min.y);
+            if (RaycastMovement(origin, Vector2.down, skinWidth * 2f + .02f, false)) return true;
+        }
+        return false;
+    }
+
+    // 발판이 한 물리 틱에 움직일 수 있는 양의 여유(승강기 최고 14칸/초 × 0.01초 = 0.14보다 넉넉히).
+    private const float MovingPlatformReach = .3f;
+
+    // 공중일 때 아래의 움직이는 발판을 발판 기준 상대 이동으로 본다. 이번 틱에 몸 바닥이 발판 윗면(이동 뒤)보다 내려가게 되면 그 윗면에 세운다:
+    // 자기 이동은 지금 간격만큼(move.y = -간격), 발판 이동은 뒤이은 운반(ApplyPlatformCarry)이 더한다.
+    private void TryLandOnMovingPlatform(ref Vector2 move, ref RaycastCollisionInfo2D info, Collider2D skip)
+    {
+        int movingBit = MovingLayer;
+        if (movingBit == 0 || col == null) return;
+        float reach = Mathf.Max(0f, -move.y) + skinWidth + MovingPlatformReach;
+        var filter = new ContactFilter2D();
+        filter.SetLayerMask(movingBit); filter.useTriggers = Physics2D.queriesHitTriggers;
+        float bodyBottom = col.bounds.min.y;
+        for (int i = 0; i < verticalRayCount; i++)
+        {
+            Vector2 origin = new Vector2(bounds.min.x + verticalRaySpacing * i + move.x, bounds.min.y);
+            movementHits.Clear();
+            Physics2D.Raycast(origin, Vector2.down, filter, movementHits, reach);
+            foreach (var hit in movementHits)
+            {
+                var surface = hit.collider;
+                if (surface == null || surface == skip || surface == ignoredOneWay || !MovingPlatform.IsSurface(surface)) continue;
+                if (!MovingPlatform.TryGet(surface, out var platform)) continue;
+                // 몸 바닥이 이미 발판 윗면 아래면(지나침) 통과 발판 규칙대로 건너뛴다.
+                if (bodyBottom < surface.bounds.max.y - skinWidth * 2f) continue;
+                float gap = Mathf.Max(0f, hit.distance - skinWidth);
+                float relative = move.y - platform.PendingDelta.y;
+                if (relative >= 0f || -relative < gap) continue;
+                move.y = -gap;
+                info.down = true;
+                groundCollider = surface;
+                return;
+            }
+        }
+    }
+
+    /// <summary>움직이는 발판에서 뛰어오른 순간 이어받을 발판 속도를 한 번 꺼낸다(없으면 false). CharacterController2D가 이동 직후 부른다.</summary>
+    public bool TryConsumeTakeoffVelocity(out Vector2 velocity)
+    {
+        velocity = takeoffVelocity;
+        bool had = hasTakeoff;
+        hasTakeoff = false;
+        takeoffVelocity = Vector2.zero;
+        return had;
+    }
+
+    // 뛰어오른 틱의 추가 이동(발판이 이번 틱에 오를 양). 천장에 막히는지 본다(떠난 발판 자신은 제외).
+    private Vector2 TakeoffCarry(Collider2D carrier, Vector2 carry, Vector2 move)
+    {
+        if (carry == Vector2.zero) return carry;
+        Bounds start = bounds;
+        bounds.center += (Vector3)move;
+        var carryInfo = new RaycastCollisionInfo2D();
+        ignoredCarrier = carrier;
+        try { VerticalCollisions(ref carry, ref carryInfo); }
+        finally
+        {
+            ignoredCarrier = null;
+            bounds = start;
+        }
+        return carry;
+    }
+
+    private void ApplyPlatformCarry(ref Vector2 move, ref RaycastCollisionInfo2D info)
+    {
+        Collider2D carrier = groundCollider;
+        if (!MovingPlatform.IsSurface(carrier) || !MovingPlatform.TryGet(carrier, out var platform)) return;
+        Vector2 carry = platform.PendingDelta;
+        if (carry == Vector2.zero) return;
+        Bounds start = bounds;
+        // 자기 이동을 마친 몸 자리에서 광선을 쏜다.
+        bounds.center += (Vector3)move;
+        var carryInfo = new RaycastCollisionInfo2D();
+        ignoredCarrier = carrier;
+        try
+        {
+            if (carry.x != 0) HorizontalCollisions(ref carry, ref carryInfo);
+            if (carry.y != 0) VerticalCollisions(ref carry, ref carryInfo);
+        }
+        finally
+        {
+            ignoredCarrier = null;
+            bounds = start;
+        }
+        move += carry;
+        // 운반되는 동안에도 발판 위에 선 것이다. 내려가다 아래 지형에 닿았으면 VerticalCollisions가 그 지형을 새 바닥으로 바꿔 둔다.
+        info.down = true;
     }
 
     private bool HasGroundSupport(float horizontalMove)

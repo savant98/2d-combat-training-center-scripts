@@ -109,6 +109,10 @@ public class Wave
     public WaveTerrainEvent[] terrainEvents = System.Array.Empty<WaveTerrainEvent>();
     public bool custom;
     public string customDescription;
+    [Tooltip("Wave 진행 연출입니다. 기본 진행은 처치하면 다음 Wave로 넘어가며 지형 패널과 크레인 연출을 씁니다. 던전은 방을 돌며 진행하고 클리어하면 크레인이 다음 던전으로 옮깁니다.")]
+    public WaveFlowMode flowMode = WaveFlowMode.Sequential;
+    [Tooltip("던전 Wave의 생성 설정입니다(진행 연출이 던전일 때만 씁니다).")]
+    public DungeonWaveSettings dungeon = new DungeonWaveSettings();
     [Header("Wave Settings")]
     public WaveClearType clearType = WaveClearType.DefeatAllTargets;
     public float surviveTime = 0f;

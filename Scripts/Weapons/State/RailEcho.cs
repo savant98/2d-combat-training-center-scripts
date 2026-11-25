@@ -99,6 +99,7 @@ public static class RailEcho
     {
         if (!StarSpear.IsTrackable(target)) return false;
         var health = target.GetComponentInParent<HealthBase>();
+        if (DungeonPropTargeting.IsProp(health)) return false;   // 파괴형 던전 Prop은 자동 조준·레일건 표적이 아니다
         return health is EnemyHealth && !health.IsInvincible && health.currentHP > 0f;
     }
 

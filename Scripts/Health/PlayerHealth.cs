@@ -46,8 +46,9 @@ public class PlayerHealth : HealthBase
     {
         if (IsDead) return;
         var owner = GetComponentInParent<PlayerController>();
-        // Wave 준비 중 구속 상자에 갇힌 동안은 피해를 받지 않는다. 반격·사망이 쓰는 IsInvincible과 따로 판정해 서로의 저장·복원이 섞이지 않게 한다.
-        if (WavePlayerStart.IsHolding(owner)) return;
+        // Wave 준비 중 구속 상자·관 통과처럼 보호하는 구속에 잡힌 동안은 피해를 받지 않는다(전투 중 크레인 같은 보호 없는 구속은 피해를 받는다).
+        // 반격·사망이 쓰는 IsInvincible과 따로 판정해 서로의 저장·복원이 섞이지 않게 한다. 잡기 차단은 보호 여부와 관계없이 구속이면 유지된다.
+        if (WavePlayerStart.IsHoldingProtected(owner)) return;
         var grab = owner.AbilityManager.Grab;
         // 잡기 보호는 반격 판정보다 먼저 적용하고 전역 무적 상태와 분리한다.
         if (grab != null && grab.BlocksOtherDamage) return;

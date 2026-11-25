@@ -79,6 +79,9 @@ public class EnemyShieldSystem : MonoBehaviour
     private float breakableEndTime;
     private bool breakable = false;
     private bool isBreaking = false;
+    // 재생 중 표시 갱신의 주기 확인과 마지막으로 보낸 칸 수(칸 막대가 없으면 -1).
+    private EnemyCheckTimer regenDisplayTimer;
+    private int regenDisplayCells = -1;
 
     private Coroutine coroutine;
     private void Awake()
@@ -164,8 +167,27 @@ public class EnemyShieldSystem : MonoBehaviour
         if (CurrentShield < MaximumShield)
         {
             CurrentShield = Mathf.Min(MaximumShield, CurrentShield + data.shieldRegenRate * Time.deltaTime);
-            enemyUI.ShowShield(CurrentShield / MaximumShield, health.IsBossEnemy);
+            ShowRegenShield();
         }
+    }
+
+    // 재생 표시는 매 프레임이 아니라 regenDisplayInterval마다 보낸다. 칸 막대의 칸 수가 바뀌거나 가득 차면 바로 보낸다.
+    // 막대는 받은 값을 fillTime 동안 따라가므로 0.1초 간격에서도 끊겨 보이지 않는다. 피해·회복(Break 실패·종료)은 지금처럼 바로 보낸다.
+    private void ShowRegenShield()
+    {
+        float normalized = CurrentShield / MaximumShield;
+        int cells = enemyUI.ShieldCellIndex(normalized);
+        bool full = CurrentShield >= MaximumShield;
+        bool cellChanged = cells >= 0 && cells != regenDisplayCells;
+        if (!full && !cellChanged && !regenDisplayTimer.Due(data.regenDisplayInterval))
+        {
+            EnemyCheckStats.Add(EnemyCheckKind.ShieldRegenUiSkipped);
+            return;
+        }
+        if (full || cellChanged) regenDisplayTimer.Restart(data.regenDisplayInterval);
+        regenDisplayCells = cells;
+        EnemyCheckStats.Add(EnemyCheckKind.ShieldRegenUi);
+        enemyUI.ShowShield(normalized, health.IsBossEnemy);
     }
 
     public void TakeDamage(WeaponBaseSO.DamageInfo info, Vector3 hitPosition)

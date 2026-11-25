@@ -28,4 +28,10 @@ public class FlyingPatrolDataSO : FlyingAbilityDataSO
     public Vector2 holdDuration = new(3f, 5f);
     [Tooltip("같은 무리에서 동시에 추적할 수 있는 최대 수입니다. 가득 차면 자리가 날 때까지 거리 유지를 이어 갑니다. 0이면 제한하지 않습니다.")]
     [Min(0)] public int maxConcurrentChasers = 3;
+
+    [Header("Check Interval")]
+    [Tooltip("유지 시간이 끝난 뒤 다음 패턴이 사격(FlyingShootAbility — Drone)일 때 그 시작 조건(사거리·사격선)을 다시 확인하는 간격(초)입니다. 끝난 첫 프레임에는 바로 한 번 확인합니다. 0이면 매 프레임 확인합니다. Aegis 순찰은 아래 candidateCheckInterval을 씁니다.")]
+    [Min(0f)] public float attackCheckInterval = 0.1f;
+    [Tooltip("유지 시간이 끝난 뒤 공격 후보(시작 조건)를 다시 평가하는 간격(초)입니다. 끝난 첫 프레임에는 바로 한 번 평가합니다. 0이면 매 프레임 평가합니다. 후보가 여럿이고 확인이 비싼 Aegis 순찰(AegisPatrolAbility)만 사용합니다.")]
+    [Min(0f)] public float candidateCheckInterval = 0.2f;
 }

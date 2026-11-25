@@ -1,6 +1,7 @@
 using UnityEngine;
 
 // 두 공격이 끝나면 기존 Sniper Teleporter의 한 물리 틱 이동으로 자리를 다시 잡는다.
+// 후보는 도착 자리뿐 아니라 순간이동 L자 경로(EnemyFlightNavigator.IsTeleportPathClear)도 열려 있어야 한다.
 [RequireComponent(typeof(EnemyTeleporter))]
 public sealed class AegisRepositionAbility : FlyingAbility
 {
@@ -75,8 +76,10 @@ public sealed class AegisRepositionAbility : FlyingAbility
                 int direction = s == 0 ? side : -side;
                 float distance = Available(anchor, Vector2.right * direction, settings.playerOffset.x);
                 Vector2 candidate = anchor + Vector2.right * (direction * distance);
+                // 순간이동은 한 물리 틱에 수평(지금 높이) → 수직(목표 x)으로 잘리므로 그 L자 경로가 열린 후보만 쓴다(칸막이 너머 후보 제외).
                 if (Vector2.Distance(candidate, player) < settings.minimumDistance
                     || Vector2.Distance(candidate, transform.position) < 1f
+                    || (navigator != null && !navigator.IsTeleportPathClear(transform.position, candidate, settings.avoidance))
                     || controller.Motor.IsBodyBlockedAt(candidate - (Vector2)transform.position)) continue;
                 point = candidate;
                 return true;

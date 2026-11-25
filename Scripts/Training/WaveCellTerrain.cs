@@ -74,6 +74,12 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private readonly Dictionary<(int group, int style, int assembly), ulong> outlineSums = new();
     // 묶음마다 패널로 움직이지 않는 칸만의 요약값. 덩어리 외곽선의 모양은 이 칸들로 정해지므로 모양 캐시의 열쇠로 쓴다.
     private readonly Dictionary<(int group, int style, int assembly), ulong> outlineFixedSums = new();
+    // 스타일 조건부 연결 그림(녹색 기본 지형)을 쓰는 묶음마다, 패널 여부를 뺀 칸 구성의 요약값과 그림을 마지막으로 고른 구성의 요약값.
+    // 외곽선 모양 캐시로 윤곽 따기를 건너뛰어도 그림은 따로, 구성이 바뀐 때만 고른다(패널 연출 중에는 구성이 같아 다시 고르지 않는다).
+    // 이 묶음의 칸은 생성 외형이 아니라 늘 같은 묶음에 속하고 칸 그림은 풀에 남으므로, 같은 구성이 다시 나오면 그림도 이미 맞다.
+    private readonly Dictionary<(int group, int style, int assembly), ulong> connectionSums = new();
+    private readonly Dictionary<(int group, int style, int assembly), ulong> connectionBuilt = new();
+    private readonly HashSet<Vector2Int> connectionCells = new();
     private ulong oneWaySignature;
     private bool oneWayBuilt;
     // 큰 기본 지형 덩어리의 외곽선 모양(윤곽을 따라간 결과). 같은 칸 구성이 다시 나오면(Wave마다의 시작 지형) 윤곽을 다시 따라가지 않고 그대로 쓴다.
@@ -139,6 +145,12 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private float carryLift;
     // 다음 연결 공간 갱신은 지형이 그대로여도 건너뛰지 않는다(옮기기를 시작하고 끝낼 때 범위가 달라진다).
     private bool forceRoomSpace;
+    // 던전 방을 즉시 바꾼 뒤(ShowRoom) Player가 새 방의 연결 공간에 들어설 때까지 공간을 찾을 시작점(방 좌표). 들어서면 비운다.
+    private Vector2? shownRoomPoint;
+    // 입장 로딩이 배경 모듈을 미리 만들 추가 공간(던전 방처럼 Wave 데이터에 없는 공간, 방 좌표).
+    private readonly List<Rect> predictedSpaces = new();
+    // 던전 정적 벽면 방의 키트 예열 요청(입장 로딩 Warm에서 키트 Mesh를 미리 합친다).
+    private readonly List<DungeonRoomBackdropRequest> predictedRoomKits = new();
     // 커스텀 실내(TrainingRoomPresentation)의 카메라 범위: 지금 적용한 것과, 옮기기가 끝난 뒤 맞출 것.
     private Rect? presentationCamera, pendingPresentationCamera;
     // 옮기는 동안에는 방 카메라가 상자를 바짝 따라간다(평소 감쇠로는 빠르게 옮겨지는 상자가 화면 밖으로 나간다). 끝나면 원래 값으로 되돌린다.
@@ -152,6 +164,41 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private float cameraSettleTime;
     public bool IsCameraSettling { get; private set; }
     public Rect? ConnectedBounds { get; private set; }
+    // 카메라 범위(Confiner)가 출력 시야보다 작거나 같으면 Cinemachine Confiner2D의 해답이 한 점으로 줄어 카메라가 Player를 따라가지 않는다(실내 높이 11칸 방).
+    // 시야보다 이만큼(칸) 크게 늘린다. 세로는 천장 쪽으로만 늘려 아랫변(바닥 그림자 3줄 자리)을 지키고, 가로는 가운데 기준으로 늘린다.
+    public const float CameraViewMargin = .05f;
+    // 마지막으로 카메라 범위를 맞춘 공간(방 좌표)과 그때의 시야(방 좌표 칸). 화면 비율·렌즈가 바뀌면 같은 공간으로 다시 맞춘다.
+    private Rect? cameraSpace;
+    private Vector2 cameraView;
+    // 방 가상 카메라 렌즈의 가장 큰 직교 크기. 보스 등장 확대처럼 잠깐 작아져도 범위를 줄이지 않는다.
+    private float cameraLensSize;
+    private CinemachineCamera roomCameraLens;
+    private WaveRoomFloorShade floorShade;
+    /// <summary>
+    /// 지금 카메라 범위(Confiner)가 덮는 방 좌표 사각형. 시야보다 작으면 늘린 값이다.
+    /// 일반 Wave: 연결 공간 + 좌우 1칸·아래 3칸. 던전 Wave: 연결 공간 + 사방 3칸을 셀 외접으로 자른 것(CameraFrameCells).
+    /// </summary>
+    public Rect? CameraRoomBounds { get; private set; }
+    /// <summary>던전 방의 가장자리·덩어리 음영(아직 만들지 않았으면 null).</summary>
+    public WaveRoomFloorShade FloorShade => floorShade;
+    /// <summary>
+    /// 던전 방 카메라 여유(칸): 천장·좌·우·아래 모두 이만큼 벽을 보인다.
+    /// 벽 두께(DungeonRoomTemplateSO.WallThickness)·바닥 그림자 줄 수(WaveRoomRulesSO.BlinderRows)·음영 테두리 두께(WaveRoomFloorShade.EdgeRows)와 같아야 한다.
+    /// </summary>
+    public const int DungeonCameraMargin = 3;
+    /// <summary>
+    /// 던전 Wave 방에서 카메라 범위가 따르는 테두리(방 좌표 칸) = 연결 공간 + 사방 3칸을 셀 외접으로 자른 것(보통 셀 외접 그대로).
+    /// 가장자리 음영의 기준이다. 던전이 아닌 Wave(기본 진행·커스텀 실내, 던전 생성에 실패해 기본 진행으로 넘긴 Wave 포함)에서는 null.
+    /// </summary>
+    public RectInt? CameraFrameCells { get; private set; }
+    // 지난번 SetCameraBounds가 던전 공식을 썼는지와 그때의 셀 외접(Platform 칸, 방 좌표). 화면 비율이 바뀌어 다시 맞출 때 같은 값을 쓴다.
+    private bool cameraFrameDungeon;
+    private RectInt cameraCells;
+    // 같은 WaveManager에 붙은 던전 진행 구성요소(실제 던전 여부를 묻는다). 던전 Wave가 있는 데이터에서만 찾는다.
+    private DungeonManager dungeonManager;
+    // roomSolids의 외접 사각형 캐시(같은 집합이면 다시 세지 않는다. Solids()는 바뀔 때마다 새 집합을 만든다).
+    private HashSet<Vector2Int> solidBoxSource;
+    private RectInt solidBox;
     public bool IsPreloaded { get; private set; }
     public bool IsTransitioning { get; private set; }
     public int PreloadedCount => pool.Count;
@@ -251,11 +298,15 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (own != null && own.kind == cell.kind) return own;
         return cell.kind == WaveCellKind.Platform ? data.cellMap.platformPrefab : data.cellMap.oneWayPrefab;
     }
-    // 기본 지형(생성 외형이 아닌 스타일)의 선 재질. 스타일이 따로 정하지 않았으면 공통 규칙의 지형 선 재질이다.
-    // 훈련마다 지형 선의 색을 다르게 줄 때 쓴다(공통 규칙을 바꾸면 모든 훈련과 Lobby 윤곽선이 함께 바뀐다).
+    // 기본 지형(생성 외형이 아닌 스타일)의 선 재질. 스타일이 정하면 그것, 아니면 그 칸을 그리는 셀 Prefab의 기본 지형 선
+    // (공장형 PlatformCell의 PlatformEdgeLine — WaveTerrainCellView.LineMaterialFor), 그것도 없으면 공통 규칙의 지형 선 재질이다.
+    // 훈련마다 지형 선의 색을 다르게 줄 때 쓴다(공통 규칙을 바꾸면 모든 훈련과 Lobby 윤곽선이 함께 바뀌므로 셀 Prefab 쪽에서 바꾼다).
     private Material TerrainLine(WaveMapCell cell, WaveRoomRulesSO rules)
     {
-        var own = Style(cell).lineMaterial;
+        var style = Style(cell);
+        if (style.lineMaterial != null) return style.lineMaterial;
+        var source = Source(cell);
+        var own = source != null ? source.LineMaterialFor(style) : null;
         return own != null ? own : rules != null ? rules.terrainLineMaterial : null;
     }
     // 덩어리 외곽선은 묶음(그룹·외형·생성 묶음 번호)마다 따로 기억하고, 요약값이 바뀐 묶음만 다시 만든다.
@@ -282,9 +333,9 @@ public sealed class WaveCellTerrain : MonoBehaviour
     }
     private void RefreshOutlines()
     {
-        outlineSums.Clear(); outlineFixedSums.Clear();
+        outlineSums.Clear(); outlineFixedSums.Clear(); connectionSums.Clear();
         ulong oneWay = 0;
-        (int, int, int) lastKey = default; ulong lastSum = 0, lastFixed = 0; bool hasLast = false;
+        (int, int, int) lastKey = default; ulong lastSum = 0, lastFixed = 0, lastWhole = 0; bool hasLast = false;
         foreach (var cell in active)
         {
             bool panel = panels.Count > 0 && panels.ContainsKey(cell);
@@ -297,17 +348,21 @@ public sealed class WaveCellTerrain : MonoBehaviour
             var key = OutlineKey(cell);
             ulong hash = OutlineHash(cell, panel, key.assembly);
             ulong fixedHash = panel ? 0 : hash;
+            // 연결 그림은 끼워지는 패널까지 넣은 완성 모양으로 고르므로, 패널 여부를 뺀 값도 따로 더한다.
+            // 빠지는 중인 칸은 넣지 않는다: 남는 덩어리는 외곽선(고정된 칸만으로 그림)과 같은 순간에 바깥 변 그림(테두리·투명 여백)이 된다.
+            ulong wholeHash = removing.Count > 0 && removing.ContainsKey(cell) ? 0 : panel ? OutlineHash(cell, false, key.assembly) : hash;
             // 대부분의 칸이 같은 묶음(기본 지형)이라 직전 묶음의 합은 따로 들고 있다가 묶음이 바뀔 때만 적는다.
-            if (hasLast && key == lastKey) { unchecked { lastSum += hash; lastFixed += fixedHash; } continue; }
-            if (hasLast) { outlineSums[lastKey] = lastSum; outlineFixedSums[lastKey] = lastFixed; }
+            if (hasLast && key == lastKey) { unchecked { lastSum += hash; lastFixed += fixedHash; lastWhole += wholeHash; } continue; }
+            if (hasLast) { outlineSums[lastKey] = lastSum; outlineFixedSums[lastKey] = lastFixed; connectionSums[lastKey] = lastWhole; }
             lastKey = key; hasLast = true;
             unchecked
             {
                 lastSum = (outlineSums.TryGetValue(key, out ulong sum) ? sum : 0) + hash;
                 lastFixed = (outlineFixedSums.TryGetValue(key, out ulong fixedSum) ? fixedSum : 0) + fixedHash;
+                lastWhole = (connectionSums.TryGetValue(key, out ulong wholeSum) ? wholeSum : 0) + wholeHash;
             }
         }
-        if (hasLast) { outlineSums[lastKey] = lastSum; outlineFixedSums[lastKey] = lastFixed; }
+        if (hasLast) { outlineSums[lastKey] = lastSum; outlineFixedSums[lastKey] = lastFixed; connectionSums[lastKey] = lastWhole; }
 
         // 칸이 하나도 남지 않은 묶음: 빌려 쓰던 선을 끈다.
         List<(int, int, int)> gone = null;
@@ -319,24 +374,53 @@ public sealed class WaveCellTerrain : MonoBehaviour
                 outlineChunks.Remove(key);
             }
         // 바뀐 묶음만 칸을 모아 다시 만든다.
-        Dictionary<(int, int, int), List<WaveMapCell>> changed = null;
+        Dictionary<(int, int, int), List<WaveMapCell>> changed = null, connect = null;
         foreach (var row in outlineSums)
         {
+            // 스타일 조건부 연결 그림 묶음은 칸 구성이 지난번에 그림을 고른 구성과 다를 때만 다시 고른다(외곽선 캐시와 별개).
+            if (StyleConnects(row.Key.style) && (!connectionBuilt.TryGetValue(row.Key, out ulong linked) || linked != connectionSums[row.Key]))
+                (connect ??= new Dictionary<(int, int, int), List<WaveMapCell>>())[row.Key] = new List<WaveMapCell>();
             if (outlineChunks.TryGetValue(row.Key, out var built) && built.signature == row.Value) continue;
             // 고정된 칸의 구성이 같은 모양을 이미 알고 있으면 칸을 모으지 않고 그대로 적용한다.
             // 패널로 움직이는 칸이 달라도 남은 덩어리가 같으면 같은 모양이다(Wave 전환의 시작과 끝 모두 입장 로딩이 넣어 둔 모양에 맞는다).
             if (outlineShapes.TryGetValue(row.Key, out var shapes) && shapes.TryGetValue(outlineFixedSums[row.Key], out var shape)) { ApplyOutlineShape(OutlineChunkFor(row.Key, row.Value), shape); continue; }
             (changed ??= new Dictionary<(int, int, int), List<WaveMapCell>>())[row.Key] = new List<WaveMapCell>();
         }
-        if (changed != null)
+        if (changed != null || connect != null)
         {
             foreach (var cell in active)
-                if (cell.kind == WaveCellKind.Platform && Style(cell).color.a > 0 && changed.TryGetValue(OutlineKey(cell), out var members)) members.Add(cell);
-            foreach (var row in changed) BuildOutlineChunk(row.Key, row.Value, outlineSums[row.Key], outlineFixedSums[row.Key]);
+            {
+                if (cell.kind != WaveCellKind.Platform || Style(cell).color.a <= 0) continue;
+                var key = OutlineKey(cell);
+                if (changed != null && changed.TryGetValue(key, out var members)) members.Add(cell);
+                if (connect != null && connect.TryGetValue(key, out var linked) && !removing.ContainsKey(cell)) linked.Add(cell);
+            }
+            if (connect != null) foreach (var row in connect) ApplyConnections(row.Key, row.Value);
+            if (changed != null) foreach (var row in changed) BuildOutlineChunk(row.Key, row.Value, outlineSums[row.Key], outlineFixedSums[row.Key]);
         }
         if (oneWayBuilt && oneWay == oneWaySignature) return;
         oneWayBuilt = true; oneWaySignature = oneWay;
         BuildOneWayLines();
+    }
+    // 이 스타일의 Platform 칸이 스타일 조건부 연결 그림(ownVisual을 끈 Prefab의 이어진 그림)으로 그려지는지. Prefab 선택은 Source와 같다.
+    private bool StyleConnects(int index)
+    {
+        var styles = data.cellMap.styles;
+        if (styles.Length == 0) return false;
+        var style = styles[Mathf.Clamp(index, 0, styles.Length - 1)];
+        var own = style != null ? style.prefab : null;
+        var view = own != null && own.kind == WaveCellKind.Platform ? own : data.cellMap.platformPrefab;
+        return view != null && view.StyleConnects(style);
+    }
+    // 연결 그림 묶음의 칸마다 같은 묶음 안의 이웃 조합에 맞는 그림을 고른다(RuleTile처럼 놓기만 하면 이어진다).
+    // 패널로 움직이는 칸까지 넣은 완성된 모양으로 골라 패널이 맞물릴 때 그림이 바뀌지 않게 하고, 조합이 같은 칸은 그림을 다시 넣지 않는다.
+    private void ApplyConnections((int group, int style, int assembly) key, List<WaveMapCell> members)
+    {
+        connectionBuilt[key] = connectionSums[key];
+        connectionCells.Clear();
+        foreach (var cell in members) connectionCells.Add(cell.position);
+        Func<Vector2Int, bool> connected = connectionCells.Contains;
+        foreach (var cell in members) pool[cell].SetConnection(cell.position, connected);
     }
     // 묶음의 외곽선 기록을 새 요약값으로 바꾸고, 쓰고 있던 선을 끈다.
     private OutlineChunk OutlineChunkFor((int group, int style, int assembly) key, ulong signature)
@@ -454,6 +538,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private void LateUpdate()
     {
         UpdateCameraSettlement();
+        WatchCameraView();
         if (!carrying && !IsCameraSettling && !IsTransitioning) transitBackdrop?.Hide();
         UpdatePanels();
         TrackGroupMotion();
@@ -603,11 +688,15 @@ public sealed class WaveCellTerrain : MonoBehaviour
             bool thin = cell.kind == WaveCellKind.OneWayPlatform;
             var style = Style(cell);
             Color flash = thin || style.generated ? WaveTerrainPanelRig.GeneratedFlash : WaveTerrainPanelRig.TerrainFlash;
-            // 스타일이 선 재질을 정했으면 섬광도 그 선의 발광색을 따른다(생성 외형·OneWay 포함 — 훈련 테마가 주황 섬광을 흑백 등으로 바꾼다).
-            // 정하지 않았으면 위의 공통 색(기본 지형 초록, 생성 외형·OneWay 주황) 그대로다.
-            if (style.lineMaterial != null)
+            // 스타일 또는 셀 Prefab이 선 재질을 정했으면 섬광도 그 선의 발광색을 따른다(생성 외형·OneWay 포함 — 훈련 테마가 주황 섬광을 흑백 등으로 바꾼다).
+            // 공장형 기본 지형·기본 외형 OneWay(PlatformOneWayCell)는 셀 Prefab의 스틸 화이트 선에서 유도한다.
+            // 둘 다 없는 기본 지형(테마 없는 다른 Tile — TutorialWave 청록·FinalWave 투명 칸)은 실제로 그려지는 공통 규칙 선(녹색)에서 유도해 예전 초록 섬광과 같게 둔다.
+            // 생성 외형·OneWay는 위의 주황 그대로다.
+            var lineSource = style.lineMaterial != null ? style.lineMaterial : view2.LineMaterialFor(style);
+            if (lineSource == null && !thin && !style.generated && rules != null) lineSource = rules.terrainLineMaterial;
+            if (lineSource != null)
             {
-                if (style.lineMaterial != ownLine) { ownLine = style.lineMaterial; ownFlash = WaveTerrainPanelRig.FlashFrom(LineColor(ownLine)); }
+                if (lineSource != ownLine) { ownLine = lineSource; ownFlash = WaveTerrainPanelRig.FlashFrom(LineColor(ownLine)); }
                 flash = ownFlash;
             }
             panels[cell] = new PanelMotion
@@ -874,10 +963,16 @@ public sealed class WaveCellTerrain : MonoBehaviour
         CancelCameraSettlement(true);
         transitBackdrop?.Hide();
         roomSpaceReset = true;
+        shownRoomPoint = null;
         StopAllCoroutines(); ClearPanels(); ClearGround(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); eventAdded.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
         ApplyBackground(0);
         roomSolids = null;
         ConnectedBounds = null;
+        cameraSpace = null;
+        CameraRoomBounds = null;
+        CameraFrameCells = null;
+        cameraFrameDungeon = false;
+        floorShade?.Clear();
         backdropBounds = null;
         ApplyRoomPresentation(WaveRoomState.LayoutAt(data, 0));
         var basis = InitialFor(data.cellMap.cells);
@@ -900,9 +995,61 @@ public sealed class WaveCellTerrain : MonoBehaviour
         roomSpaceReset = true;
     }
 
+    /// <summary>
+    /// 던전 방 이동: 켜진 지형을 cells로 패널 연출 없이 즉시 바꾼다(관 통과 연출이 화면을 가린 동안 부른다).
+    /// ResetMap과 같은 차분 적용(빠진 칸만 끄고 없는 칸만 켠다)이며, 진행 중이던 패널·시간 묶음·분쇄 상태는 제자리로 마친다.
+    /// 카메라·배경 범위는 roomPoint(방 좌표, 보통 도착 출입구 안쪽)에서 찾은 연결 공간에 정착 없이 바로 맞춘다.
+    /// Player가 아직 옛 자리에 있어도 새 방 공간을 고르고, Player가 그 공간에 들어선 뒤부터는 평소처럼 Player 위치를 따른다.
+    /// </summary>
+    public void ShowRoom(WaveMapCell[] cells, Vector2 roomPoint)
+    {
+        if (!IsPreloaded || cells == null) return;
+        CancelCameraSettlement(true);
+        transitBackdrop?.Hide();
+        StopAllCoroutines(); ClearPanels(); ClearGround(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); eventAdded.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
+        var basis = InitialFor(cells);
+        initial = basis.cells; ApplyInitialPivots(basis);
+        foreach (var cell in active.ToArray())
+            if (!initial.Contains(cell)) { pool[cell].gameObject.SetActive(false); Collision(cell, false); active.Remove(cell); }
+        foreach (var cell in cells)
+        {
+            bool added = active.Add(cell);
+            if (!added && !unsettled.Contains(cell)) continue;
+            Preload(cell);
+            if (added) pool[cell].gameObject.SetActive(true);
+            pool[cell].SetAmount(1); pool[cell].transform.localPosition = CellCenter(cell); Collision(cell, true);
+        }
+        unsettled.Clear();
+        solidsDirty = true;
+        roomSpaceDirty = false;
+        shownRoomPoint = roomPoint;
+        forceRoomSpace = true;
+        RebuildTerrain();
+        RefreshRoomSpace(immediateCamera: true);
+    }
+    /// <summary>앞으로 ShowRoom으로 켤 칸을 미리 만들어 둔다(Configure 뒤, 입장 로딩 전에 부른다). 이미 만든 칸은 건너뛴다.</summary>
+    public void RegisterCells(IEnumerable<WaveMapCell> cells)
+    {
+        if (!IsPreloaded || cells == null) return;
+        foreach (var cell in new HashSet<WaveMapCell>(cells).OrderBy(c => c.group).ThenBy(c => c.position.y).ThenBy(c => c.position.x)) Preload(cell);
+    }
+    /// <summary>입장 로딩(Warm)이 반복 배경 모듈을 미리 만들 공간(방 좌표)을 더한다. Warm 전에 부른다.</summary>
+    public void AddPredictedSpaces(IEnumerable<Rect> spaces)
+    {
+        if (spaces == null) return;
+        foreach (var space in spaces) if (!predictedSpaces.Contains(space)) predictedSpaces.Add(space);
+    }
+    /// <summary>입장 로딩(Warm)이 미리 합쳐 둘 정적 벽면 방 키트 요청을 더한다(던전 — DungeonManager.PredictRoomKits).</summary>
+    public void AddPredictedRoomKits(IEnumerable<DungeonRoomBackdropRequest> requests)
+    {
+        if (requests == null) return;
+        foreach (var request in requests) if (request.kitPrefab != null && !predictedRoomKits.Contains(request)) predictedRoomKits.Add(request);
+    }
+
     public IEnumerator Prepare(int index)
     {
         roomSpaceReset = false;
+        shownRoomPoint = null;
         ApplyBackground(index);
         // EndEvents가 외곽선·충돌·연결 공간까지 다시 맞춘다.
         EndEvents();
@@ -1055,8 +1202,22 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (automaticRoomSpace && automaticBackdrop != null)
         {
             var spaces = PredictSpaces();
+            foreach (var space in predictedSpaces) if (!spaces.Contains(space)) spaces.Add(space);
             yield return null;
             yield return automaticBackdrop.Prewarm(spaces, value => report?.Invoke(.3f + .65f * value, "BACKDROP"), WarmFrameBudget);
+        }
+        // 2-1. 던전 정적 벽면 방의 키트 Mesh도 미리 합쳐 둔다(첫 벽면 방에 들어가는 관 통과 프레임에 키트 생성·Mesh 결합이 몰리지 않게).
+        var roomBackground = GetComponent<WaveRoomBackground>();
+        if (roomBackground != null && predictedRoomKits.Count > 0)
+        {
+            yield return null; slice = Time.realtimeSinceStartup;
+            for (int i = 0; i < predictedRoomKits.Count; i++)
+            {
+                roomBackground.PrewarmRoom(predictedRoomKits[i]);
+                report?.Invoke(.95f + .05f * (i + 1) / predictedRoomKits.Count, "BACKDROP");
+                if (Time.realtimeSinceStartup - slice < WarmFrameBudget) continue;
+                yield return null; slice = Time.realtimeSinceStartup;
+            }
         }
         // 3. 처음 실행될 때 번역되는 코드를 미리 한 번씩 부른다
         WarmCode();
@@ -1193,13 +1354,22 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (!resetting && ConnectedBounds.HasValue && room != null && RoomManager.Instance != null && RoomManager.Instance.CurrentRoom == room
             && GameManager.Instance != null && GameManager.Instance.Player != null)
             seed = transform.InverseTransformPoint(GameManager.Instance.Player.transform.position);
+        // 던전 방을 바로 바꾼 직후: Player가 새 방 공간에 들어설 때까지는 도착 출입구 쪽에서 공간을 찾는다(대체 시작점도 같다).
+        if (shownRoomPoint.HasValue && !resetting)
+        {
+            if (unchanged && roomRegion.Contains(Vector2Int.FloorToInt(seed))) shownRoomPoint = null;
+            else seed = start = shownRoomPoint.Value;
+        }
         var seedCell = Vector2Int.FloorToInt(seed);
         // 미리 넓혀 둔 배경이 남아 있으면 공간이 그대로여도 다시 맞춘다.
         bool backdropMatches = backdropBounds.HasValue && ConnectedBounds.HasValue && backdropBounds.Value == ConnectedBounds.Value;
         if (!unchanged && roomSolids != null && roomSolids.SetEquals(solids)) unchanged = true;
         bool force = forceRoomSpace; forceRoomSpace = false;
+        // 실제로 던전이 진행되는 Wave는 입장부터 던전 카메라 범위를 쓴다. 같은 공간이어도 Wave 종류가 바뀌었으면 다시 맞춘다.
+        // 마지막 Wave를 마친 뒤(currentWaveIndex == waves.Length)에는 마지막 Wave를 따른다(FrameWaveIndex — 클리어 뒤 보스 방에서 범위가 바뀌지 않게).
+        bool dungeonFrame = DungeonFrameAt(FrameWaveIndex(waves.currentWaveIndex, data.waves != null ? data.waves.Length : 0, resetting));
         // 지형이 그대로이고 기준점이 지난번에 찾은 공간 안에 있으면 같은 공간이다(옮기는 중에는 범위가 경로를 따라 정해지므로 건너뛰지 않는다).
-        if (!force && !carrying && unchanged && backdropMatches && (roomSeed == seedCell || roomRegion.Contains(seedCell))) { roomSolids = solids; roomSeed = seedCell; return; }
+        if (!force && !carrying && unchanged && backdropMatches && dungeonFrame == cameraFrameDungeon && (roomSeed == seedCell || roomRegion.Contains(seedCell))) { roomSolids = solids; roomSeed = seedCell; return; }
         roomSolids = solids;
         roomSeed = seedCell;
         var layout = WaveRoomState.LayoutAt(data, resetting ? 0 : waves.currentWaveIndex);
@@ -1218,8 +1388,12 @@ public sealed class WaveCellTerrain : MonoBehaviour
         }
         // Wave 전환 중에는 미리 넓혀 둔 배경·통창을 줄이지 않는다(끼우기가 먼저 끝나도 뒤이어 빠질 벽 뒤에 배경이 있어야 한다).
         // 전환이 끝나면 Prepare가 한 번 더 불러 실제 공간에 맞춘다.
-        bool cameraChanged = !ConnectedBounds.HasValue || ConnectedBounds.Value != bounds;
-        if (cameraChanged) SetCameraBounds(bounds, resetting || immediateCamera || !ConnectedBounds.HasValue);
+        // 던전 방은 셀 외접도 범위를 정하므로, 공간이 같아도 셀 외접이나 Wave 종류가 바뀌면 다시 맞춘다(일반 Wave는 기존 조건 그대로).
+        var cells = dungeonFrame ? SolidBox() : default;
+        bool cameraChanged = !ConnectedBounds.HasValue || ConnectedBounds.Value != bounds
+            || dungeonFrame != cameraFrameDungeon || (dungeonFrame && !cells.Equals(cameraCells));
+        if (cameraChanged) SetCameraBounds(bounds, resetting || immediateCamera || !ConnectedBounds.HasValue, dungeonFrame, cells);
+        RefreshFloorShade();
         // 정착 중인 카메라가 아직 이전 범위를 볼 수 있으므로 배경·통창은 마지막에 줄인다.
         Rect backdrop = (IsTransitioning || IsCameraSettling) && backdropBounds.HasValue ? Union(backdropBounds.Value, bounds) : bounds;
         if (ConnectedBounds.HasValue && ConnectedBounds.Value == bounds && backdropBounds.HasValue && backdropBounds.Value == backdrop) return;
@@ -1229,16 +1403,143 @@ public sealed class WaveCellTerrain : MonoBehaviour
         automaticBackdrop.Resize(backdrop);
         GetComponent<WaveRoomBackground>()?.SetRoomBounds(backdrop);
     }
-    private void SetCameraBounds(Rect bounds, bool immediate = false)
+    private void SetCameraBounds(Rect bounds, bool immediate = false, bool dungeon = false, RectInt cells = default)
     {
+        cameraSpace = bounds;
+        cameraFrameDungeon = dungeon;
+        cameraCells = dungeon ? cells : default;
+        CameraFrameCells = dungeon ? DungeonCameraFrame(bounds, cells) : null;
+        cameraView = CameraView();
+        // 일반: 연결 공간 + 좌우 1칸·아래 3칸. 던전: 연결 공간 + 사방 3칸(셀 외접으로 자름). 시야보다 작으면 늘린다(큰 방은 그대로).
+        var rect = FitCameraRect(RawCameraRect(bounds), cameraView);
+        CameraRoomBounds = rect;
         var frame = originalCameraBounds.transform;
-        var horizontal = frame.InverseTransformVector(transform.TransformVector(Vector3.right * (bounds.width + 2)));
-        var vertical = frame.InverseTransformVector(transform.TransformVector(Vector3.up * (bounds.height + 3)));
+        var horizontal = frame.InverseTransformVector(transform.TransformVector(Vector3.right * rect.width));
+        var vertical = frame.InverseTransformVector(transform.TransformVector(Vector3.up * rect.height));
         var size = new Vector2(Mathf.Abs(horizontal.x) + Mathf.Abs(vertical.x), Mathf.Abs(horizontal.y) + Mathf.Abs(vertical.y));
-        Vector3 center = transform.TransformPoint(bounds.center + Vector2.down * 1.5f);
+        Vector3 center = transform.TransformPoint(rect.center);
         Vector3 position = center - frame.TransformVector(originalCameraBounds.offset);
         position.z = frame.position.z;
         ApplyCameraBounds(size, position, immediate);
+    }
+    /// <summary>연결 공간(방 좌표)의 카메라 범위 사각형: 좌우 1칸(벽 한 줄), 아래 3칸(바닥 그림자 자리)을 더하고 위는 천장 아랫면까지.</summary>
+    public static Rect CameraRectFor(Rect space) => Rect.MinMaxRect(space.xMin - 1f, space.yMin - 3f, space.xMax + 1f, space.yMax);
+    /// <summary>
+    /// 던전 방 카메라 범위 사각형: 연결 공간에 사방 DungeonCameraMargin(3)칸을 더하고 셀 외접(cells, Platform 칸 방 좌표)으로 자른다.
+    /// 템플릿 바깥 벽이 실내 ± 3칸이라 보통 셀 외접 그대로가 되고(천장·좌·우 벽 3칸이 보인다), 연결된 출입구 쪽(판 칸만큼 공간이 2칸 넓다)도 셀 밖은 보이지 않는다.
+    /// 연결 공간 자체는 자르지 않는다(크레인 운반 경로처럼 셀 밖으로 나간 공간 대비). cells가 비어 있으면 자르지 않는다.
+    /// </summary>
+    public static Rect DungeonCameraRectFor(Rect space, RectInt cells)
+    {
+        float m = DungeonCameraMargin;
+        var rect = Rect.MinMaxRect(space.xMin - m, space.yMin - m, space.xMax + m, space.yMax + m);
+        if (cells.width <= 0 || cells.height <= 0) return rect;
+        float xMin = Mathf.Min(cells.xMin, space.xMin), yMin = Mathf.Min(cells.yMin, space.yMin);
+        float xMax = Mathf.Max(cells.xMax, space.xMax), yMax = Mathf.Max(cells.yMax, space.yMax);
+        return Rect.MinMaxRect(Mathf.Max(rect.xMin, xMin), Mathf.Max(rect.yMin, yMin), Mathf.Min(rect.xMax, xMax), Mathf.Min(rect.yMax, yMax));
+    }
+    /// <summary>DungeonCameraRectFor를 덮는 칸 사각형(가장자리 음영의 기준 테두리, CameraFrameCells).</summary>
+    public static RectInt DungeonCameraFrame(Rect space, RectInt cells) => WaveRoomFloorShade.AreaFor(DungeonCameraRectFor(space, cells));
+    // 지난번에 고른 공식(일반·던전)으로 연결 공간의 카메라 범위 사각형을 구한다(늘리기 전).
+    private Rect RawCameraRect(Rect space) => cameraFrameDungeon ? DungeonCameraRectFor(space, cameraCells) : CameraRectFor(space);
+    // 그 Wave가 실제로 던전으로 진행되는지(던전 카메라 범위를 쓰는지). 판정은 RefreshRoomSpace에서만 하고, 음영은 그때 고른 범위 공식(cameraFrameDungeon)을 따른다.
+    // flowMode == Dungeon이어도 실행 데이터에 그 Wave의 던전이 없으면(생성 실패로 원본 그대로 기본 진행, 던전 진행 구성요소 없이 셀 지형만 쓴 경우) 기본 진행 범위다.
+    private bool DungeonFrameAt(int index)
+    {
+        if (data == null || data.waves == null || index < 0 || index >= data.waves.Length || data.waves[index] == null
+            || data.waves[index].flowMode != WaveFlowMode.Dungeon) return false;
+        // 던전 진행 구성요소는 지형 Configure 뒤에 같은 WaveManager에 붙는다(TrainingRoomHost). 붙기 전에는 다음 호출이 다시 찾는다.
+        if (dungeonManager == null && waves != null) dungeonManager = waves.GetComponent<DungeonManager>();
+        return DungeonFrameFor(data, dungeonManager != null ? dungeonManager.Run : null, index);
+    }
+    /// <summary>
+    /// 카메라 범위·가장자리 음영의 던전 판정(정적 — 회귀 검사도 쓴다): source의 index번 Wave가 flowMode == Dungeon이고
+    /// 실행 데이터(run)에 그 Wave의 던전이 실제로 만들어졌을 때만 true. run이 없거나 생성에 실패한 Wave(FloorFor == null)는 기본 진행이라 false.
+    /// </summary>
+    public static bool DungeonFrameFor(WaveDataSO source, DungeonRun run, int index)
+        => source != null && source.waves != null && index >= 0 && index < source.waves.Length && source.waves[index] != null
+            && source.waves[index].flowMode == WaveFlowMode.Dungeon && run != null && run.FloorFor(index) != null;
+    /// <summary>
+    /// 카메라 범위가 따르는 Wave 번호(정적 — 회귀 검사도 쓴다). 초기화 중이면 0, 그 밖에는 current를 [0, count − 1]로 자른다
+    /// (마지막 Wave를 마친 뒤 WaveManager가 current를 count로 올려도 마지막 Wave의 범위를 유지한다).
+    /// </summary>
+    public static int FrameWaveIndex(int current, int count, bool resetting)
+        => resetting || count <= 0 ? 0 : Mathf.Clamp(current, 0, count - 1);
+    // 켜진 Platform 칸(roomSolids)의 외접 사각형(방 좌표). 같은 집합이면 지난 값을 쓴다.
+    private RectInt SolidBox()
+    {
+        if (roomSolids == null || roomSolids.Count == 0) return default;
+        if (ReferenceEquals(roomSolids, solidBoxSource)) return solidBox;
+        int xMin = int.MaxValue, yMin = int.MaxValue, xMax = int.MinValue, yMax = int.MinValue;
+        foreach (var cell in roomSolids)
+        {
+            if (cell.x < xMin) xMin = cell.x;
+            if (cell.x > xMax) xMax = cell.x;
+            if (cell.y < yMin) yMin = cell.y;
+            if (cell.y > yMax) yMax = cell.y;
+        }
+        solidBoxSource = roomSolids;
+        solidBox = new RectInt(xMin, yMin, xMax - xMin + 1, yMax - yMin + 1);
+        return solidBox;
+    }
+    /// <summary>
+    /// 카메라 범위가 시야(view, 방 좌표 칸)보다 CameraViewMargin 이상 크지 않으면 시야 + CameraViewMargin으로 늘린다.
+    /// 세로는 아랫변을 두고 위(천장)로만, 가로는 가운데 기준으로 늘린다. 시야가 0이면(카메라 없음) 그대로 둔다.
+    /// </summary>
+    public static Rect FitCameraRect(Rect rect, Vector2 view)
+    {
+        if (view.x > 0f && rect.width < view.x + CameraViewMargin)
+        {
+            float grow = view.x + CameraViewMargin - rect.width;
+            rect = Rect.MinMaxRect(rect.xMin - grow * .5f, rect.yMin, rect.xMax + grow * .5f, rect.yMax);
+        }
+        if (view.y > 0f && rect.height < view.y + CameraViewMargin)
+            rect = Rect.MinMaxRect(rect.xMin, rect.yMin, rect.xMax, rect.yMin + view.y + CameraViewMargin);
+        return rect;
+    }
+    // 출력 화면이 보는 넓이(방 좌표 칸): 방 가상 카메라 렌즈의 직교 크기(지금까지 가장 큰 값) × 출력 카메라 화면 비율.
+    // 출력 카메라의 직교 크기는 RoomViewRules.Constrain이 범위에 맞춰 줄이므로 쓰지 않는다. 카메라가 없으면 0(늘리지 않는다).
+    private Vector2 CameraView()
+    {
+        if (roomCameraLens == null && roomConfiner != null) roomCameraLens = roomConfiner.GetComponent<CinemachineCamera>();
+        if (roomCameraLens != null) cameraLensSize = Mathf.Max(cameraLensSize, roomCameraLens.Lens.OrthographicSize);
+        if (viewCamera == null) viewCamera = Camera.main;
+        if (viewCamera == null || !viewCamera.orthographic || cameraLensSize <= 0f) return Vector2.zero;
+        var right = transform.InverseTransformVector(viewCamera.transform.right * cameraLensSize * viewCamera.aspect);
+        var up = transform.InverseTransformVector(viewCamera.transform.up * cameraLensSize);
+        return 2f * new Vector2(Mathf.Abs(right.x) + Mathf.Abs(up.x), Mathf.Abs(right.y) + Mathf.Abs(up.y));
+    }
+    // 화면 비율·렌즈가 바뀌어 시야가 달라졌으면 같은 공간으로 카메라 범위를 다시 맞춘다. 늘린 결과가 같으면(큰 방) 범위는 건드리지 않는다.
+    private void WatchCameraView()
+    {
+        if (!automaticRoomSpace || !cameraSpace.HasValue || originalCameraBounds == null) return;
+        var view = CameraView();
+        if (view == cameraView) return;
+        var rect = RawCameraRect(cameraSpace.Value);
+        if (FitCameraRect(rect, view) == FitCameraRect(rect, cameraView)) { cameraView = view; return; }
+        CancelCameraSettlement(true);
+        SetCameraBounds(cameraSpace.Value, true, cameraFrameDungeon, cameraCells);
+        RefreshFloorShade();
+    }
+    // 카메라 범위가 던전 공식(cameraFrameDungeon)일 때만 가장자리·덩어리 음영을 지금 연결 공간·카메라 범위·테두리로 다시 계산한다. 다른 범위는 지운다(기존 Wave 화면 불변).
+    // Wave 번호를 다시 판정하지 않고 범위를 정할 때 고른 공식을 그대로 따르므로, 범위와 음영이 서로 다른 판정을 쓰는 일이 없다
+    // (화면 비율이 바뀌어 같은 공식으로 범위만 다시 맞출 때, 마지막 Wave를 마친 뒤 등).
+    // 연결 공간을 다시 구했을 때(또는 화면 비율이 바뀌었을 때)만 불린다. 결과가 같으면 음영 쪽이 Mesh를 다시 만들지 않는다.
+    private void RefreshFloorShade()
+    {
+        if (!cameraFrameDungeon || !CameraRoomBounds.HasValue || roomSolids == null || roomRegion.Count == 0)
+        {
+            floorShade?.Clear();
+            return;
+        }
+        if (floorShade == null)
+        {
+            var node = new GameObject("RoomFloorShade");
+            node.transform.SetParent(transform, false);
+            floorShade = node.AddComponent<WaveRoomFloorShade>();
+        }
+        // 테두리가 없으면(이 Wave로 범위를 아직 다시 맞추지 않은 순간) 3차 규칙(위층 바닥 밑만)으로 그린다.
+        floorShade.Rebuild(roomRegion, roomSolids, CameraRoomBounds.Value, CameraFrameCells ?? default);
     }
     private void ApplyRoomPresentation(WaveRoomLayout layout)
     {
@@ -1376,6 +1677,28 @@ public sealed class WaveCellTerrain : MonoBehaviour
         }
         initialCaches[source] = cache;
         return cache;
+    }
+    /// <summary>
+    /// 지금 데이터(기본 셀맵·Wave별 초기맵)도, 지금 초기맵도 쓰지 않는 셀 배열의 조회용 집합을 버린다.
+    /// 던전 재생성처럼 실행 사본의 셀 배열을 새 배열로 갈아 끼운 뒤에 부른다(옛 배열을 키로 붙잡아 재도전마다 쌓이지 않게).
+    /// 버린 배열을 나중에 다시 쓰면 InitialFor가 그때 다시 만든다. 지금 초기맵 집합(initial)은 필드가 따로 붙잡고 있어 그대로 쓸 수 있다.
+    /// </summary>
+    public void ForgetStaleInitialCaches()
+    {
+        if (initialCaches.Count == 0 || data == null) return;
+        var keep = new HashSet<WaveMapCell[]>();
+        if (data.cellMap != null && data.cellMap.cells != null) keep.Add(data.cellMap.cells);
+        if (data.cellMap != null && data.waves != null)
+            for (int i = 0; i < data.waves.Length; i++)
+            {
+                var source = WaveCellState.Initial(data, i);
+                if (source != null) keep.Add(source);
+            }
+        List<WaveMapCell[]> stale = null;
+        foreach (var pair in initialCaches)
+            if (!keep.Contains(pair.Key) && !ReferenceEquals(pair.Value.cells, initial)) (stale ??= new List<WaveMapCell[]>()).Add(pair.Key);
+        if (stale == null) return;
+        foreach (var key in stale) initialCaches.Remove(key);
     }
     private void ApplyInitialPivots(InitialCache cache)
     {

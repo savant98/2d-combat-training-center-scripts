@@ -19,6 +19,8 @@ public class SniperLaserAbility : AiAbility
     private bool hasTarget;
     private bool reloadCompleted;
     private bool usedSinceSpawn;
+    // 순찰이 매 프레임 묻는 감지(HasDetectedTarget)·역할 표시에 쓰는 무리 구성원. Awake에서 한 번 찾는다.
+    private EnemyFlockMember flockMember;
 
     private SniperLaserDataSO LaserData => (SniperLaserDataSO)data;
     private Vector2 Origin => muzzle != null ? (Vector2)muzzle.position : executePoint != null ? (Vector2)executePoint.position : (Vector2)transform.position;
@@ -30,10 +32,25 @@ public class SniperLaserAbility : AiAbility
         {
             var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
             return player != null && player.gameObject.activeInHierarchy
-                && GetComponent<EnemyFlockMember>().TryDetectPlayer(player.transform.position);
+                && FlockMember.TryDetectPlayer(player.transform.position);
         }
     }
     public bool CanBeginShot => HasDetectedTarget && (!usedSinceSpawn || IsReady());
+
+    // 총구에서 Player까지 지형 광선(RaycastMotor2D.RaycastEnvironment)이 열려 있는지. 순찰이 레이저 시작 전에 주기적으로 묻는다.
+    public bool ShotLineOpen()
+    {
+        var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+        if (player == null || controller == null || controller.Motor == null) return true;
+        Vector2 origin = Origin;
+        Vector2 delta = (Vector2)player.transform.position - origin;
+        float distance = delta.magnitude;
+        return distance < .01f || controller.Motor.RaycastEnvironment(origin, delta / distance, distance).collider == null;
+    }
+    // Awake 전에 다른 패턴이 물어도 찾아 쓴다(이후에는 캐시).
+    private EnemyFlockMember FlockMember => flockMember != null ? flockMember : flockMember = GetComponent<EnemyFlockMember>();
+
+    private void Awake() => flockMember = GetComponent<EnemyFlockMember>();
 
     // 자동 반환된 빔이 재대여된 경우 총구 추종·중단 정리가 새 발사에 간섭하지 않게 한다.
     private LaserBeam OwnedLaser => laser != null && laser.gameObject.activeInHierarchy
@@ -44,7 +61,7 @@ public class SniperLaserAbility : AiAbility
         ReturnEffects();
         reloadCompleted = false;
         usedSinceSpawn = true;
-        GetComponent<EnemyFlockMember>()?.SetRole(EnemyFlockRole.Chase);
+        FlockMember?.SetRole(EnemyFlockRole.Chase);
         controller.Velocity = Vector2.zero;
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
         target = player != null ? player.transform : null;
@@ -145,7 +162,7 @@ public class SniperLaserAbility : AiAbility
             brain.ForceNextAbility(nextAbility);
         }
         reloadCompleted = false;
-        if (brain.IsPaused) GetComponent<EnemyFlockMember>()?.SetRole(EnemyFlockRole.None);
+        if (brain.IsPaused) FlockMember?.SetRole(EnemyFlockRole.None);
     }
 
     private void OnDisable()
@@ -153,7 +170,7 @@ public class SniperLaserAbility : AiAbility
         ReturnEffects();
         reloadCompleted = false;
         usedSinceSpawn = false;
-        GetComponent<EnemyFlockMember>()?.SetRole(EnemyFlockRole.None);
+        FlockMember?.SetRole(EnemyFlockRole.None);
         if (nextAbility is SniperPatrolAbility patrol) patrol.ClearPostReloadTeleport();
     }
 

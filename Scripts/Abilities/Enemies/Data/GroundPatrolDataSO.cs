@@ -22,4 +22,8 @@ public class GroundPatrolDataSO : EnemyAbilityDataSO
     [Min(0f)] public float ledgeLookAhead = 0.1f;
     [Tooltip("발밑 바닥을 찾는 깊이(칸)입니다. 이보다 깊으면 낭떠러지로 봅니다.")]
     [Min(0.05f)] public float ledgeCheckDepth = 0.5f;
+
+    [Header("Check Interval")]
+    [Tooltip("순찰 중 플레이어 감지·다른 패턴 전환(AiPatternProfileSO 규칙)을 확인하는 간격(초)입니다. 0이면 매 프레임 확인합니다. 감지 반응이 최대 이만큼 늦어집니다.")]
+    [Min(0f)] public float yieldCheckInterval = 0.1f;
 }

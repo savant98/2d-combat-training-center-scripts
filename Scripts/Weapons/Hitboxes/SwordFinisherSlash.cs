@@ -407,7 +407,9 @@ public class SwordFinisherSlash : WorldEntityBase
             Collider2D hit = overlapResults[i];
             overlapResults[i] = null;
             if (hit == null) continue;
-            if (hit.GetComponentInParent<HealthBase>() is not EnemyHealth enemy || !seen.Add(enemy)) continue;
+            if (hit.GetComponentInParent<HealthBase>() is not EnemyHealth enemy) continue;
+            if (DungeonPropTargeting.IsProp(enemy)) continue;   // 파괴형 던전 Prop은 일격필살 대상이 아니다(피해·적중 효과·게이지 환급 몫 모두 제외)
+            if (!seen.Add(enemy)) continue;
             targets.Add(new Target { health = enemy, body = hit, lifeVersion = enemy.LifeVersion });
         }
     }

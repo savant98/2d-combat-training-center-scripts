@@ -17,6 +17,9 @@ public class AiBrain : MonoBehaviour
     private long selectionOrder;
     private bool initialized;
     private bool spawnPending;
+    // 실행 중 전환 판단(TryYieldToPattern)의 주기 확인. 패턴 실행마다(LastSelectionOrder) 개체별 위상만큼 늦춰 시작한다.
+    private EnemyCheckTimer yieldCheckTimer;
+    private long yieldCheckOrder = -1;
 
     private void Start() => EnsureInitialized();
 
@@ -40,7 +43,7 @@ public class AiBrain : MonoBehaviour
         if (current != null && current.IsRunning)
         {
             current.UpdateAbility();
-            TryYieldToPattern();
+            if (IsYieldCheckDue()) TryYieldToPattern();
             return;
         }
         SelectNextAbility();
@@ -71,6 +74,23 @@ public class AiBrain : MonoBehaviour
         ability.RecordSelection(++selectionOrder);
         if (patternDirector != null) patternDirector.NotifyAbilityStarted(ability);
         LastAbilityKey = ability.AbilityKey;
+    }
+
+    // 순찰처럼 실행 중 자리를 넘기는 패턴은 감지 규칙(범위·사격선 광선)과 페이즈 갱신을 패턴의 YieldCheckInterval마다 묻는다.
+    // 0이면 예전처럼 매 프레임 묻는다. 감지 반응은 최대 그 간격만큼 늦어진다.
+    private bool IsYieldCheckDue()
+    {
+        if (current == null || !current.CanYieldToPattern) return false;
+        float interval = current.YieldCheckInterval;
+        if (interval <= 0f) return true;
+        if (yieldCheckOrder != current.LastSelectionOrder)
+        {
+            yieldCheckOrder = current.LastSelectionOrder;
+            yieldCheckTimer.StartStaggered(interval);
+        }
+        bool due = yieldCheckTimer.Due(interval);
+        EnemyCheckStats.Add(due ? EnemyCheckKind.PatrolYield : EnemyCheckKind.PatrolYieldSkipped);
+        return due;
     }
 
     private void TryYieldToPattern()
@@ -188,6 +208,7 @@ public class AiBrain : MonoBehaviour
         StopAllAbilities();
         forcedAbility = null;
         selectionOrder = 0;
+        yieldCheckOrder = -1;
         LastAbilityKey = null;
         foreach (var ability in abilities)
             if (ability != null) ability.ResetForSpawn();

@@ -12,6 +12,12 @@ public class SniperPatrolDataSO : FlyingAbilityDataSO
     [Min(0f)] public float wallMargin = 1.6f;
     [Min(0f)] public float minSideSpace = 2f;
 
+    [Header("Shot Line")]
+    [Tooltip("켜면 레이저 총구에서 Player까지 지형 광선이 열려 있을 때만 레이저를 시작합니다(벽에 막힌 헛사격 대신 회피 이동·공격 위치 재선정을 이어 갑니다). 끄면 막혀 있어도 쏩니다.")]
+    public bool requireLineOfSight = true;
+    [Min(0f), Tooltip("사격선 확인 간격(초)입니다. 0이면 매 프레임 확인합니다. 기본값이면 레이저 시작이 최대 0.1초 늦어집니다.")]
+    public float attackCheckInterval = 0.1f;
+
     [Header("Flock")]
     public bool moveAsFlock = true;
     [Min(0.1f)] public float formationSpacing = 4.5f;

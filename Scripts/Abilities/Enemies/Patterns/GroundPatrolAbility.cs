@@ -4,6 +4,7 @@ using UnityEngine;
 // 벽 판정은 EnemyController가 RaycastMotor2D 이동 결과로 알리는 OnWallHit을 사용한다.
 // 발판 끝 판정은 바닥에 서 있을 때 RaycastMotor2D.HasFloorAhead로 진행 방향 앞 발밑을 확인해, 바닥이 없으면 벽처럼 돌아선다.
 // 플레이어 감지와 다음 패턴 선택은 AiPatternProfileSO의 규칙이 맡고, 이 패턴은 실행 중 자리를 넘긴다.
+// 그 확인은 매 프레임이 아니라 SO의 yieldCheckInterval(기본 0.1초)마다 한다(AiBrain, 개체별 위상 분산).
 // 플레이어를 발견해 다른 패턴(돌진)으로 넘어갔다가 돌아오면 플레이어 쪽으로 출발한다.
 public class GroundPatrolAbility : AiAbility
 {
@@ -16,6 +17,8 @@ public class GroundPatrolAbility : AiAbility
     public int PatrolDirection => patrolDirection;
     public float PatrolSpeed => ResolvePatrolSpeed();
     public override bool CanYieldToPattern => State == AbilityState.Execute;
+    // 감지 규칙 확인 간격(초). Prefab 원본에서도 읽히도록 Awake에서 캐시한 값 대신 연결된 SO를 직접 읽는다.
+    public override float YieldCheckInterval => data is GroundPatrolDataSO patrol ? patrol.yieldCheckInterval : 0f;
 
     private void Awake()
     {

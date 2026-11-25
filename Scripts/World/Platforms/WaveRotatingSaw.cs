@@ -6,6 +6,8 @@ using UnityEngine;
 /// 가운데 기어 축을 중심으로 도는 팔의 양 끝 톱날이 닿은 플레이어에게 피해를 준다.
 /// 팔과 톱날의 회전은 WaveMachineMotion이 맡고, 여기서는 그 자세를 읽어 판정과 효과만 처리한다.
 /// 팔 길이는 배치마다 바꿀 수 있으며, 길이에 맞춰 팔 몸체와 톱날 위치, 회전 속도를 맞춘다.
+/// 시작 각도(sawStartAngle, 위상)도 배치마다 바꿀 수 있다. 기본 0이면 지금과 같고, 0이 아니면 팔과 맞물린 구동 기어를
+/// WaveMachineMotion과 같은 식(기준 자세 × 회전)에 그 각도를 더해 다시 놓는다. 묶음으로 둔 톱날을 엇갈려 돌게(파도) 할 때 쓴다.
 /// </summary>
 [DisallowMultipleComponent]
 [DefaultExecutionOrder(100)] // 캐릭터가 이번 틱의 이동을 마친 뒤에 판정한다.
@@ -65,15 +67,25 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
         "가운데 축에서 톱날 중심까지의 칸 수입니다. 톱날 중심이 지나가는 빠르기는 길이와 관계없이 같습니다.", "칸", minArmLength, 6f, .5f, armLength, true);
     private WaveDeviceParameter SpinParameter => new WaveDeviceParameter("spin", "회전 속도",
         "1이면 기본입니다. 2면 팔이 두 배 빠르게 돕니다. 길이와 관계없이 톱날 중심이 지나가는 빠르기에 곱합니다.", "배", .2f, 3f, .1f, rotationSpeed);
-    public override WaveDeviceParameter[] Parameters => new[] { LengthParameter, SpinParameter, WaveTrapDamage.DamageParameter(damage), WaveTrapDamage.ReturnParameter };
+    public const string StartAngleKey = "sawStartAngle";
+    // 편집기 미리보기 그림은 바꾸지 않는다(ChangesShape = false). 차지하는 칸과 공격 범위(원)는 각도와 관계없다.
+    private static WaveDeviceParameter StartAngleParameter => new WaveDeviceParameter(StartAngleKey, "시작 각도",
+        "팔이 이 각도(도, 반시계 방향)만큼 돌아간 자세에서 돌기 시작합니다. 같은 줄의 톱날마다 일정하게 늘리면 파도처럼 엇갈려 돕니다. 0이면 기본 자세입니다.",
+        "도", 0f, 360f, 1f, 0f);
+    public override WaveDeviceParameter[] Parameters => new[] { LengthParameter, SpinParameter, StartAngleParameter, WaveTrapDamage.DamageParameter(damage), WaveTrapDamage.ReturnParameter };
     public override bool SettingsChangeShape => true;
+
+    /// <summary>이 개체에 적용된 시작 각도(도).</summary>
+    public float StartAngle => currentStartAngle;
 
     public override void ApplySettings(WaveDeviceSetting[] overrides)
     {
         trapDamage.ApplySettings(overrides, damage);
         currentLength = WaveDeviceSettings.Value(overrides, LengthParameter);
         currentSpin = Mathf.Max(.1f, WaveDeviceSettings.Value(overrides, SpinParameter));
+        currentStartAngle = WaveDeviceSettings.Value(overrides, StartAngleParameter);
         ApplyShape();
+        PosePhase();
     }
 
     public override bool TryGetRange(WaveDeviceSetting[] overrides, out WaveDeviceRange range)
@@ -110,6 +122,72 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
             if (gear >= 0 && gear < motion.gearSpeeds.Length) motion.gearSpeeds[gear] = -spin * driveRatio;
     }
 
+    // ── 시작 각도(위상) ─────────────────────────────
+    // WaveMachineMotion은 매 프레임 기준 자세 × (경과 시간 × 속도)로 기어를 놓는다. 이 컴포넌트는 실행 순서가 뒤(100)라
+    // 같은 프레임에 같은 식에 시작 각도만 더해 팔(rotorGear)과 구동 기어(driveGears, 반대 방향 × driveRatio)를 다시 놓는다.
+    // 등장 중에도 같은 자세를 유지해 작동 시작 순간 팔이 튀지 않는다. 퇴장 중에는 WaveEnvironmentLifecycle이 잡은 자세를 그대로 둔다.
+    // 시작 각도가 0이고 이전에 바꾼 적이 없으면 아무것도 하지 않는다(기존과 같다). Edit Mode(편집기 미리보기)에서는 쓰지 않는다.
+    private float currentStartAngle;
+    private bool phaseApplied;
+    private bool phaseCached;
+    private WaveMachineMotion phaseMotion;
+    private Transform[] phaseGears = Array.Empty<Transform>();
+    private int[] phaseIndices = Array.Empty<int>();
+    private float[] phaseFactors = Array.Empty<float>();
+    private Quaternion[] phaseRest = Array.Empty<Quaternion>();
+
+    // 기준 자세는 처음 켜질 때(Awake, WaveMachineMotion이 기준을 잡는 때와 같은 자세)에 한 번 읽는다.
+    private void CachePhase()
+    {
+        if (phaseCached || !Application.isPlaying) return;
+        phaseCached = true;
+        phaseMotion = GetComponent<WaveMachineMotion>();
+        if (phaseMotion == null || phaseMotion.gears == null) return;
+        var gears = new List<Transform>();
+        var indices = new List<int>();
+        var factors = new List<float>();
+        var rests = new List<Quaternion>();
+        void Add(int index, float factor)
+        {
+            if (index < 0 || index >= phaseMotion.gears.Length || indices.Contains(index)) return;
+            var gear = phaseMotion.gears[index];
+            // WaveMachineMotion이 돌리지 않는 부품(루트·물리 부품)은 건드리지 않는다.
+            if (gear == null || gear == transform || !gear.IsChildOf(transform) || gear.GetComponentInChildren<Collider2D>(true) != null) return;
+            gears.Add(gear);
+            indices.Add(index);
+            factors.Add(factor);
+            rests.Add(gear.localRotation);
+        }
+        Add(rotorGear, 1f);
+        foreach (int gear in driveGears) Add(gear, -driveRatio);
+        phaseGears = gears.ToArray();
+        phaseIndices = indices.ToArray();
+        phaseFactors = factors.ToArray();
+        phaseRest = rests.ToArray();
+    }
+
+    private void PosePhase()
+    {
+        if (!Application.isPlaying) return;
+        bool wanted = !Mathf.Approximately(Mathf.Repeat(currentStartAngle, 360f), 0f);
+        if (!wanted && !phaseApplied) return;
+        CachePhase();
+        if (phaseMotion == null || phaseGears.Length == 0) return;
+        if (lifecycle != null && lifecycle.IsDespawning) return;
+        bool running = lifecycle == null || lifecycle.IsReady;
+        float time = running ? phaseMotion.MotionTime : 0f;
+        for (int i = 0; i < phaseGears.Length; i++)
+        {
+            var gear = phaseGears[i];
+            if (gear == null) continue;
+            int index = phaseIndices[i];
+            float speed = phaseMotion.gearSpeeds != null && index < phaseMotion.gearSpeeds.Length ? phaseMotion.gearSpeeds[index] : 0f;
+            float offset = wanted ? currentStartAngle * phaseFactors[i] : 0f;
+            gear.localRotation = phaseRest[i] * Quaternion.Euler(0f, 0f, Mathf.Repeat(time * speed + offset, 360f));
+        }
+        phaseApplied = wanted;
+    }
+
     private readonly List<Collider2D> hits = new();
     private readonly HashSet<PlayerHealth> damagedPlayers = new();
     private ContactFilter2D filter;
@@ -134,6 +212,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
     protected override void Awake()
     {
         base.Awake();
+        CachePhase();
         ApplySettings(WaveDeviceSettings.None);
         if (targetMask.value == 0) targetMask = LayerMask.GetMask("Player");
         filter = new ContactFilter2D();
@@ -149,8 +228,9 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
 
     protected override void OnDeviceReady()
     {
-        // 등장 완료 때 기준 자세(기본 길이)로 되돌아간 팔을 이 배치의 길이로 다시 맞춘다.
+        // 등장 완료 때 기준 자세(기본 길이)로 되돌아간 팔을 이 배치의 길이와 시작 각도로 다시 맞춘다.
         ApplyShape();
+        PosePhase();
         spinning = true;
         foreach (var system in sparks)
             if (system != null) system.Play(true);
@@ -210,6 +290,8 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
 
     private void Update()
     {
+        // WaveMachineMotion이 이번 프레임에 놓은 팔에 시작 각도를 더한다(0이면 아무것도 하지 않는다).
+        if (phaseApplied || currentStartAngle != 0f) PosePhase();
         // 목록의 첫 장치가 공유 반복음을 대표로 갱신한다.
         if (active.Count > 0 && active[0] == this) UpdateLoop(loopSound, loopFadeTime);
     }

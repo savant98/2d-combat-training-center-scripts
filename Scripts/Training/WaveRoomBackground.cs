@@ -5,7 +5,10 @@ using UnityEngine;
 using UnityEngine.Tilemaps;
 
 // 배경 선택은 카메라·통창·지형·진행 오브젝트와 별도로 적용한다. null은 원본 유지다.
-public sealed class WaveRoomBackground : MonoBehaviour
+// 던전 정적 벽면 방(IDungeonRoomBackdrop)은 그 위에 '방 덮어쓰기' 한 겹을 더한다: 방 덮어쓰기(벽면 키트) > Wave 배경 > 시차 원본.
+// 덮어쓰기는 DungeonRoomStage가 셀을 바꾼 직후(관 통과 덮개 아래) 켜고, ApplyWave(다음 Wave 준비·초기화)가 스스로 푼다.
+// 덮어쓰기를 한 번도 쓰지 않으면(던전이 아닌 훈련) 지금까지와 같은 경로만 탄다.
+public sealed class WaveRoomBackground : MonoBehaviour, IDungeonRoomBackdrop
 {
     private readonly Dictionary<Renderer, bool> originalRenderers = new();
     private readonly Dictionary<Renderer, bool> observationGlass = new();
@@ -19,7 +22,16 @@ public sealed class WaveRoomBackground : MonoBehaviour
     private Bounds sourceBounds;
     private Rect roomBounds;
     private bool fitToRoom, hasSourceBounds, hasRoomBounds;
+    // 방 덮어쓰기(정적 벽면 키트): 키트 Prefab마다 한 번 만든 인스턴스를 꺼 두었다가 다시 쓴다(방을 오갈 때 새로 만들지 않는다).
+    private readonly Dictionary<GameObject, RoomWallBackdrop> roomWalls = new();
+    private RoomWallBackdrop roomWall;
+    private Transform roomWallStaging;
+    // 덮어쓰기가 Wave 배경 인스턴스를 꺼 두었는지(풀 때 이것만 다시 켠다).
+    private bool roomHidInstance;
     public GameObject Instance => instance;
+    /// <summary>지금 방 덮어쓰기로 켠 벽면 키트(없으면 null).</summary>
+    public RoomWallBackdrop RoomWall => roomWall;
+    public bool HasRoomOverride => roomWall != null;
     public GameObject SelectedPrefab => selectedPrefab;
     public bool FitsRoom => fitToRoom;
 
@@ -58,6 +70,8 @@ public sealed class WaveRoomBackground : MonoBehaviour
     public void ApplyWave(int index)
     {
         if (data == null) return;
+        // 던전 방 덮어쓰기는 Wave 준비·초기화에서 푼다(다음 Wave·재도전은 시차 배경 위에서 시작한다). 덮어쓰기가 없으면 아무것도 하지 않는다.
+        ClearRoom();
         Apply(data.BackgroundAt(index), data.FitBackgroundAt(index));
         // 유리·반사만 선택적으로 숨긴다. 프레임·케이블과 통창의 공간 크기는 그대로 유지한다.
         foreach (var row in observationGlass)
@@ -95,6 +109,7 @@ public sealed class WaveRoomBackground : MonoBehaviour
         hasSourceBounds = false;
         selectedPrefab = prefab;
         foreach (var row in originalRenderers) if (row.Key != null) row.Key.enabled = prefab == null && row.Value;
+        roomHidInstance = false;
         if (prefab != null)
         {
             instance = Instantiate(prefab, transform, false);
@@ -103,7 +118,91 @@ public sealed class WaveRoomBackground : MonoBehaviour
             originalScale = instance.transform.localScale;
             MeasureSource();
             Fit();
+            // 방 덮어쓰기 중에 바뀐 Wave 배경은 덮어쓰기를 풀 때 보인다.
+            if (roomWall != null) { instance.SetActive(false); roomHidInstance = true; }
         }
+    }
+
+    /// <summary>
+    /// 정적 벽면 방: 시차 배경을 감추고(WaveRoomBackdrop.SetSuppressed), 통창을 통째로 숨기고, 키트 인스턴스(Prefab마다 하나, 재사용)를 실내에 맞춰 켠다.
+    /// 키트 Prefab이 없으면 ClearRoom과 같다. 실내는 지금 연결 공간(SetRoomBounds — ShowRoom이 방금 맞춘 값)을 우선하고, 아직 없으면 요청의 bounds를 쓴다.
+    /// 뒤이어 연결 공간이 바뀌면(SetRoomBounds) 키트가 LateUpdate에서 다시 맞춘다.
+    /// </summary>
+    public void ApplyRoom(DungeonRoomBackdropRequest request)
+    {
+        var prefab = request.kitPrefab;
+        if (prefab == null) { ClearRoom(); return; }
+        var wall = RoomWallFor(prefab);
+        if (wall == null) { ClearRoom(); return; }
+        if (roomWall != null && roomWall != wall) roomWall.gameObject.SetActive(false);
+        roomWall = wall;
+        var node = wall.transform;
+        node.localPosition = Vector3.zero;
+        node.localRotation = Quaternion.identity;
+        node.localScale = Vector3.one;
+        // 켜기 전에 맞춘다(입자·케이블·설비가 첫 프레임부터 이 방 크기다).
+        Rect interior = hasRoomBounds ? roomBounds : request.bounds;
+        if (interior.width > 0 && interior.height > 0) wall.Fit(interior);
+        if (!wall.gameObject.activeSelf) wall.gameObject.SetActive(true);
+        GetComponent<WaveRoomBackdrop>()?.SetSuppressed(true);
+        if (instance != null && instance.activeSelf) { instance.SetActive(false); roomHidInstance = true; }
+        RefreshRoomWindow();
+    }
+
+    /// <summary>방 덮어쓰기를 푼다: 키트를 끄고, 시차 배경·Wave 배경·통창을 원래대로 돌린다. 덮어쓰기가 없으면 아무것도 하지 않는다.</summary>
+    public void ClearRoom()
+    {
+        if (roomWall == null) return;
+        roomWall.gameObject.SetActive(false);
+        roomWall = null;
+        GetComponent<WaveRoomBackdrop>()?.SetSuppressed(false);
+        if (roomHidInstance && instance != null && !instance.activeSelf) instance.SetActive(true);
+        roomHidInstance = false;
+        RefreshRoomWindow();
+    }
+
+    /// <summary>입장 로딩에서 부를 수 있다: 키트 인스턴스를 만들어 꺼 둔 채 이 실내의 합친 Mesh를 미리 만든다(화면은 바꾸지 않는다).</summary>
+    public void PrewarmRoom(DungeonRoomBackdropRequest request)
+    {
+        if (request.kitPrefab == null || request.bounds.width <= 0 || request.bounds.height <= 0) return;
+        var wall = RoomWallFor(request.kitPrefab);
+        if (wall != null) wall.Prewarm(request.bounds);
+    }
+
+    // 키트 인스턴스는 꺼진 staging 아래에서 복제한 뒤 꺼서 옮긴다(Awake·OnEnable·소리가 켜기 전에 돌지 않는다).
+    private RoomWallBackdrop RoomWallFor(GameObject prefab)
+    {
+        if (roomWalls.TryGetValue(prefab, out var cached) && cached != null) return cached;
+        if (!IsBackground(prefab) || prefab.GetComponent<RoomWallBackdrop>() == null)
+        {
+            Debug.LogError("방 벽면 키트에는 RoomWallBackdrop이 있어야 하고 카메라·Collider·Room·WaveManager를 포함할 수 없습니다.", prefab);
+            return null;
+        }
+        if (roomWallStaging == null)
+        {
+            var staging = new GameObject("RoomWallStaging");
+            staging.SetActive(false);
+            staging.transform.SetParent(transform, false);
+            roomWallStaging = staging.transform;
+        }
+        var copy = Instantiate(prefab, roomWallStaging, false);
+        // 이름에 'Backdrop'을 두지 않는다(Configure가 이름으로 원본 배경을 수집하고, 잡기 연출이 이름으로 후경을 찾는다).
+        copy.name = prefab.name.IndexOf("Backdrop", System.StringComparison.OrdinalIgnoreCase) >= 0 ? "RoomWall" : prefab.name;
+        copy.SetActive(false);
+        copy.transform.SetParent(transform, false);
+        var wall = copy.GetComponent<RoomWallBackdrop>();
+        roomWalls[prefab] = wall;
+        return wall;
+    }
+
+    // 통창은 '큰 시설을 들여다보는 창'이라 정적 벽면 방에서는 통째로 숨긴다. 덮어쓰기가 없으면 ApplyWave와 같은 판정이다.
+    private void RefreshRoomWindow()
+    {
+        if (observationWindow == null) return;
+        bool show = roomWall == null && observationWindowActive && (data == null || !data.hideObservationWindow);
+        if (observationWindow.activeSelf == show) return;
+        observationWindow.SetActive(show);
+        if (show) GetComponent<WaveRoomBackdrop>()?.RefreshWindow();
     }
 
     // 카메라·통창과 같은 연결 공간을 사용한다. 원본 배경 에셋의 Tile·Material·정렬 순서는 바꾸지 않는다.
@@ -113,6 +212,8 @@ public sealed class WaveRoomBackground : MonoBehaviour
         roomBounds = bounds;
         hasRoomBounds = true;
         Fit();
+        // 덮어쓰기 중이면 벽면도 이 공간에 맞춘다. LateUpdate로 미뤄 같은 프레임에 덮어쓰기가 풀리면(다음 Wave 준비) 쓸데없이 합치지 않는다.
+        if (roomWall != null) roomWall.RequestFit(bounds);
     }
     private void MeasureSource()
     {

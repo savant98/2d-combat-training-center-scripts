@@ -28,6 +28,9 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         public int shownFrame;
         // 이 모듈로 Renderer 범위를 재 보았는지(그릴 것이 없어 실패했어도 다시 재지 않는다).
         public bool footprintTried;
+        // 던전 정적 벽면 방(SetSuppressed) 동안 그리지 않게 해 둔 모듈인지와, 처음 감출 때 한 번 모은 Renderer 목록.
+        public bool suppressed;
+        public Renderer[] renderers;
     }
     private sealed class Layer
     {
@@ -59,6 +62,10 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
     private readonly List<Vector3[]> vertices = new();
     private Camera view;
     private bool visible = true;
+    // 던전 정적 벽면 방(WaveRoomBackground.ApplyRoom) 동안 시차 배경을 그리지 않는다. SetBackgroundVisible(visible)과는 별개 플래그다.
+    // renderer.enabled는 WaveRoomBackground.originalRenderers가 저장·복원하므로 쓰지 않고 forceRenderingOff로만 감춘다. 감추며 바꾼 Renderer만 기억해 되돌린다.
+    private bool suppressed;
+    private readonly List<Renderer> forcedOff = new();
     private Rect currentBounds;
     private bool hasBounds;
     private Vector2 viewportExtent = new Vector2(12, 8);
@@ -68,6 +75,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
     public int CachedModuleCount => 1 + layers.Sum(l => l.modules.Count);
     // 켜 둔 반복 모듈 중 화면 근처라 Animator·제작 흐름·케이블 흐름이 도는 모듈 수(나머지는 화면에서 멀어 멈춰 둔 것, 검증용).
     public int AwakeModuleCount => layers.Sum(l => l.modules.Values.Count(m => m.shown && m.awake));
+    /// <summary>던전 정적 벽면 방 때문에 시차 배경을 감춰 둔 상태인지(SetSuppressed).</summary>
+    public bool Suppressed => suppressed;
     // 필요 없어진 모듈은 한꺼번에 끄지 않고 프레임마다 조금씩 끈다.
     private readonly Queue<Module> retiring = new();
     private const int ShowPerFrame = 3, RetirePerFrame = 4;
@@ -325,6 +334,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
                 }
                 module.root.localPosition = origin + new Vector3(cell.x * layer.repeat.x, cell.y * layer.repeat.y);
                 module.depth.localPosition = layer.home + (Vector3)Follow(layer, delta);
+                // 감춘 동안 켜는 모듈도 그리지 않고 멈춰 둔다(벽면 방에서 Resize가 모듈을 켜도 화면에 나오지 않는다).
+                if (suppressed) SuppressModule(module);
                 layer.pending--;
             }
         }
@@ -346,8 +357,47 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         visible = value;
         // 다시 켜질 때 지금과 같은 상태로 시작하도록, 켜고 끄기 전에 멈춰 둔 모듈을 모두 깨운다.
         WakeAll();
-        if (art != null) art.gameObject.SetActive(visible);
+        if (art != null) art.gameObject.SetActive(visible && !suppressed);
         foreach (var layer in layers) layer.root.gameObject.SetActive(visible);
+    }
+    /// <summary>
+    /// 던전 정적 벽면 방(WaveRoomBackground.ApplyRoom)이 시차 배경을 감추고(true) 되돌린다(false).
+    /// - 반복 모듈: 켜고 끄기(SetActive)하면 다시 켤 때 Animator 재바인딩·케이블 Material 재생성·제작 흐름 재시작이 생기므로, Renderer.forceRenderingOff + SetAwake(false)로
+    ///   그리기와 움직임만 멈춘다(상태는 그대로 남아 돌아올 때 끊기지 않는다). 감춘 동안 새로 켜는 모듈에도 같은 처리를 한다(BuildModules).
+    /// - 원본 art: SetActive(false). 잡기 연출 캡처(GrabCinematicBackdropView)가 이름으로 찾지 못해 Prefab 대체 경로를 탄다(forceRenderingOff Renderer는 복사에서 빠지므로).
+    /// - renderer.enabled는 쓰지 않는다(WaveRoomBackground.originalRenderers가 저장·복원한다).
+    /// - 되돌리면 감추며 바꾼 Renderer만 원래대로 돌리고, 깨우기는 다음 LateUpdate가 화면 거리로 정한다. 시차·모듈 생성 규칙은 그대로다.
+    /// </summary>
+    public void SetSuppressed(bool value)
+    {
+        if (suppressed == value) return;
+        suppressed = value;
+        if (art != null) art.gameObject.SetActive(visible && !suppressed);
+        if (suppressed)
+        {
+            foreach (var layer in layers)
+                foreach (var module in layer.modules.Values)
+                    if (module.shown) SuppressModule(module);
+            return;
+        }
+        foreach (var renderer in forcedOff) if (renderer != null) renderer.forceRenderingOff = false;
+        forcedOff.Clear();
+        foreach (var layer in layers)
+            foreach (var module in layer.modules.Values) module.suppressed = false;
+    }
+    private void SuppressModule(Module module)
+    {
+        if (module.root == null) return;
+        if (!module.suppressed)
+        {
+            module.suppressed = true;
+            // 모듈 하나가 Renderer 수백 개라 처음 감출 때만 모은다(다른 훈련은 감추지 않으므로 이 비용이 없다).
+            if (module.renderers == null) module.renderers = module.root.GetComponentsInChildren<Renderer>(true);
+            foreach (var renderer in module.renderers)
+                if (renderer != null && !renderer.forceRenderingOff) { renderer.forceRenderingOff = true; forcedOff.Add(renderer); }
+        }
+        // 감춘 채 꺼졌다 다시 켜진 모듈은 BuildModules가 막 깨웠으므로 다시 멈춘다.
+        SetAwake(module, false);
     }
     // 가까운 이동에는 원래 레이어 가중치를 적용한다. 멀리 이동해도 양축의 시차가 남도록
     // 일부는 선형으로 유지하고, 나머지는 반복 모듈의 수와 이음새 노출을 줄이도록 완만하게 제한한다.
@@ -370,7 +420,8 @@ public sealed class WaveRoomBackdrop : MonoBehaviour
         // 배경을 숨긴 동안에도 모듈은 마저 켜 둔다(다시 보일 때 비어 있지 않게).
         BuildModules(true);
         RetireModules();
-        if (!visible) return;
+        // 감춘 동안(던전 벽면 방)에는 숨긴 동안처럼 시차·깨우기를 건너뛴다(모듈 준비만 이어 간다).
+        if (!visible || suppressed) return;
         if (view == null) view = Camera.main;
         if (view == null) return;
         var required = MeasureViewport();

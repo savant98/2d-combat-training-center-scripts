@@ -73,6 +73,8 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
     private float phaseTime;
     private bool stowing;
     private float currentStroke = 2f, currentSpeed = 1f, currentRest = 1.2f;
+    // 첫 타격 준비를 늦추는 시차(배치 설정). 기본 0이면 첫 대기가 startDelay 그대로라 기존 동작과 같다.
+    private float currentOffset;
     // 등장 직후의 첫 대기는 공격 대기 대신 startDelay만큼만 쉰다.
     private bool firstRest = true;
 
@@ -82,13 +84,19 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         "1이면 기본입니다. 2면 예비 동작·타격·복귀가 두 배 빨라집니다. 타격 사이 공격 대기는 그대로입니다.", "배", .5f, 3f, .1f, speed);
     private WaveDeviceParameter RestParameter => new WaveDeviceParameter("rest", "공격 대기",
         "타격하고 큐브를 다시 넣은 뒤 다음 타격 준비까지 쉬는 시간입니다. 짧을수록 자주 칩니다. 피스톤 속도와 관계없이 이 시간만큼 쉽니다.", "초", 0f, 8f, .1f, restTime);
-    public override WaveDeviceParameter[] Parameters => new[] { StrokeParameter, SpeedParameter, RestParameter, WaveTrapDamage.DamageParameter(damage), WaveTrapDamage.ReturnParameter };
+    // 같은 줄의 피스톤마다 조금씩 늘려 주면 파도처럼 차례로 친다. 첫 대기만 늘리므로 그 뒤 주기(공격 대기·속도)는 그대로이고, 주기 안 위상만 밀린다.
+    public const string OffsetKey = "pistonOffset";
+    private static WaveDeviceParameter OffsetParameter => new WaveDeviceParameter(OffsetKey, "시작 시차",
+        "등장을 마친 뒤 첫 타격 준비를 이 시간만큼 늦춥니다. 같은 줄의 피스톤마다 조금씩 늘려 주면 파도처럼 차례로 칩니다. 그 뒤의 공격 대기·속도는 바뀌지 않습니다. 0이면 기본 동작입니다.", "초", 0f, 4f, .05f, 0f);
+    public override WaveDeviceParameter[] Parameters => new[] { StrokeParameter, SpeedParameter, RestParameter, WaveTrapDamage.DamageParameter(damage), WaveTrapDamage.ReturnParameter, OffsetParameter };
     /// <summary>이 개체에 적용된 뻗는 거리(칸).</summary>
     public float Stroke => currentStroke;
     /// <summary>이 개체에 적용된 속도 배율.</summary>
     public float Speed => currentSpeed;
     /// <summary>이 개체에 적용된 공격 대기(초).</summary>
     public float RestTime => currentRest;
+    /// <summary>이 개체에 적용된 시작 시차(초). 첫 타격 준비가 이만큼 늦다.</summary>
+    public float StartOffset => currentOffset;
 
     public override void ApplySettings(WaveDeviceSetting[] overrides)
     {
@@ -96,6 +104,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         currentStroke = WaveDeviceSettings.Value(overrides, StrokeParameter);
         currentSpeed = Mathf.Max(.1f, WaveDeviceSettings.Value(overrides, SpeedParameter));
         currentRest = Mathf.Max(0f, WaveDeviceSettings.Value(overrides, RestParameter));
+        currentOffset = Mathf.Max(0f, WaveDeviceSettings.Value(overrides, OffsetParameter));
     }
 
     public override bool TryGetRange(WaveDeviceSetting[] overrides, out WaveDeviceRange range)
@@ -214,7 +223,8 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         float distance = stroke > 0f ? currentStroke / stroke : 1f;
         switch (phase)
         {
-            case Phase.Rest: return firstRest ? startDelay : currentRest;
+            // 첫 대기에만 시작 시차를 더한다. 0을 더하면 값이 그대로라 기본 배치는 기존과 비트 단위로 같다.
+            case Phase.Rest: return firstRest ? startDelay + currentOffset : currentRest;
             case Phase.Windup: return windupTime / currentSpeed;
             case Phase.Strike: return strikeTime * distance / currentSpeed;
             case Phase.Rebound: return reboundTime / currentSpeed;

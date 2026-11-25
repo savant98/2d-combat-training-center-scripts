@@ -23,7 +23,15 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
     public Binding[] bindings = Array.Empty<Binding>();
     public Transform entryPoint;
     public TrainingRoomContent Content { get; private set; }
+    // 고른(요청한) WaveData 원본. 던전 Wave가 있으면 실제 진행은 Dungeon.Data(실행 사본)로 하고, 이 값은 원본 그대로 둔다
+    // (훈련 선택·회귀가 '입장한 WaveData = 고른 훈련'을 이 값으로 비교한다).
     public WaveDataSO Data { get; private set; }
+    // 던전 Wave의 실행 데이터(입장마다 새 구조). 던전이 없거나 부팅 로드면 null. WaveManager·지형은 Dungeon.Data로 진행한다.
+    public DungeonRun Dungeon { get; private set; }
+    /// <summary>방 내용이 실제로 진행하는 WaveData(던전이면 실행 사본, 아니면 Data).</summary>
+    public WaveDataSO PlayData => Dungeon != null && Dungeon.Data != null ? Dungeon.Data : Data;
+    // Stage(엘리베이터 출발 때 미리 구성)로 만든 던전 내용을 아직 입장(Load)에 쓰지 않았는지. 같은 원본으로 Load하면 그대로 쓴다.
+    private bool stagedDungeon;
     // 지금 방 내용을 만들 때 WaveData가 고른 방 배경(WaveDataSO.roomBackdrop). Tool에서 바꾼 뒤 같은 WaveData로 다시 들어오면 방 내용을 새로 만든다.
     private GameObject contentBackdrop;
     private const string BackdropName = "TrainingBackdrop";
@@ -50,7 +58,7 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         var terrain = Content.GetComponent<WaveCellTerrain>();
         if (terrain == null || terrain.IsWarm) return;
         IsLoading = true; LoadingProgress = 0f; LoadingStep = "TERRAIN";
-        loading = StartCoroutine(LoadingRoutine(terrain, Data));
+        loading = StartCoroutine(LoadingRoutine(terrain, PlayData));
     }
     private void CancelLoading()
     {
@@ -75,7 +83,9 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         // 방 내용이 켜진 첫 프레임(지형·배경의 첫 갱신)을 먼저 보낸다.
         yield return null;
         yield return terrain.Warm((value, step) => { LoadingProgress = value * TerrainShare; LoadingStep = step; });
-        yield return WarmPools(data, value => { LoadingProgress = TerrainShare + (1f - TerrainShare) * value; LoadingStep = "UNITS"; });
+        // 던전 방의 Prop·출입구·적 구성은 Wave 목록에 없으므로 방마다 묶어 함께 준비한다.
+        var dungeon = Dungeon != null && Dungeon.Data == data ? Dungeon : null;
+        yield return WarmPools(data, value => { LoadingProgress = TerrainShare + (1f - TerrainShare) * value; LoadingStep = "UNITS"; }, dungeon);
         WavePlayerStart.Prewarm();
     }
     // 중첩된 단계까지 직접 진행시키며 예외를 받아 낸다. 예외가 나면 남은 로딩을 건너뛴다(로딩 없이도 동작은 같다).
@@ -95,15 +105,42 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         }
     }
     // 이 WaveData의 Wave들이 꺼낼 적과 장치를 풀에 미리 만들어 둔다. 처음 등장하는 순간에 Prefab을 새로 만들지 않는다.
-    private static IEnumerator WarmPools(WaveDataSO data, Action<float> report)
+    private static IEnumerator WarmPools(WaveDataSO data, Action<float> report, DungeonRun dungeon = null)
     {
         var enemies = new Dictionary<EnemyController, int>();
         var entities = new List<WorldEntityBase>();
-        foreach (var wave in data.waves)
+        // 한 묶음(Wave 하나, 던전이면 방 하나)씩 센다.
+        var groups = new List<WaveSpawnInfo[]>();
+        foreach (var wave in data.waves) groups.Add(wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>());
+        if (dungeon != null)
+            foreach (var floor in dungeon.floors)
+            {
+                if (floor == null) continue;
+                foreach (var room in floor.rooms)
+                {
+                    var items = new List<WaveSpawnInfo>(room.props);
+                    items.AddRange(room.encounter);
+                    foreach (var door in room.doors) if (door != null && door.Connected && door.prefab != null) items.Add(new WaveSpawnInfo { prefab = door.prefab, isRequiredToClear = false });
+                    // 4차: 시작 방 출구 문(목표가 시작 방 출구 방식일 때)도 함께 준비한다.
+                    if (floor.objective != null && floor.objective.UsesStartRoomExit && room.HasExit && floor.layout != null && room.Id == floor.layout.startRoom)
+                        items.Add(new WaveSpawnInfo { prefab = floor.objective.ExitPrefab, isRequiredToClear = false });
+                    groups.Add(items.ToArray());
+                }
+            }
+        // 4차: 동적 적 구성은 입장 때 항목을 알 수 없으므로 예열 힌트(Prefab별 한 방 최악의 수, DungeonRun.PrewarmHints)를 한 묶음으로 센다.
+        // 아래에서 방 묶음 수와 비교해 큰 쪽(Prefab당 최대 MaxEnemiesPerPrefab)을 쓴다.
+        if (dungeon != null && dungeon.PrewarmHints.Count > 0)
+        {
+            var hinted = new List<WaveSpawnInfo>();
+            foreach (var pair in dungeon.PrewarmHints)
+                for (int k = 0; k < pair.Value; k++) hinted.Add(new WaveSpawnInfo { prefab = pair.Key, isRequiredToClear = false });
+            groups.Add(hinted.ToArray());
+        }
+        foreach (var spawns in groups)
         {
             // 한 Wave에서 같은 적이 가장 많이 나오는 수만큼 준비한다(Wave가 넘어가면 풀로 돌아온다).
             var counts = new Dictionary<EnemyController, int>();
-            foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
+            foreach (var info in spawns)
             {
                 if (info.prefab == null) continue;
                 if (info.prefab.TryGetComponent(out EnemyController enemy)) { counts[enemy] = counts.TryGetValue(enemy, out int n) ? n + 1 : 1; continue; }
@@ -117,7 +154,7 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
             }
             foreach (var row in counts) enemies[row.Key] = Mathf.Max(enemies.TryGetValue(row.Key, out int n) ? n : 0, Mathf.Min(row.Value, MaxEnemiesPerPrefab));
             // 추격 분쇄기는 배치마다 띠 폭이 달라, 그 폭의 몸체 Mesh·부품과 이 Wave에 함께 나오는 수만큼의 몸체를 미리 만들어 둔다.
-            ChasingGrinder.WarmWave(wave.spawnObjects);
+            ChasingGrinder.WarmWave(spawns);
         }
         int total = entities.Count, done = 0;
         foreach (var row in enemies) total += row.Value;
@@ -158,7 +195,25 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
             Debug.LogError("[TrainingRoomHost] 불러올 WaveData가 없습니다(요청과 defaultData가 모두 비어 있음).", this);
             return;
         }
-        if (Content != null && Data == data && contentBackdrop == data.roomBackdrop)
+        // 던전 Wave가 있으면 입장마다 원본의 실행 사본에 새 구조를 펼친다(원본 에셋은 바꾸지 않는다).
+        // 부팅 로드(Room.Awake: 이 Host에 아직 방 내용이 없는 첫 로드)는 펼치지 않는다. 그때는 원본으로 방만 만들어 둔다.
+        bool dungeon = Content != null && DungeonRunBuilder.HasDungeon(data);
+        if (dungeon && !data.cellMap.enabled)
+        {
+            Debug.LogError($"[TrainingRoomHost] 던전 Wave는 셀 지형(cellMap.enabled)이 필요합니다. {data.name}을 원본 그대로 진행합니다.", data);
+            dungeon = false;
+        }
+        if (dungeon)
+        {
+            // 엘리베이터가 출발 때 미리 구성(Stage)해 둔 같은 훈련의 던전이면 그대로 입장한다. 그 밖에는 재사용하지 않고 새로 만든다(매 입장 새 구조).
+            if (stagedDungeon && Dungeon != null && Data == data && contentBackdrop == data.roomBackdrop)
+            {
+                if (activateContent) stagedDungeon = false;
+                entryPoint.localPosition = WaveRoomState.EntryPoint(PlayData);
+                return;
+            }
+        }
+        else if (Content != null && Data == data && Dungeon == null && contentBackdrop == data.roomBackdrop)
         {
             // Tool에서 첫 Wave 좌표를 바꾼 뒤 같은 데이터로 다시 입장하는 경우도 갱신한다.
             entryPoint.localPosition = WaveRoomState.EntryPoint(data);
@@ -173,8 +228,14 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
             Content.gameObject.SetActive(false);
             Destroy(Content.gameObject);
         }
+        ReleaseDungeon();
+        var run = dungeon ? DungeonRunBuilder.Build(data, 0) : null;
+        // 실제로 진행할 데이터. 던전이면 실행 사본이고, 만들지 못했으면 원본 그대로 진행한다.
+        var play = run != null ? run.Data : data;
         Data = data;
-        var template = data.roomTemplate != null ? data.roomTemplate : defaultTemplate;
+        Dungeon = run;
+        stagedDungeon = run != null && !activateContent;
+        var template = play.roomTemplate != null ? play.roomTemplate : defaultTemplate;
         // 초기화 전에 참조와 WaveData를 복구하기 위해 비활성 부모에서 만든다.
         var staging = new GameObject("ContentStaging");
         staging.SetActive(false);
@@ -196,28 +257,47 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
             // 직렬화 필드 경로는 Editor 이관 시 생성한 바인딩으로 런타임에 복구한다.
             WaveRoomBinding.Apply(components[binding.componentIndex], binding.property, binding.target);
         }
-        Content.waves.Configure(data, Content.spawnRoot, data.training);
-        if (!data.customRoom)
+        Content.waves.Configure(play, Content.spawnRoot, play.training);
+        if (!play.customRoom)
         {
             foreach (var stage in Content.GetComponentsInChildren<TrainingCourseStage>(true)) stage.enabled = false;
             foreach (var layout in Content.GetComponentsInChildren<TrainingRoomLayoutController>(true)) layout.enabled = false;
         }
-        if (data.cellMap.enabled)
+        if (play.cellMap.enabled)
         {
             foreach (var layout in Content.GetComponentsInChildren<TrainingRoomLayoutController>(true)) layout.enabled = false;
-            Content.gameObject.AddComponent<WaveCellTerrain>().Configure(data, Content.waves);
+            var terrain = Content.gameObject.AddComponent<WaveCellTerrain>();
+            terrain.Configure(play, Content.waves);
+            if (run != null)
+            {
+                // 모든 던전 방의 셀을 미리 만들고(방 이동 때 즉시 교체), 입장 로딩이 방마다의 배경 모듈도 미리 만들게 한다.
+                terrain.RegisterCells(run.AllCells());
+                terrain.AddPredictedSpaces(DungeonManager.PredictRoomSpaces(run));
+                terrain.AddPredictedRoomKits(DungeonManager.PredictRoomKits(run));
+                // 던전 진행은 WaveManager 이벤트를 듣는 별도 구성요소가 맡는다(지형이 먼저 이벤트를 받도록 지형 뒤에 붙인다).
+                Content.waves.gameObject.AddComponent<DungeonManager>().Configure(run, Content.waves, terrain);
+            }
         }
         else
         {
             var builder = Content.gameObject.AddComponent<WaveRoomBuilder>();
-            builder.Configure(Content, data);
+            builder.Configure(Content, play);
         }
         owner.BindContent(Content);
-        entryPoint.localPosition = WaveRoomState.EntryPoint(data);
+        entryPoint.localPosition = WaveRoomState.EntryPoint(play);
         if (!activateContent) Content.gameObject.SetActive(false);
         Content.transform.SetParent(transform, false);
         Destroy(staging);
     }
+
+    // 던전 실행 사본은 이 Host가 만든 런타임 데이터라 방 내용을 버릴 때(또는 Host가 없어질 때) 함께 없앤다(DontSave라 저절로 내려가지 않는다).
+    private void ReleaseDungeon()
+    {
+        if (Dungeon != null && Dungeon.Data != null && Dungeon.Data != Dungeon.Source) Destroy(Dungeon.Data);
+        Dungeon = null;
+        stagedDungeon = false;
+    }
+    private void OnDestroy() => ReleaseDungeon();
 
     // WaveData가 고른 배경 Prefab을 방 내용의 'TrainingBackdrop' 자리에 끼운다(부모·형제 순서·위치·이름을 물려받는다).
     // 방 내용이 아직 꺼진 staging 안에 있을 때 바꾸므로, 뒤이어 붙는 반복 배경(WaveRoomBackdrop: 모듈·시차·화면 밖 정지·입장 로딩)과

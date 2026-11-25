@@ -79,6 +79,7 @@ public abstract class DroneBase : MovingEntityBase
 
         if (enemy == null || enemy.IsInvincible)
             return false;
+        if (DungeonPropTargeting.IsProp(enemy)) return false;   // 파괴형 던전 Prop은 드론 표적이 아니다
 
         return enemy.enemyShieldSystem == null || !enemy.enemyShieldSystem.IsSpawnLocked;
     }
