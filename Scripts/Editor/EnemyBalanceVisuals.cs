@@ -50,7 +50,10 @@ public static class EnemyBalanceVisuals
         string kind = key.ToLowerInvariant();
         canvas.Circle(new Vector2(32, 33), 26f, 1.25f, new Color(color.r, color.g, color.b, .20f));
 
-        if (kind.Contains("minepreparation"))
+        // Driller: 땅파기는 'jump'·'patrol'보다, 드릴 발사는 'shot'보다 먼저 판정한다.
+        if (kind.Contains("burrow")) DrawBurrow(canvas, color);
+        else if (kind.Contains("drillshot")) DrawDrillShot(canvas, color);
+        else if (kind.Contains("minepreparation"))
         {
             DrawJump(canvas, color);
             canvas.Disc(new Vector2(32, 17), 3, color);
@@ -240,6 +243,34 @@ public static class EnemyBalanceVisuals
             c.Disc(new Vector2(32, 33), 4, color);
         }
         else c.Box(new Rect(26, 27, 12, 12), 2f, color);
+    }
+
+    // 바닥 아래로 이동한 뒤 드릴이 위를 향해 땅을 뚫고 솟는다.
+    private static void DrawBurrow(IconCanvas c, Color color)
+    {
+        var faint = new Color(color.r, color.g, color.b, .55f);
+        c.Line(new Vector2(9, 28), new Vector2(55, 28), 2.5f, color);
+        for (int i = 0; i < 3; i++) c.Disc(new Vector2(12 + i * 6, 19), 1.4f, faint);
+        Arrow(c, new Vector2(30, 19), new Vector2(41, 19), faint, 2f);
+        c.Line(new Vector2(38, 30), new Vector2(45, 45), 3f, color);
+        c.Line(new Vector2(52, 30), new Vector2(45, 45), 3f, color);
+        c.Line(new Vector2(40, 34), new Vector2(49, 37), 1.6f, color);
+        c.Line(new Vector2(42, 39), new Vector2(48, 41), 1.6f, color);
+        Arrow(c, new Vector2(45, 48), new Vector2(45, 58), color, 2.5f);
+    }
+
+    // 누운 몸에서 마디 팔이 뻗어 드릴을 정면으로 쏜다.
+    private static void DrawDrillShot(IconCanvas c, Color color)
+    {
+        c.Box(new Rect(8, 24, 11, 18), 2f, color);
+        c.Box(new Rect(19, 28, 8, 10), 1.6f, color);
+        c.Box(new Rect(27, 29.5f, 7, 7), 1.6f, color);
+        c.Box(new Rect(34, 31, 6, 4), 1.6f, color);
+        c.Line(new Vector2(41, 26), new Vector2(56, 33), 3f, color);
+        c.Line(new Vector2(41, 40), new Vector2(56, 33), 3f, color);
+        c.Line(new Vector2(41, 26), new Vector2(41, 40), 2.5f, color);
+        c.Line(new Vector2(45, 29), new Vector2(47, 36), 1.4f, color);
+        c.Line(new Vector2(49, 30.5f), new Vector2(51, 35.5f), 1.4f, color);
     }
 
     private static void DrawShot(IconCanvas c, Color color)
