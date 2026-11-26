@@ -5,6 +5,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public sealed class EnemyBodyDangerVisual : MonoBehaviour
 {
+    public const float MinimumWidth = .07f;
     [SerializeField] private TouchDamage source;
     [SerializeField] private Material material;
     private LineRenderer outline;
@@ -63,7 +64,8 @@ public sealed class EnemyBodyDangerVisual : MonoBehaviour
             else { outline.enabled = false; return; }
             points[i] = position + turn * (body.transform.TransformPoint(local) - body.transform.position);
         }
-        outline.widthMultiplier = Mathf.Clamp(Mathf.Min(body.bounds.size.x, body.bounds.size.y) * .055f, .045f, .12f);
+        // 상시 외곽 대비 선(EnemyOutlineStroke, 선 양쪽 0.05칸)보다 늘 굵게 보이도록 최소 0.07칸(2026-11-26 사용자 결정 '가').
+        outline.widthMultiplier = Mathf.Clamp(Mathf.Min(body.bounds.size.x, body.bounds.size.y) * .055f, MinimumWidth, .12f);
         outline.SetPositions(points);
     }
 
