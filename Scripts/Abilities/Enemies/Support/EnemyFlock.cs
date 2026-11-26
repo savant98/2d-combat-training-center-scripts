@@ -19,6 +19,10 @@ public enum EnemyFlockRole
 // - 분리: 정해진 거리보다 가까운 구성원끼리 가까울수록 강하게 밀어내고(Reynolds Boids의 Separation, 1/거리 가중),
 //   밀어내는 방향을 조금 돌려 정면으로 마주친 구성원이 옆으로 비켜 가게 한다.
 // 대형 계산은 프레임마다 한 번만 하고, 칸 배정은 구성원·기준 구성원이 바뀌거나 일정 시간이 지났을 때만 다시 한다.
+// 6차(길찾기 우선 무리·던전 교전):
+// - 기준 구성원이 길찾기에 막히면(EnemyFlockMember.NavigationBlocked) 막히지 않은 구성원 가운데 유지 지점에 가장 가까운 것으로 바꾼다.
+// - 무리 감지 공유(ShareDetection, 던전 재입장 순찰): 한 구성원이 Player를 감지하면 경보(Alerted)를 켜 다른 구성원도 감지하게 한다.
+// - 구성원이 모두 빠진 무리는 사전에서 지운다(방·종류 단위 키가 한 판 동안 쌓이지 않게).
 public sealed class EnemyFlock
 {
     // 구성이 그대로여도 이 간격(초)마다 칸 배정을 다시 해 넉백 등으로 생긴 어긋남을 바로잡는다.
@@ -26,6 +30,9 @@ public sealed class EnemyFlock
     // 분리 방향을 모든 구성원이 반시계 방향으로 돌리는 기본 각도(도)다. 정면으로 마주친 두 구성원이 서로 반대쪽으로 비켜 간다.
     // 비행 데이터(FlyingAbilityDataSO.separationSidestep)가 적마다 정하며, 0이면 밀어내기만 한다(Drone).
     private const float DefaultSidestepAngle = 25f;
+    // 막힌 기준 구성원을 바꿀 때, 새 구성원이 유지 지점에 이만큼(칸) 이상 더 가까워야 바꾼다(히스테리시스 — 유지 지점 바로 앞에서
+    // 지형 속 끝점을 붙든 기준 구성원은 그대로 두고, 둘이 엇갈려 바뀌지 않게 한다).
+    private const float LeaderDemoteHysteresis = 2f;
 
     private static readonly Dictionary<string, EnemyFlock> flocks = new();
 
@@ -38,13 +45,28 @@ public sealed class EnemyFlock
         string key = flockId ?? string.Empty;
         if (!flocks.TryGetValue(key, out EnemyFlock flock))
         {
-            flock = new EnemyFlock();
+            flock = new EnemyFlock(key);
             flocks.Add(key, flock);
         }
 
         flock.Add(member);
         return flock;
     }
+
+    // 검사용: 지금 사전에 있는 무리 수, 키 존재 여부, 접두어가 같은 키 수(구성원이 모두 빠진 무리는 지워진다).
+    public static int ActiveFlockCount => flocks.Count;
+    public static bool Exists(string flockId) => flocks.ContainsKey(flockId ?? string.Empty);
+    public static int CountKeysWithPrefix(string prefix)
+    {
+        if (string.IsNullOrEmpty(prefix)) return flocks.Count;
+        int count = 0;
+        foreach (string key in flocks.Keys)
+            if (key.StartsWith(prefix, System.StringComparison.Ordinal)) count++;
+        return count;
+    }
+
+    private readonly string key;
+    private EnemyFlock(string key) => this.key = key ?? string.Empty;
 
     private readonly List<EnemyFlockMember> members = new();
     private readonly List<EnemyFlockMember> formation = new();
@@ -66,9 +88,20 @@ public sealed class EnemyFlock
 
     private Vector2 holdPoint;
     private int holdPointFrame = -1;
+    // 유지 지점을 한 번이라도 기록했는지(프레임이 지나도 막힌 기준 구성원 교체의 기준으로 마지막 값을 쓴다).
+    private bool hasHoldPoint;
+    private bool alerted;
 
+    public string Key => key;
     public int MemberCount => members.Count;
     public EnemyFlockMember Leader => leader;
+    // 기준 구성원이 바뀐 횟수(검사·계측용)와 그중 막혀서 바뀐 횟수.
+    public int LeaderChangeCount { get; private set; }
+    public int LeaderDemoteCount { get; private set; }
+    // 켜면 한 구성원이 Player를 감지할 때 무리 전체가 교전한다(던전 재입장 순찰, DungeonEnemyEngagement). 기본은 꺼짐(개체마다 감지).
+    public bool ShareDetection { get; set; }
+    // 무리 감지 공유가 켜졌고 누군가 이미 감지했는지.
+    public bool Alerted => ShareDetection && alerted;
     // 무리가 현재 유지하는 쪽이다. -1은 플레이어 왼쪽, 1은 오른쪽, 0은 아직 정하지 않음이다.
     public int Side => side;
 
@@ -89,12 +122,23 @@ public sealed class EnemyFlock
             leader = null;
         MarkLayoutDirty();
 
-        // 무리가 비면 다음에 생성되는 무리는 처음부터 좌우를 다시 정한다.
+        // 무리가 비면 다음에 생성되는 무리는 처음부터 좌우·경보를 다시 정한다. 사전에서도 지워 빈 키가 쌓이지 않게 한다.
         if (members.Count == 0)
         {
             side = 0;
             holdPointFrame = -1;
+            hasHoldPoint = false;
+            alerted = false;
+            ShareDetection = false;
+            if (flocks.TryGetValue(key, out EnemyFlock current) && current == this)
+                flocks.Remove(key);
         }
+    }
+
+    // 구성원 하나가 Player를 처음 감지했다. 무리 감지 공유가 켜져 있으면 경보를 켠다(다른 구성원은 다음 감지 확인 때 함께 교전한다).
+    public void NotifyDetected()
+    {
+        if (ShareDetection) alerted = true;
     }
 
     public void MarkLayoutDirty()
@@ -143,6 +187,7 @@ public sealed class EnemyFlock
     {
         holdPoint = point;
         holdPointFrame = Time.frameCount;
+        hasHoldPoint = true;
     }
 
     // 대형에서 이 구성원이 갈 지점이다. 기준 구성원은 유지 지점, 나머지는 기준 구성원의 현재 위치 + 배정된 고리 칸이다.
@@ -153,6 +198,15 @@ public sealed class EnemyFlock
             return holdPoint;
 
         return slotOffsets.TryGetValue(member, out Vector2 offset) ? leader.Position + offset : holdPoint;
+    }
+
+    // 길찾기 우선 무리(6차): member가 대형의 추종 구성원이면 배정된 고리 칸(기준 구성원 기준 오프셋)을 준다.
+    // 기준 구성원이거나 대형에 없으면(추적·사격 중, 아직 배정 전) false다. 계산은 GetFormationPoint와 같은 프레임 캐시를 쓴다.
+    public bool TryGetSlot(EnemyFlockMember member, float spacing, float heightRatio, out Vector2 offset)
+    {
+        Solve(spacing, heightRatio);
+        offset = default;
+        return member != null && leader != null && member != leader && slotOffsets.TryGetValue(member, out offset);
     }
 
     // member를 가까운 구성원에게서 밀어내는 속도(칸/초)다. distance 이상 떨어지면 0이고, 가까울수록 1/거리 비율로 커진다.
@@ -210,6 +264,7 @@ public sealed class EnemyFlock
         }
 
         EnemyFlockMember nextLeader = PickLeader();
+        if (leader != null && nextLeader != leader) LeaderChangeCount++;
         bool reassign = layoutDirty || nextLeader != leader || Time.time >= nextReassignTime
             || !Mathf.Approximately(spacing, solvedSpacing) || !Mathf.Approximately(heightRatio, solvedHeightRatio);
         leader = nextLeader;
@@ -223,11 +278,11 @@ public sealed class EnemyFlock
         AssignSlots(spacing, heightRatio);
     }
 
-    // 현재 기준 구성원이 대형에 있으면 그대로 쓰고, 없을 때만 무리 중심에 가장 가까운 구성원을 고른다.
+    // 현재 기준 구성원이 대형에 있으면 그대로 쓰고(길찾기에 막혔으면 DemoteBlocked), 없을 때만 무리 중심에 가장 가까운 구성원을 고른다.
     private EnemyFlockMember PickLeader()
     {
         if (leader != null && formation.Contains(leader))
-            return leader;
+            return leader.NavigationBlocked ? DemoteBlocked(leader) : leader;
 
         Vector2 centroid = Vector2.zero;
         foreach (EnemyFlockMember member in formation)
@@ -247,6 +302,30 @@ public sealed class EnemyFlock
         }
 
         return nearest;
+    }
+
+    // 막힌 기준 구성원(6차): 막히지 않은 대형 구성원 가운데 유지 지점에 가장 가까운 것이 기준 구성원보다 LeaderDemoteHysteresis 이상
+    // 가까우면 바꾼다. 모두 막혔거나 유지 지점을 아직 모르면 그대로 둔다. 물리 질의 없이 위치만 비교한다.
+    private EnemyFlockMember DemoteBlocked(EnemyFlockMember current)
+    {
+        if (!hasHoldPoint) return current;
+        float currentDistance = (current.Position - holdPoint).magnitude;
+        EnemyFlockMember best = null;
+        float bestDistance = float.MaxValue;
+        foreach (EnemyFlockMember member in formation)
+        {
+            if (member == current || member.NavigationBlocked) continue;
+            float distance = (member.Position - holdPoint).magnitude;
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = member;
+            }
+        }
+
+        if (best == null || bestDistance + LeaderDemoteHysteresis > currentDistance) return current;
+        LeaderDemoteCount++;
+        return best;
     }
 
     private void AssignSlots(float spacing, float heightRatio)

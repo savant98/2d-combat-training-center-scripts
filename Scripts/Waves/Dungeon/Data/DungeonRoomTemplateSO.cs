@@ -61,6 +61,8 @@ public class DungeonRoomTemplateSO : WaveDataSO
     public DungeonRoomTags tags = DungeonRoomTags.None;
     [Tooltip("한 던전에 이 템플릿을 둘 수 있는 최대 수(0 = 던전 설정의 기본값).")]
     [Min(0)] public int maxPerFloor;
+    [Tooltip("설계 메모(왜 이렇게 배치했는지). 6차에 사양 JSON의 note를 옮겼다 — 실행에는 쓰이지 않으며 던전 템플릿 편집기에서 고친다.")]
+    [TextArea(3, 12)] public string designNote = "";
     /// <summary>실제로 쓸 배경 종류(Auto를 풀어서).</summary>
     public DungeonBackdropMode ResolvedBackdrop => backdropMode != DungeonBackdropMode.Auto ? backdropMode
         : sizeClass == DungeonRoomSize.Small ? DungeonBackdropMode.Wall : DungeonBackdropMode.Parallax;

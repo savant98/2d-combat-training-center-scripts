@@ -16,6 +16,8 @@ using UnityEngine;
 /// - 보임: 원본 있음 && <see cref="DungeonHudGate"/>(HUD 보임·패배 화면·결과 보드 아님). 루트 CanvasGroup으로 한 번에 페이드한다.
 /// - 풀: 마커 4개를 미리 만들고 모자라면 template을 복제해 늘린다. 던전 동안 파괴하지 않고 알파로 숨긴다. 매 프레임 할당·LINQ 없음.
 /// - 시간: 실제 시간(Time.unscaledDeltaTime), 카메라가 움직인 뒤인 LateUpdate에서 진행한다.
+/// - 7차(DESIGN_V7 V5): 원본이 IDungeonObjectiveGate이고 레버 대기 중(AwaitingObjective — 적 전멸 뒤 레버가 남아 문이 잠김)이면 Ready 레버 마커를
+///   더 빠르고 깊게 맥동시켜 강조한다(awaitPulsePeriod·awaitPulseMin — 판단값). 모양·자리 규칙은 그대로다(화면 밖이면 가장자리 앰버 화살).
 /// Prefab은 tools/Unity/DungeonRoomStatusSetup.cs가 함께 만든다.
 /// </summary>
 [DisallowMultipleComponent]
@@ -43,6 +45,9 @@ public sealed class DungeonObjectiveMarkers : MonoBehaviour, IDungeonObjectiveTa
     [SerializeField, Min(.1f)] private float readyPulsePeriod = 1.2f;
     [Tooltip("Locked 자물쇠 밝기")]
     [SerializeField, Range(0f, 1f)] private float lockedBrightness = .6f;
+    [Tooltip("7차 레버 대기 중 Ready 레버 마커 맥동 주기(초)·최저 밝기(강조)")]
+    [SerializeField, Min(.1f)] private float awaitPulsePeriod = .6f;
+    [SerializeField, Range(0f, 1f)] private float awaitPulseMin = .45f;
 
     [Header("키 안내 짝짓기(월드 칸)")]
     [SerializeField, Min(0f)] private float hintMatchX = 2.5f;
@@ -73,6 +78,10 @@ public sealed class DungeonObjectiveMarkers : MonoBehaviour, IDungeonObjectiveTa
     public float GroupAlpha => groupAlpha;
     /// <summary>TargetsChanged를 받은 횟수(검증용).</summary>
     public int Changes => changes;
+    /// <summary>7차: 마지막 Advance에서 레버 대기 강조를 했는지(검증용).</summary>
+    public bool AwaitEmphasis { get; private set; }
+    public float AwaitPulsePeriod => awaitPulsePeriod;
+    public float AwaitPulseMin => awaitPulseMin;
     /// <summary>검증용: 카메라·안전 영역·Canvas 배율을 직접 준다(null이면 Camera.main·Screen.safeArea·루트 Canvas).</summary>
     public Camera ViewCameraOverride { get; set; }
     public Rect? SafeAreaOverride { get; set; }
@@ -204,6 +213,7 @@ public sealed class DungeonObjectiveMarkers : MonoBehaviour, IDungeonObjectiveTa
         if (group != null && !Mathf.Approximately(group.alpha, groupAlpha)) group.alpha = groupAlpha;
 
         for (int i = 0; i < pool.Count; i++) if (pool[i] != null) pool[i].Wanted = false;
+        AwaitEmphasis = false;
         var cam = ResolveCamera();
         var targets = alive ? source.CurrentTargets : null;
         if (targets != null && cam != null)
@@ -214,6 +224,10 @@ public sealed class DungeonObjectiveMarkers : MonoBehaviour, IDungeonObjectiveTa
             float top = topInset * scale;
             float padding = edgePadding * scale;
             float readyBright = Mathf.Lerp(readyPulseMin, 1f, .5f + .5f * Mathf.Cos(clock * Mathf.PI * 2f / readyPulsePeriod));
+            // 7차 V5: 레버 대기 중이면 레버 마커를 더 빠르고 깊게 맥동(형 확인만 — 할당 없음).
+            bool awaiting = source is IDungeonObjectiveGate gate && gate.AwaitingObjective;
+            float awaitBright = Mathf.Lerp(awaitPulseMin, 1f, .5f + .5f * Mathf.Cos(clock * Mathf.PI * 2f / awaitPulsePeriod));
+            AwaitEmphasis = awaiting;
             for (int i = 0; i < targets.Count; i++)
             {
                 var target = targets[i];
@@ -231,7 +245,7 @@ public sealed class DungeonObjectiveMarkers : MonoBehaviour, IDungeonObjectiveTa
                 marker.TargetState = target.state;
                 marker.Glyph = target.kind;
                 marker.DrawShape = edge ? DungeonObjectiveMarkerGraphic.Shape.Edge : locked ? DungeonObjectiveMarkerGraphic.Shape.Locked : DungeonObjectiveMarkerGraphic.Shape.Over;
-                marker.Brightness = locked ? lockedBrightness : readyBright;
+                marker.Brightness = locked ? lockedBrightness : awaiting && target.kind == DungeonObjectiveTargetKind.Lever ? awaitBright : readyBright;
                 Apply(marker, edge, locked, point, edge ? angle : 0f, scale);
             }
         }

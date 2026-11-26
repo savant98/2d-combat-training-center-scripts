@@ -79,7 +79,7 @@ public class DestructibleProp : EnemyHealth, IDungeonPropTarget, IDungeonBreakab
     public event Action<IDungeonBreakable> Broken;
     public DungeonProp Prop => prop != null ? prop : prop = GetComponent<DungeonProp>();
     public Collider2D Hurtbox => hurtbox;
-    /// <summary>부서진 위치(hurtbox 중심). 폭발 부품이 읽는다.</summary>
+    /// <summary>부서진 위치(hurtbox 중심).</summary>
     public Vector3 Center => hurtbox != null ? hurtbox.bounds.center : transform.position;
     /// <summary>마지막으로 받은 피해 정보(폭발 연쇄 판정용).</summary>
     public WeaponBaseSO.DamageInfo LastDamage { get; private set; }
@@ -267,9 +267,7 @@ public class DestructibleProp : EnemyHealth, IDungeonPropTarget, IDungeonBreakab
         }
         if (HasEmbers) brokenGlow.Set(EmberFloor);
         if (returnDelay < 0f) { returnRoutine = null; yield break; }   // 방 정리가 돌려보낸다
-        // 연쇄 폭발처럼 부서진 뒤에도 할 일이 남은 부품이 있으면 끝날 때까지 기다린다.
-        var explosive = GetComponent<PropExplosive>();
-        while (explosive != null && explosive.IsPending) yield return null;
+        // (6차 T7: 부서지면 터지는 Prop(PropExplosive)을 없애 연쇄 폭발을 기다리는 단계도 없앴다.)
         returnRoutine = null;
         var p = Prop;
         if (p != null) p.ForceReturnToPool();

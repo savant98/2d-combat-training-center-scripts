@@ -4,10 +4,12 @@ using UnityEngine;
 // 노출 접속함(N18, 함정). 대기 → 예고(1초: 덮개가 떨리고 붉은 단자가 깜박이며 작은 불꽃이 튄다) → 방전(반경 1.2칸 붉은 전기 불꽃) → 대기.
 // - 피해: 방전 동안 루트 RaycastMotor2D.OverlapAttackCircle(Player)로 묻고 WaveTrapDamage(복귀 없음)로 한 번 준다. 적은 맞지 않는다.
 // - 기계 동작: 덮개 경첩 회전 떨림, 단자 발광 밝기, 전기 줄기 Renderer 켜고 끄기(크기 변형 없음). 전기 줄기는 방전 순간만 보인다.
-// - 작동 조건(배치 설정): 항상 / 방 클리어 전까지.
+// - 6차 T9(방 클리어 정지, IDungeonRoomHazard): 정지 신호를 받은 호출에서 피해 판정을 끄고, 정전 물결 차례가 오면 방전·예고를 거두고
+//   덮개를 닫은 채 단자 발광까지 끈다(Renderer 끔 — 불 꺼짐). 신호가 없으면(던전 밖) 늘 작동한다.
+//   예전 '작동 조건(항상/방 클리어 전까지)' 설정은 없앴다(던전 함정은 클리어 때 늘 멈춘다).
 // - 소리(임시 기존 효과음): 방전 EnergyZapBurst + RollerSparkFeedback(불꽃 입자 포함).
 [DisallowMultipleComponent]
-public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeonPropSettings, IDungeonRoomPowered
+public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeonPropSettings, IDungeonRoomHazard
 {
     public enum Phase { Idle, Warning, Discharge, Resting }
 
@@ -22,7 +24,6 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
     [SerializeField, Min(0f)] private float phaseOffset;
     [SerializeField, Min(.3f)] private float radius = 1.2f;
     [SerializeField, Min(0f)] private float damage = 10f;
-    [SerializeField] private int powerMode = HazardPowerGate.UntilClear;
 
     [Header("방전")]
     [SerializeField, Min(.05f)] private float dischargeTime = .28f;
@@ -45,7 +46,7 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
     [SerializeField] private FeedbackDataSO dischargeFeedback;
 
     private readonly WaveTrapDamage trapDamage = new WaveTrapDamage();
-    private readonly HazardPowerGate power = new HazardPowerGate();
+    private readonly HazardHalt halt = new HazardHalt();
     private readonly System.Collections.Generic.List<Collider2D> hits = new System.Collections.Generic.List<Collider2D>(8);
     private RaycastMotor2D motor;
     private HazardLights glow;
@@ -67,6 +68,17 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
     public float LastHitTime { get; private set; } = -1f;
     public float Radius => activeRadius;
     public Vector2 WorldCenter => transform.TransformPoint(center);
+    /// <summary>방 클리어 정지 신호를 받아 판정이 꺼져 있다(6차 T9, 검사용).</summary>
+    public bool IsHalted => halt.Halted;
+    /// <summary>단자 발광이 지금 보이는지(검사용).</summary>
+    public bool TerminalsLit
+    {
+        get
+        {
+            foreach (var renderer in terminals) if (renderer != null && renderer.enabled) return true;
+            return false;
+        }
+    }
 
     private void Awake()
     {
@@ -91,8 +103,7 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
     {
         Cache();
         live = true;
-        power.Reset();
-        power.Mode = powerMode;
+        halt.Reset();
         trapDamage.Cancel();
         Discharges = 0;
         PlayerHits = 0;
@@ -112,21 +123,35 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
         glow.Restore();
         foreach (var arc in arcLights) arc.Restore();
         PropHazardKit.Stop(crackle, true);
+        halt.Reset();
     }
 
     private void OnDisable() => trapDamage.Cancel();
 
-    public void SetRoomPowered(bool powered, bool instant)
+    // ── 6차 T9: 방 클리어 정지 ─────────────────────────────
+
+    public void SetHazardHalted(bool halted, bool instant)
     {
-        power.SetRoomPowered(powered);
+        bool changed = halt.Signal(halted, instant);
         if (!live) return;
-        if (!power.Running && phase != Phase.Discharge) Enter(Phase.Resting, 0f);
-        else if (power.Running && phase == Phase.Resting) StartCycle();
+        if (halted)
+        {
+            trapDamage.Cancel();   // 판정은 이 호출에서 바로 끈다(DamagePlayer가 묻지 않는다)
+            if (instant)
+            {
+                Enter(Phase.Resting, 0f);
+                glow.Set(0f);
+                if (lid != null) lid.localRotation = lidHome;
+                PropHazardKit.Stop(crackle, true);
+            }
+            return;
+        }
+        if (changed && phase == Phase.Resting) StartCycle();
     }
 
     private void StartCycle()
     {
-        if (!power.Running) { Enter(Phase.Resting, 0f); return; }
+        if (halt.Halted) { Enter(Phase.Resting, 0f); return; }
         // 위상만큼 앞당긴다(대기 구간 안에서만 — 들어오자마자 방전하지 않게).
         Enter(Phase.Idle, Mathf.Max(.2f, activeIdle - Mathf.Repeat(activeOffset, activeIdle + activeWarning + dischargeTime)));
     }
@@ -167,14 +192,19 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
     {
         if (!live) return;
         float dt = Time.deltaTime;
+        if (halt.Halted)
+        {
+            halt.Step(dt, .1f, out _, out _);
+            // 정전 물결 차례: 방전·예고를 바로 거두고 쉰다(덮개 닫힘·단자 끔).
+            if (halt.VisualHalting && phase != Phase.Resting) Enter(Phase.Resting, 0f);
+        }
         phaseTime += dt;
         switch (phase)
         {
             case Phase.Idle:
                 glow.Set(idleGlow);
                 if (lid != null) lid.localRotation = lidHome;
-                if (!power.Running) Enter(Phase.Resting, 0f);
-                else if (phaseTime >= waitTime) Enter(Phase.Warning, activeWarning);
+                if (phaseTime >= waitTime && !halt.Halted) Enter(Phase.Warning, activeWarning);
                 break;
             case Phase.Warning:
             {
@@ -187,7 +217,7 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
                     float rattle = lidRattle * k * (Mathf.PerlinNoise(phaseTime * 30f, 0f) * 2f - 1f);
                     lid.localRotation = lidHome * Quaternion.Euler(0f, 0f, rattle);
                 }
-                if (phaseTime >= activeWarning) Enter(Phase.Discharge, dischargeTime);
+                if (phaseTime >= activeWarning) { if (halt.Halted) Enter(Phase.Resting, 0f); else Enter(Phase.Discharge, dischargeTime); }
                 break;
             }
             case Phase.Discharge:
@@ -202,14 +232,14 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
                 if (phaseTime >= waitTime)
                 {
                     SetArcs(false);
-                    if (power.Running) Enter(Phase.Idle, activeIdle);
+                    if (!halt.Halted) Enter(Phase.Idle, activeIdle);
                     else Enter(Phase.Resting, 0f);
                 }
                 break;
             case Phase.Resting:
-                glow.Set(idleGlow * .5f);
+                glow.Set(0f);   // 불 꺼짐: 단자 Renderer를 끈다(HazardLights — 알파 블렌드 재질)
                 if (lid != null) lid.localRotation = lidHome;
-                if (power.Running) StartCycle();
+                if (!halt.Halted) StartCycle();
                 break;
         }
     }
@@ -221,7 +251,7 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
 
     private void DamagePlayer()
     {
-        if (activeDamage <= 0f || motor == null) return;
+        if (activeDamage <= 0f || motor == null || halt.Halted) return;
         Vector2 c = WorldCenter;
         var filter = new ContactFilter2D();
         filter.SetLayerMask(playerMask);
@@ -259,14 +289,13 @@ public sealed class PropSparkJunction : MonoBehaviour, IDungeonPropPart, IDungeo
 
     public WaveDeviceParameter[] PropParameters => new[]
     {
-        WaveTrapDamage.DamageParameter(damage), IdleParameter, WarningParameter, OffsetParameter, RadiusParameter, PropHazardKit.PowerParameter(powerMode),
+        WaveTrapDamage.DamageParameter(damage), IdleParameter, WarningParameter, OffsetParameter, RadiusParameter,
     };
 
     public void ApplyPropSettings(WaveDeviceSetting[] overrides)
     {
         float oldOffset = activeOffset, oldIdle = activeIdle;
         ReadSettings(overrides);
-        power.Mode = Mathf.RoundToInt(WaveDeviceSettings.Value(overrides, PropHazardKit.PowerParameter(powerMode)));
         if (live && phase == Phase.Idle && Discharges == 0 && phaseTime < .01f
             && (!Mathf.Approximately(oldOffset, activeOffset) || !Mathf.Approximately(oldIdle, activeIdle))) StartCycle();
     }

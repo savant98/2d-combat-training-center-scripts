@@ -16,10 +16,18 @@ using UnityEngine;
 //   스스로 풀고, 한도(holdLimit)를 넘거나 Player가 사라져도 푼다(실패 시 해제). Wave 진행 장치가 없으면(Lobby 시험) 흡입 뒤 noWaveRelease초에 푼다.
 //   흡입 동안만 SetFacilityBusy(this, true) — 던전 클리어 대기(FloorClearRoutine)가 흡입이 끝나기를 기다리게 한다.
 // - 크기 늘이기 없음(회전·이동·밝기만 — 기계형 규칙). 물리 질의 없음. 소리는 기존 효과음(LobbyUpgradeAssembleBolt·LobbyUpgradeAssembleLock·UpgradeUnlock) 재사용.
+// - 6차(DESIGN_V6 T11, 연출 순서는 DungeonCutsceneDirector가 정한다 — 이 문은 모습·움직임만):
+//   · 입장 뒤 닫힘(PlayCloseAfterEntry): 문짝 두 장이 가운데로 미끄러져 닫힘(leafDuration, 이동만) → 맞물리는 순간 빗장음·임펄스 → 봉인 원판 역회전(sealReturnDuration)
+//     → '닫히고 불 켜진 문'(Sealed·lit: 볼트는 빠진 채, 볼트·상인방 램프 켜짐, 유도등 끔, 표지 맥동).
+//   · 도착 모드(SetArrivalSealed → PlayArrivalOpen → PlayCloseBehind): 출구 문 Prefab을 다음 던전 시작 방 도착 자리(DungeonArrivalSlot)에 세운 것.
+//     닫힌 채 불 켜짐 → 문짝 열림 → (Player가 걸어 나옴) → 닫히고 흐려짐(장식). 도착 모드 문은 상호작용·강조·입장이 없다(IsOpen = false).
+//   · 문짝 앞 그리기(SetLeavesFront): Player가 문 안에 있는 동안 문틀·문짝(정렬 order ≥ frontFromOrder)을 frontOffset만큼 올려 Player 앞에 그린다.
+//     문 안(검은 안쪽·은은한 빛·유도등)은 그대로 Player 뒤다. 실행 중 Renderer order만 바꾸고 되돌린다(Prefab 무수정).
 [DisallowMultipleComponent]
-public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExitPoint, IFacilityInteractTarget, IFacilityHighlightSource
+public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExitPoint, IFacilityInteractTarget, IFacilityHighlightSource, IFacilityBusy
 {
-    public enum State { Locked, Unlocking, Open, Entering, Entered }
+    // 6차: 뒤의 다섯 값을 끝에 더했다(기존 값의 정수는 그대로).
+    public enum State { Locked, Unlocking, Open, Entering, Entered, Closing, Sealed, ArrivalOpening, ArrivalOpen, ArrivalClosing }
     public const int MaxBolts = 6;
 
     private enum Phase { Idle, Delay, Bolts, Seal, Leaves }
@@ -77,6 +85,13 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
     [SerializeField] private SoundOptions openSound;
     [SerializeField, Tooltip("문간으로 흡입될 때(구속 잠금 효과).")] private FeedbackDataSO enterFeedback;
 
+    [Header("6차 닫힘·도착(컷씬)")]
+    [SerializeField, Min(.05f), Tooltip("문짝이 닫힌 뒤 봉인 원판이 거꾸로 돌아 원위치하는 시간(초).")] private float sealReturnDuration = .4f;
+    [SerializeField, Min(.05f), Tooltip("Sealed의 불 켜짐 ↔ 흐림이 바뀌는 시간(초, 연출이 있을 때).")] private float sealedGlowTime = .4f;
+    [SerializeField, Tooltip("문짝 앞 그리기에서 올릴 Renderer의 최소 정렬 order(이 값 이상 = 문짝·볼트·기둥·상인방·표지·외곽. 문 안·유도등은 그대로).")]
+    private int frontFromOrder = -40;
+    [SerializeField, Tooltip("문짝 앞 그리기에서 더할 order(Player 0~4보다 위로).")] private int frontOffset = 64;
+
     private bool cached;
     private bool isLive;
     private State state;
@@ -97,6 +112,16 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
     private WaveManager holdWaves;
     private IDungeonFacilityHost busyHost;
     private Coroutine entering;
+    // 6차: 닫힘·도착 움직임(해금 연출 Phase와 따로 흐른다).
+    private enum Motion { None, Close, SealBack, ArrivalOpen, ArrivalClose }
+    private Motion motion;
+    private float motionTime;
+    private bool arrivalMode;
+    private bool sealedLit;
+    private float sealedGlow;
+    private Renderer[] frontRenderers;
+    private int[] frontBase;
+    private bool leavesFront;
 
     public int RoomId { get; set; } = -1;
     public bool IsOpen => state == State.Open;
@@ -139,6 +164,30 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
     public float OpenShake => openShake;
     public bool FacilityReady => isLive && state == State.Open && HostReady;
     private static bool HostReady => DungeonFacilityHost.Current is IDungeonExitHost;
+    // ── 6차 ──
+    /// <summary>입장 뒤 문짝이 닫히는 중(봉인 원판 원위치 포함)인지.</summary>
+    public bool IsClosing => state == State.Closing;
+    /// <summary>닫히고 잠긴 문(입장 뒤 또는 도착 모드)인지.</summary>
+    public bool IsSealed => state == State.Sealed;
+    /// <summary>Sealed가 불 켜진 모습인지(거짓 = 흐림·장식).</summary>
+    public bool SealedLit => sealedLit;
+    /// <summary>다음 던전 시작 방 도착 자리에 세운 도착 모드 문인지(상호작용·입장 없음).</summary>
+    public bool IsArrival => arrivalMode;
+    /// <summary>문틀·문짝을 Player 앞에 그리는 중인지.</summary>
+    public bool LeavesFront => leavesFront;
+    /// <summary>문짝 앞 그리기로 올리는 order 값(검사용).</summary>
+    public int FrontOffset => frontOffset;
+    public float SealReturnDuration => sealReturnDuration;
+    /// <summary>
+    /// 시설이 지금 작동 중인 남은 시간(초, 6차 T2 — 검사·표시용): 흡입·닫힘 동안 그 남은 시간, 아니면 0. 크레인 잠금은 IFacilityBusy.FacilityBusy가 맡는다.
+    /// </summary>
+    public float FacilityBusySeconds => state == State.Entering ? intakeDuration
+        : state == State.Closing ? (motion == Motion.Close ? Mathf.Max(0f, leafDuration - motionTime) + sealReturnDuration : Mathf.Max(0f, sealReturnDuration - motionTime))
+        : 0f;
+    /// <summary>흡입·닫힘처럼 Player가 붙들린 채 문이 움직이는 중인지.</summary>
+    public bool IsOperating => state == State.Entering || state == State.Closing;
+    /// <summary>6차 T2(IFacilityBusy): 문간으로 빨려 들어가 문이 닫히는 동안 크레인 직선·붙기를 막는다.</summary>
+    public bool FacilityBusy => isLive && IsOperating;
 
     private static float Ease(float t) { t = Mathf.Clamp01(t); return t * t * (3f - 2f * t); }
 
@@ -168,6 +217,8 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
         // 풀 반환·방 거둠: 진행 중인 연출은 끝난 모습으로, 흡입 중이면 구속·바쁨을 푼다(실패 시 해제). 코루틴은 비활성화로 이미 멈췄다.
         entering = null;
         if (phase != Phase.Idle) FinishSequence();
+        // 6차: 닫힘·도착 움직임도 끝난 모습으로 둔다.
+        if (motion != Motion.None) FinishMotion();
         ReleaseHold();
         EndBusy();
         if (state == State.Entering) state = State.Entered;
@@ -190,6 +241,13 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
         enterFlash = -1f;
         entering = null;
         targetUnlocked = false;
+        // 6차: 도착 모드·닫힘 움직임·앞 그리기를 지운다(풀에서 다시 꺼낸 개체에 남지 않게).
+        arrivalMode = false;
+        motion = Motion.None;
+        motionTime = 0f;
+        sealedLit = false;
+        sealedGlow = 0f;
+        SetLeavesFront(false);
         if (leafDust != null) leafDust.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
         if (sealSparks != null) sealSparks.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
         if (openBurst != null) openBurst.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
@@ -201,6 +259,9 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
         isLive = false;
         ReleaseHold();
         EndBusy();
+        SetLeavesFront(false);
+        motion = Motion.None;
+        arrivalMode = false;
         boltLampLights?.Restore();
         rowLampLights?.Restore();
         sealLamp?.Restore();
@@ -220,6 +281,8 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
     {
         Cache();
         if (state == State.Entering || state == State.Entered) return;
+        // 6차: 닫힌 뒤·도착 모드 문은 진행을 받지 않는다(그 모습은 컷씬 감독이 정한다).
+        if (arrivalMode || state >= State.Closing) return;
         total = Mathf.Max(0, total);
         done = Mathf.Clamp(done, 0, total);
         if (instant || done < shownDone || Mathf.Min(total, MaxBolts) != visible || (!unlocked && state == State.Open))
@@ -305,6 +368,8 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
         clock += dt;
         if (enterFlash >= 0f) enterFlash += dt;
         StepSequence(dt);
+        StepMotion(dt);
+        if (state == State.Sealed) sealedGlow = Mathf.MoveTowards(sealedGlow, sealedLit ? 1f : 0f, dt / Mathf.Max(.05f, sealedGlowTime));
         for (int i = 0; i < MaxBolts; i++)
         {
             if (!boltMoving[i]) continue;
@@ -412,6 +477,192 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
 
     private Vector3 SealPosition => sealLeft != null ? sealLeft.position : transform.position;
 
+    // ── 6차 닫힘·도착(컷씬 감독이 부른다) ─────────────────────────────
+
+    /// <summary>
+    /// 입장한 Player 뒤로 문을 닫는다: 문짝 닫힘(leafDuration) → 빗장음·임펄스 → 봉인 원판 원위치(sealReturnDuration) → Sealed(불 켜짐).
+    /// 열린 문(Open)이나 입장 중·입장한 문에서만 받는다(흡입이 끝나기 전에 부르면 흡입 코루틴이 상태를 덮으므로 감독은 Entered를 기다린 뒤 부른다). 받아들이면 true.
+    /// </summary>
+    public bool PlayCloseAfterEntry()
+    {
+        Cache();
+        if (!isLive || arrivalMode || !(state == State.Open || state == State.Entering || state == State.Entered)) return false;
+        if (phase != Phase.Idle) FinishSequence();
+        state = State.Closing;
+        motion = Motion.Close;
+        motionTime = 0f;
+        leafT = 1f;
+        sealT = 1f;
+        interactPoint?.HideHint();
+        Log("closing");
+        FacilityFeedback.Emit(leafDust, true);
+        Apply();
+        return true;
+    }
+
+    /// <summary>
+    /// 도착 모드로 닫힌 문 모습을 바로 맞춘다(문 안에 Player가 있다고 보는 '불 켜짐' 또는 장식용 '흐림').
+    /// bolts = 보일 볼트 수(앞 던전 레버 수, 음수면 지금 수 — 없으면 기본 3). 볼트는 모두 빠진 채(풀린 문)다. instant가 아니면 불빛만 sealedGlowTime 동안 바뀐다.
+    /// </summary>
+    public void SetArrivalSealed(bool lit, bool instant, int bolts = -1)
+    {
+        Cache();
+        arrivalMode = true;
+        phase = Phase.Idle;
+        motion = Motion.None;
+        motionTime = 0f;
+        int count = bolts >= 0 ? bolts : total > 0 ? total : defaultTotal;
+        Layout(Mathf.Min(count, MaxBolts));
+        total = count;
+        targetDone = shownDone = visible;
+        targetUnlocked = true;
+        for (int i = 0; i < MaxBolts; i++) { boltOut[i] = i < visible ? 1f : 0f; boltMoving[i] = false; }
+        leafT = 0f;
+        sealT = 0f;
+        state = State.Sealed;
+        sealedLit = lit;
+        if (instant) sealedGlow = lit ? 1f : 0f;
+        enterFlash = -1f;
+        EmitAll(false);
+        interactPoint?.HideHint();
+        Apply();
+    }
+
+    /// <summary>도착 모드 문을 연다(문짝 열림 leafDuration — 문 안의 Player가 드러난다). 닫힌 도착 문에서만 받는다.</summary>
+    public bool PlayArrivalOpen()
+    {
+        Cache();
+        if (!isLive || !arrivalMode || state != State.Sealed) return false;
+        state = State.ArrivalOpening;
+        motion = Motion.ArrivalOpen;
+        motionTime = 0f;
+        sealedLit = true;
+        sealedGlow = 1f;
+        Log("arrival-opening");
+        FacilityFeedback.Play(openSound, transform.position);
+        FacilityFeedback.Emit(leafDust, true);
+        Apply();
+        return true;
+    }
+
+    /// <summary>Player가 걸어 나온 뒤 도착 문을 닫고 흐리게 한다(장식). 열린 도착 문(열리는 중 포함)에서만 받는다.</summary>
+    public bool PlayCloseBehind()
+    {
+        Cache();
+        if (!isLive || !arrivalMode || !(state == State.ArrivalOpen || state == State.ArrivalOpening)) return false;
+        if (state == State.ArrivalOpening) leafT = 1f;
+        state = State.ArrivalClosing;
+        motion = Motion.ArrivalClose;
+        motionTime = 0f;
+        Log("arrival-closing");
+        FacilityFeedback.Emit(leafDust, true);
+        Apply();
+        return true;
+    }
+
+    /// <summary>
+    /// 문틀·문짝을 Player 앞에 그린다(true) / 되돌린다(false). 정렬 order가 frontFromOrder 이상인 Renderer만 frontOffset을 더한다
+    /// (문 안 검은 안쪽·은은한 빛·유도등은 Player 뒤 그대로). Prefab 값을 처음 한 번 적어 두고 되돌릴 때 그 값으로 맞춘다.
+    /// </summary>
+    public void SetLeavesFront(bool front)
+    {
+        CacheFront();
+        if (leavesFront == front) return;
+        leavesFront = front;
+        for (int i = 0; i < frontRenderers.Length; i++)
+            if (frontRenderers[i] != null) frontRenderers[i].sortingOrder = frontBase[i] + (front ? frontOffset : 0);
+    }
+
+    private void CacheFront()
+    {
+        if (frontRenderers != null) return;
+        var found = new List<Renderer>();
+        var orders = new List<int>();
+        foreach (var r in GetComponentsInChildren<Renderer>(true))
+        {
+            if (r == null || r.sortingOrder < frontFromOrder) continue;
+            found.Add(r);
+            orders.Add(r.sortingOrder);
+        }
+        frontRenderers = found.ToArray();
+        frontBase = orders.ToArray();
+    }
+
+    // 닫힘·도착 움직임 한 프레임(이동·회전만 — 크기 변형 없음).
+    private void StepMotion(float dt)
+    {
+        switch (motion)
+        {
+            case Motion.Close:
+                motionTime += dt;
+                leafT = 1f - Mathf.Clamp01(motionTime / leafDuration);
+                if (leafT > 0f) break;
+                // 문짝이 맞물리는 순간: 빗장음·임펄스 → 봉인 원판 원위치.
+                Log("closed");
+                FacilityFeedback.Emit(leafDust, false);
+                Impulse(boltShake, 0f, transform.position);
+                FacilityFeedback.Play(boltSound, transform.position);
+                motion = Motion.SealBack;
+                motionTime = 0f;
+                FacilityFeedback.Play(sealSound, SealPosition);
+                FacilityFeedback.Emit(sealSparks, true);
+                break;
+            case Motion.SealBack:
+                motionTime += dt;
+                sealT = 1f - Mathf.Clamp01(motionTime / sealReturnDuration);
+                if (sealT > 0f) break;
+                FinishMotion();
+                break;
+            case Motion.ArrivalOpen:
+                motionTime += dt;
+                leafT = Mathf.Clamp01(motionTime / leafDuration);
+                if (leafT < 1f) break;
+                FinishMotion();
+                break;
+            case Motion.ArrivalClose:
+                motionTime += dt;
+                leafT = 1f - Mathf.Clamp01(motionTime / leafDuration);
+                if (leafT > 0f) break;
+                FacilityFeedback.Play(boltSound, transform.position);
+                FinishMotion();
+                break;
+        }
+    }
+
+    // 닫힘·도착 움직임을 끝난 모습으로(끊긴 경우 OnDisable에서도 같은 결과).
+    private void FinishMotion()
+    {
+        var was = motion;
+        motion = Motion.None;
+        motionTime = 0f;
+        FacilityFeedback.Emit(leafDust, false);
+        FacilityFeedback.Emit(sealSparks, false);
+        switch (was)
+        {
+            case Motion.Close:
+            case Motion.SealBack:
+                leafT = 0f;
+                sealT = 0f;
+                state = State.Sealed;
+                sealedLit = true;
+                sealedGlow = 1f;
+                Log("sealed");
+                break;
+            case Motion.ArrivalOpen:
+                leafT = 1f;
+                state = State.ArrivalOpen;
+                Log("arrival-open");
+                break;
+            case Motion.ArrivalClose:
+                leafT = 0f;
+                state = State.Sealed;
+                sealedLit = false;
+                sealedGlow = 0f;
+                Log("arrival-closed");
+                break;
+        }
+    }
+
     // ── 상호작용 ─────────────────────────────
 
     public bool ShowFacilityHint(PlayerController player, FacilityInteractPoint point)
@@ -462,7 +713,8 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
             }
         }
         EndBusy();
-        state = State.Entered;
+        // 6차: 흡입 도중 감독이 이미 닫힘(PlayCloseAfterEntry)을 시작했으면 그 상태를 덮지 않는다.
+        if (state == State.Entering) state = State.Entered;
         if (!held) { entering = null; yield break; }
         // Wave 종료(WaveEnded·멈춤)가 풀 때까지 보호 구속을 유지한다. Wave 진행 장치가 없으면 잠깐 뒤, 한도를 넘으면 푼다.
         for (float waited = 0f; StillHeld(player); waited += Time.deltaTime)
@@ -539,6 +791,8 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
         float leaf = LeafOpen;
         if (leafLeft != null) leafLeft.localPosition = leafLeftHome + new Vector3(-leafTravel * leaf, 0f, 0f);
         if (leafRight != null) leafRight.localPosition = leafRightHome + new Vector3(leafTravel * leaf, 0f, 0f);
+        // 6차: 닫힘·Sealed·도착 모드는 불빛을 따로 그린다.
+        if (state >= State.Closing) { ApplyClosed(leaf); return; }
 
         bool open = state == State.Open || state == State.Entering || state == State.Entered;
         float openPulse = .8f + .35f * Mathf.Sin(clock * 3.4f);
@@ -577,5 +831,40 @@ public sealed class PropExitGate : MonoBehaviour, IDungeonPropPart, IDungeonExit
         innerLamp?.Set(open ? .55f + .15f * Mathf.Sin(clock * 2.2f) + 1.2f * flashKick : phase == Phase.Leaves ? .55f * leaf : .05f);
         signLamp?.Set(open ? openPulse : state == State.Unlocking ? .7f : .25f);
         trimLamp?.Set(open || state == State.Unlocking ? 1f : .45f);
+    }
+
+    // 6차 닫힘·Sealed·도착 모드의 불빛. glow 1 = 불 켜짐(볼트·상인방 램프 켜짐·표지 맥동), 0 = 흐림(장식).
+    // 문짝이 열린 정도만큼 문 안 빛·유도등이 켜진다(닫힌 Sealed는 끔). 볼트는 빠진 자리 그대로다.
+    private void ApplyClosed(float leaf)
+    {
+        float openPulse = .8f + .35f * Mathf.Sin(clock * 3.4f);
+        bool open = state == State.ArrivalOpen;
+        float glow = state == State.Sealed ? sealedGlow : state == State.ArrivalClosing ? leaf : 1f;
+        if (boltLampLights != null)
+            for (int i = 0; i < boltLampLights.Count; i++)
+                boltLampLights.SetOne(i, i >= visible ? 0f : Mathf.Lerp(.14f, 1.2f, glow) * (open ? openPulse : 1f));
+        if (rowLampLights != null)
+        {
+            float sweep = Mathf.Repeat(clock / 1.2f, 1f) * (visible + 1);
+            for (int i = 0; i < rowLampLights.Count; i++)
+                rowLampLights.SetOne(i, i >= visible ? 0f : open ? (i < sweep ? 1.3f : .5f) : Mathf.Lerp(.12f, 1.2f, glow));
+        }
+        sealLamp?.Set(motion == Motion.SealBack ? 1.6f : Mathf.Lerp(.3f, .9f, glow));
+        if (guideLamp != null && guideLamp.Count > 0)
+        {
+            int count = guideLamp.Count;
+            float head = Mathf.Repeat(clock * 7f, count + 3f);
+            for (int i = 0; i < count; i++)
+            {
+                float level = 0f;
+                if (open) { float k = Mathf.Clamp01(1f - Mathf.Abs(i - head) / 2f); level = Mathf.Lerp(.35f, 1.4f, k); }
+                else if (state != State.Sealed) level = .35f * leaf;
+                guideLamp.SetOne(i, level);
+            }
+        }
+        float flashKick = enterFlash >= 0f && enterFlash < .6f ? 1f - enterFlash / .6f : 0f;
+        innerLamp?.Set(open ? .55f + .15f * Mathf.Sin(clock * 2.2f) : state == State.Sealed ? .05f : .55f * leaf + 1.2f * flashKick);
+        signLamp?.Set(Mathf.Lerp(.25f, openPulse, glow));
+        trimLamp?.Set(Mathf.Lerp(.45f, 1f, glow));
     }
 }

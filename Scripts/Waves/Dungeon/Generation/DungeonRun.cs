@@ -66,6 +66,13 @@ public sealed class DungeonRoomData
     /// <summary>출구 자리가 있는지.</summary>
     public bool HasExit => exit != null;
     /// <summary>
+    /// 도착 문 자리(6차 T11): 템플릿 맵 층의 DungeonArrivalSlot 표식 항목(템플릿 좌표 = 방 로컬). 표식은 props에서 빠지고,
+    /// 이 방이 던전 시작 방이면 출구 문 Prefab을 도착 모드로 세운다(앞 던전 출구에 들어간 Player가 여기서 걸어 나온다). 없으면 null.
+    /// </summary>
+    public WaveSpawnInfo arrival;
+    /// <summary>도착 문 자리가 있는지.</summary>
+    public bool HasArrival => arrival != null;
+    /// <summary>
     /// 적 생성 구역(4차): 템플릿 맵 층의 DungeonSpawnZone 표식 항목(템플릿 좌표, 배치 설정 spawnZoneKind·Width·Height·Weight 포함).
     /// 표식은 props에서 빠지고 실행 때 세우지 않는다. 동적 적 구성의 후보 지점 편향(DungeonSpawnPointMap)에 쓴다.
     /// </summary>

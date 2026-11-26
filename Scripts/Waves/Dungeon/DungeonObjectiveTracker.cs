@@ -177,6 +177,17 @@ public sealed class DungeonObjectiveTracker
     }
 
     /// <summary>
+    /// 7차(DESIGN_V7 V5): 방 room에 아직 완료하지 않은 배정 목표가 있고 던전 목표가 아직 다 차지 않았는지(레버 대기 판정 — DungeonManager).
+    /// 필요한 수(RequiredCount)를 이미 채웠으면 남은 배치가 있어도 false다(그 레버는 방 클리어를 막지 않는다). 할당 없음.
+    /// </summary>
+    public bool PendingIn(int room)
+    {
+        if (!HasObjective || IsComplete) return false;
+        foreach (var entry in entries) if (entry.room == room && !entry.done) return true;
+        return false;
+    }
+
+    /// <summary>
     /// 목표 하나를 완료한다. 그 방·슬롯·번호가 배정과 맞고 아직 완료하지 않았을 때만 true(Completed·Changed를 알린다).
     /// </summary>
     public bool TryComplete(int room, int slot, int index)

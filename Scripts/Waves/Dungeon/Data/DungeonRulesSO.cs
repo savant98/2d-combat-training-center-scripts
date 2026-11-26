@@ -94,4 +94,62 @@ public class DungeonRulesSO : ScriptableObject
     public FeedbackDataSO passageEnterFeedback;
     public FeedbackDataSO passageExitFeedback;
     public FeedbackDataSO roomClearFeedback;
+
+    /// <summary>
+    /// 6차 T11 컷씬(DungeonCutsceneDirector). 레버 컷씬 = 당김 → 덮개 → 시작 방(출구 방) 미리보기(상태 변경 없음) → 볼트 풀림·램프 점등(마지막 레버는 문 열림) → 덮개 → 레버 방.
+    /// 문 컷씬 = 흡입 → 문짝 닫힘·봉인 → 다음 Wave는 도착 문에서 걸어 나오며 시작(크레인 생략). 끄면 4차 지연 재생·크레인 운반으로 돌아간다(회귀용 스위치).
+    /// 시간 값은 게임 시간(초)이며 판단값이다.
+    /// </summary>
+    [Header("컷씬(6차 T11)")]
+    [Tooltip("레버를 당기면 출구 방을 잠깐 보여 주는 컷씬을 켭니다. 끄면 출구 문은 시작 방에 돌아왔을 때 지연 재생합니다(4차).")]
+    public bool leverCutscene = true;
+    [Tooltip("출구 문에 들어가면 문이 닫히는 컷씬과, 다음 Wave를 도착 문에서 걸어 나오며 시작하는 연출을 켭니다. 끄면 크레인으로 옮깁니다(4차).")]
+    public bool exitCutscene = true;
+    [Tooltip("컷씬 위아래 검은 띠(CinematicLetterbox Prefab). 비우면 띠 없이 진행합니다.")]
+    public CinematicLetterbox letterboxPrefab;
+    [Tooltip("레버 컷씬이 시작 방으로 넘어갈 때 화면을 덮는 방식: 관 속 오버레이(시작 방 쪽 방향) / 암전.")]
+    public DungeonCutsceneCover cutsceneCover = DungeonCutsceneCover.Pipe;
+    [Tooltip("레버를 당긴 뒤 덮개를 치기까지 레버 연출을 보여 주는 시간(초, 손잡이 .6초 + 빗장).")]
+    [Min(0f)] public float leverWatchTime = .75f;
+    [Tooltip("덮개가 화면을 다 덮는 시간(초).")]
+    [Min(.02f)] public float cutsceneCoverTime = .2f;
+    [Tooltip("덮개가 걷히는 시간(초).")]
+    [Min(.02f)] public float cutsceneRevealTime = .2f;
+    [Tooltip("출구 문 연출(볼트·봉인·문짝)이 끝난 뒤 머무는 시간(초).")]
+    [Min(0f)] public float exitRevealHold = .6f;
+    [Tooltip("출구 문 연출을 기다리는 최대 시간(초). 넘으면 끝난 것으로 보고 돌아온다.")]
+    [Min(.5f)] public float exitRevealLimit = 6f;
+    [Tooltip("다음 Wave 시작 안내(WAVE n 판, 2초)가 뜬 뒤 도착 문이 열리기 시작하는 시간(초) — 판 끝 0.3초 전.")]
+    [Min(0f)] public float arrivalOpenDelay = 1.7f;
+    [Tooltip("도착 문이 열린 뒤 Player가 문 앞 선 자리로 걸어 나오는 시간(초).")]
+    [Min(.05f)] public float arrivalWalkTime = .45f;
+    [Tooltip("걸어 나와 서는 자리(문 가운데에서 방 안쪽으로 가로 칸 수).")]
+    [Min(0f)] public float arrivalStandDistance = 2.2f;
+    [Tooltip("출구 자리와 도착 자리가 다른 방 좌표일 때(암전 대체안) 암전이 내려오고 걷히는 시간(초).")]
+    [Min(.05f)] public float arrivalFadeTime = .3f;
+    [Tooltip("도착 문 Prefab(출구 문 Prefab을 도착 모드로 재사용). 비우면 이 훈련 목표 SO의 ExitPrefab을 씁니다.")]
+    public GameObject arrivalGatePrefab;
+
+    /// <summary>
+    /// 난이도 상승 알림. 7차(DESIGN_V7 V8): 등급 알림과 다른 자리·다른 모양 — 오른쪽 HUD 열 미니맵 아래 '난이도 상승 계기'(DungeonThreatRise: 세로 5칸 사다리·빛 기둥·오르는 ▲,
+    /// 약 3.65초)를 띄운다. 6차 T12의 훈련 상황판 등급 알림 재사용은 없앴다(등급 알림은 main 그대로). 띄울 곳의 판단은 DungeonThreatAlert(훈련 기록 중일 때만).
+    /// </summary>
+    [Header("난이도 알림(7차 V8 — 난이도 상승 계기)")]
+    [Tooltip("난이도가 오른 순간 미니맵 아래에 '난이도 상승' 계기(5칸 사다리 + 빛 기둥)를 띄웁니다. 끄거나 훈련 기록 중이 아니면 상태 띠의 THREAT 단계 표시를 씁니다.")]
+    public bool threatAlert = true;
+    [Tooltip("계기 머리줄 오른쪽 작은 꼬리표(정적 글꼴 — 영문 대문자·숫자, 공백은 여백 태그로 바뀝니다). 머리줄 큰 글자는 '난이도 상승'입니다.")]
+    public string threatAlertTitle = "THREAT";
+    [Tooltip("계기 아래 줄에 적 출현 배율 변화(예: 적 출현 x1.00 ▸ x1.30)를 보입니다.")]
+    public bool threatAlertDetail = true;
+    [Tooltip("계기 새 칸 점화 순간 소리(기존 클립의 Feedback). 비우면 소리 없이 띄웁니다.")]
+    public FeedbackDataSO threatAlertFeedback;
+}
+
+/// <summary>6차 레버 컷씬이 시작 방(출구 방)으로 넘어갈 때 화면을 덮는 방식.</summary>
+public enum DungeonCutsceneCover
+{
+    /// <summary>관 속 오버레이(DungeonPassageOverlay — 던전 지도에서 시작 방 쪽 방향으로 흐른다).</summary>
+    Pipe = 0,
+    /// <summary>공용 암전(UIManager.StartScreenFade).</summary>
+    Fade = 1,
 }

@@ -37,6 +37,14 @@ public abstract class DungeonObjectiveSO : ScriptableObject
     /// <summary>출구 짧은 표기(목표 패널 'EXIT OPEN' 등).</summary>
     public string exitShortLabel = "EXIT";
 
+    /// <summary>
+    /// 7차(DESIGN_V7 V5): 이 목표가 방 클리어에 필요한지. 켜면 목표(레버)가 남은 방은 적을 모두 처치해도 출입구가 잠긴 채 '레버 대기'(상태 띠 PULL LEVER)가 되고,
+    /// 그 방 목표를 채워야 방 클리어(ROOM CLEAR·난이도 첫 클리어·시설 전원·문 열림)된다. 끄면 6차까지처럼 적 전멸 = 방 클리어. 기존 에셋에 없는 필드라 처음 읽을 때 true다.
+    /// </summary>
+    [Header("방 클리어(7차)")]
+    [Tooltip("켜면 이 목표(레버)가 남은 방은 적을 모두 처치해도 문이 잠긴 채 'PULL LEVER' 대기가 되고, 목표를 채워야 방 클리어(문 열림)됩니다.")]
+    public bool gatesRoomClear = true;
+
     /// <summary>출구 문 Prefab(기본 exitPrefab). finish가 Immediate여도 값은 그대로 돌려준다 — 쓸지는 실행 쪽이 finish로 정한다.</summary>
     public virtual GameObject ExitPrefab => exitPrefab;
 

@@ -13,11 +13,12 @@ public static class WavePrefabVisuals
     private static readonly Dictionary<int, Sprite> sprites = new();
     private static readonly Dictionary<int, Rect> previewUVs = new();
     private static readonly Dictionary<(int, bool), Bounds> boundsCache = new();
-    public static void Invalidate() { sprites.Clear();previewUVs.Clear();boundsCache.Clear();ownVisuals.Clear();dungeonProps.Clear();dungeonFacilities.Clear();WaveDevicePreviewCache.Invalidate();DungeonCranePaths.Invalidate(); }
+    public static void Invalidate() { sprites.Clear();previewUVs.Clear();boundsCache.Clear();ownVisuals.Clear();dungeonProps.Clear();dungeonFacilities.Clear();arrivalSlots.Clear();WaveDevicePreviewCache.Invalidate();DungeonCranePaths.Invalidate();DungeonPropCatalogSO.Invalidate(); }
     public static bool IsEnvironmentTool(GameObject prefab) => prefab != null && prefab.GetComponent<WaveEnvironmentTool>() != null;
     // 4차: 출구 자리 표식(DungeonExitSlot)·생성 구역 표식(DungeonSpawnZone)도 WaveEnvironmentTool이 없어도 팔레트 항목이다(계약 타입).
+    // 6차(T11): 도착 자리 표식(DungeonArrivalSlot — 영역 cutscene6가 만드는 타입, 이름으로 찾는다)도 팔레트 항목이다.
     public static bool IsPaletteItem(GameObject prefab) => prefab != null && (prefab.GetComponent<EnemyController>() != null || prefab.GetComponent<WaveTerrainCellView>() != null || IsEnvironmentTool(prefab) || IsDungeonDoor(prefab)
-        || IsDungeonObjectiveSlot(prefab) || IsDungeonExitSlot(prefab) || IsDungeonSpawnZone(prefab) || IsDungeonFacility(prefab) || IsDungeonProp(prefab));
+        || IsDungeonObjectiveSlot(prefab) || IsDungeonExitSlot(prefab) || IsDungeonArrivalSlot(prefab) || IsDungeonSpawnZone(prefab) || IsDungeonFacility(prefab) || IsDungeonProp(prefab));
     // 한 칸보다 큰 환경 도구는 표식 배경과 선택 영역을 놓인 칸 하나로 줄여 아래 지형을 가리지 않는다.
     public static bool UsesCompactMarker(GameObject prefab) => prefab != null && prefab.TryGetComponent<WaveEnvironmentTool>(out var tool) && tool.CompactMarker;
     // 같은 칸 중복 금지에 드는 환경 장치. 칸을 차지하지 않는 표시 장치(길 안내 화살표)는 다른 장치와 같은 칸에 놓을 수 있다.
@@ -31,6 +32,19 @@ public static class WavePrefabVisuals
     }
     // 장치 기준점(격자 좌표)이 차지하는 칸들. 홀수 축은 칸 중심, 짝수 축은 격자 꼭짓점에 기준점이 놓인다.
     public static RectInt Cells(Vector2 point, Vector2Int size) => new RectInt(Vector2Int.FloorToInt(point - (Vector2)size * .5f + Vector2.one * .5f), size);
+    /// <summary>
+    /// 6차(T17): 같은 칸 규칙에 드는 차지 칸. 길이 설정형(카탈로그 lengthKey — 컨베이어·장식 레일·분쇄 투입구·파괴 격자)은 회전 0·180°일 때
+    /// 왼쪽 변을 고정하고 설정 길이만큼 오른쪽으로 차지한다(빌더 PropCells와 같다). 그 밖은 <see cref="Cells"/>와 같다.
+    /// </summary>
+    public static RectInt OccupiedCells(GameObject prefab, Vector2 point, int rotationSteps, WaveDeviceSetting[] settings)
+    {
+        var area = Cells(point, Footprint(prefab, rotationSteps));
+        var entry = DungeonPropCatalogSO.Lookup(prefab);
+        if (entry == null || !entry.HasLength || (((rotationSteps % 4) + 4) % 4) % 2 == 1) return area;
+        int length = Mathf.RoundToInt(DungeonCranePaths.Value(prefab, settings, entry.lengthKey, area.width));
+        if (length >= 1) area.width = length;
+        return area;
+    }
     // 움직이는 환경 도구가 닿는 범위를 덧그린다. origin은 장치 원점의 화면 좌표, zoom은 한 칸의 픽셀 수다.
     // 4차(DESIGN_V4 §2.3·2.4): 던전 크레인의 경로 다각선·쓸기 띠·붙기 반경 고리·고정 크레인 줄도 그린다(DungeonCranePaths).
     // 생성 구역 표식은 TryGetRange의 상자(종류별 색)로 그려진다. alpha는 흐린 표시(적 구성 편집 중 맵 층)에 쓴다.
@@ -82,7 +96,7 @@ public static class WavePrefabVisuals
         // 4차: 출구 자리 표식(DungeonExitSlot)·생성 구역 표식(DungeonSpawnZone, 계약 타입)과 경로·고정 크레인·출구 문(시설 이름 목록)도 '던전' 탭이다.
         //      새 파괴형 Prop 6종(강화 상자 등)은 루트 DungeonProp이라 그대로 'Prop' 탭이다(DungeonPropBody는 Enemy가 아니다).
         if (IsDungeonDoor(prefab)) return Category.Dungeon;
-        if (IsDungeonObjectiveSlot(prefab) || IsDungeonExitSlot(prefab) || IsDungeonSpawnZone(prefab)) return Category.Dungeon;
+        if (IsDungeonObjectiveSlot(prefab) || IsDungeonExitSlot(prefab) || IsDungeonArrivalSlot(prefab) || IsDungeonSpawnZone(prefab)) return Category.Dungeon;
         if (IsDungeonFacility(prefab)) return Category.Dungeon;
         if (IsDungeonProp(prefab)) return Category.Prop;
         if (prefab.GetComponent<TutorialGoal>() != null) return Category.Goal;
@@ -134,10 +148,37 @@ public static class WavePrefabVisuals
         var size = prefab != null && prefab.TryGetComponent<WaveEnvironmentTool>(out var tool) ? tool.Footprint : DungeonExitSlot.Size;
         return (((rotationSteps % 4) + 4) % 4) % 2 == 1 ? new Vector2Int(size.y, size.x) : size;
     }
-    /// <summary>목표·출구 자리 표식(뒤 벽 실물이 설 자리)인지.</summary>
-    public static bool IsDungeonSlot(GameObject prefab) => IsDungeonObjectiveSlot(prefab) || IsDungeonExitSlot(prefab);
-    /// <summary>목표·출구 자리 표식의 점유 칸(종류에 맞는 계약 크기).</summary>
-    public static Vector2Int SlotFootprint(GameObject prefab, int rotationSteps = 0) => IsDungeonExitSlot(prefab) ? ExitSlotFootprint(prefab, rotationSteps) : ObjectiveSlotFootprint(prefab, rotationSteps);
+    /// <summary>6차(T11): 다음 Wave 시작 방의 도착 문 자리 표식(DungeonArrivalSlot, 5×6 뒤 벽 — 출구 자리와 같은 규격). 타입은 영역 cutscene6가 만들어 이름으로 찾는다.</summary>
+    public const string ArrivalSlotComponent = "DungeonArrivalSlot";
+    public static readonly Vector2Int ArrivalSlotSize = new Vector2Int(5, 6);
+    private static readonly Dictionary<int, bool> arrivalSlots = new();
+    public static bool IsDungeonArrivalSlot(GameObject prefab)
+    {
+        if (prefab == null) return false;
+        bool persistent = EditorUtility.IsPersistent(prefab);
+        int id = prefab.GetInstanceID();
+        if (persistent && arrivalSlots.TryGetValue(id, out bool cached)) return cached;
+        bool result = false;
+        foreach (var component in prefab.GetComponents<Component>())
+        {
+            if (component == null) continue;
+            for (var type = component.GetType(); type != null && type != typeof(MonoBehaviour) && !result; type = type.BaseType)
+                result = type.Name == ArrivalSlotComponent;
+            if (result) break;
+        }
+        if (persistent) arrivalSlots[id] = result;
+        return result;
+    }
+    public static Vector2Int ArrivalSlotFootprint(GameObject prefab, int rotationSteps = 0)
+    {
+        var size = prefab != null && prefab.TryGetComponent<WaveEnvironmentTool>(out var tool) ? tool.Footprint : ArrivalSlotSize;
+        return (((rotationSteps % 4) + 4) % 4) % 2 == 1 ? new Vector2Int(size.y, size.x) : size;
+    }
+    /// <summary>목표·출구·도착 자리 표식(뒤 벽 실물이 설 자리)인지.</summary>
+    public static bool IsDungeonSlot(GameObject prefab) => IsDungeonObjectiveSlot(prefab) || IsDungeonExitSlot(prefab) || IsDungeonArrivalSlot(prefab);
+    /// <summary>목표·출구·도착 자리 표식의 점유 칸(종류에 맞는 계약 크기).</summary>
+    public static Vector2Int SlotFootprint(GameObject prefab, int rotationSteps = 0) => IsDungeonExitSlot(prefab) ? ExitSlotFootprint(prefab, rotationSteps)
+        : IsDungeonArrivalSlot(prefab) ? ArrivalSlotFootprint(prefab, rotationSteps) : ObjectiveSlotFootprint(prefab, rotationSteps);
     // 4차: 적 생성 구역 표식(계약 타입 DungeonSpawnZone). 점유 1×1, 넓이는 배치 설정(spawnZoneWidth·Height)으로 오른쪽·위로 넓어진다.
     public static bool IsDungeonSpawnZone(GameObject prefab) => DungeonSpawnZone.IsZone(prefab);
     private static readonly Dictionary<int, string> dungeonFacilities = new();
@@ -537,9 +578,9 @@ public static class WavePrefabVisuals
         finally { Handles.EndGUI(); }
     }
     // 출구 자리 표식(4차 5×6 뒤 벽 문): 점선 앰버 테두리, 문틀 기둥·상인방(램프 3개), 좌우 문짝 두 장, 문짝을 가로지르는 잠금 볼트 3줄, 상호작용 지점 원.
-    private static void DrawExitSlot(Rect rect, GameObject prefab, bool actualSize, int turns)
+    private static void DrawExitSlot(Rect rect, GameObject prefab, bool actualSize, int turns, bool arrival = false)
     {
-        var size = (Vector2)ExitSlotFootprint(prefab, turns);
+        var size = arrival ? (Vector2)ArrivalSlotFootprint(prefab, turns) : (Vector2)ExitSlotFootprint(prefab, turns);
         if (!BeginSlotFrame(ref rect, size, actualSize, out float unit, out var tinted)) return;
         var area = rect;
         Vector2 P(float x, float y) => new Vector2(area.xMin + area.width * x, area.yMax - area.height * y);
@@ -561,6 +602,13 @@ public static class WavePrefabVisuals
                 Handles.DrawSolidDisc(P(.38f + lamp * .12f, .905f), Vector3.forward, Mathf.Max(1.5f, unit * .12f));
             Handles.color = tinted(.9f);
             Handles.DrawWireDisc(P(.5f, .75f / Mathf.Max(1f, size.y)), Vector3.forward, Mathf.Max(2f, unit * .18f));
+            // 6차 도착 자리: 문에서 걸어 나오는 방향(앞쪽 아래)을 갈매기 두 개로 표시해 출구 자리와 구별한다.
+            if (arrival)
+                for (int chevron = 0; chevron < 2; chevron++)
+                {
+                    float y = .62f - chevron * .14f;
+                    Handles.DrawAAPolyLine(Mathf.Max(2f, unit * .14f), P(.36f, y + .06f), P(.5f, y), P(.64f, y + .06f));
+                }
         }
         finally { Handles.EndGUI(); }
     }
@@ -622,6 +670,7 @@ public static class WavePrefabVisuals
         int turns = ((rotationSteps % 4) + 4) % 4;
         if (IsDungeonObjectiveSlot(prefab)) { DrawObjectiveSlot(rect, prefab, actualSize, turns); return true; }
         if (IsDungeonExitSlot(prefab)) { DrawExitSlot(rect, prefab, actualSize, turns); return true; }
+        if (IsDungeonArrivalSlot(prefab)) { DrawExitSlot(rect, prefab, actualSize, turns, true); return true; }
         if (IsDungeonSpawnZone(prefab)) { DrawSpawnZoneMarker(rect, prefab, actualSize, settings); return true; }
         if (IsEnvironmentTool(prefab))
         {
@@ -689,7 +738,7 @@ public static class DungeonCranePaths
     public const string CountKey = "cranePathCount", SpeedKey = "craneSpeed", RadiusKey = "zipRadius", CableKey = "craneCableLength";
     public const int MinPoints = 2, MaxPoints = 8;
     public const float DefaultSpeed = 24f, DefaultRadius = 8f, MinRadius = 4f, MaxRadius = 14f, DefaultCable = 3f;
-    /// <summary>5차: 빈 크레인 복귀·호출 속도(칸/초, PropCraneHook.ReturnSpeed와 같은 상수 — 배치 설정 키 아님).</summary>
+    /// <summary>5차: 빈 크레인 도중 하차 복귀 속도(6차: 빈 도크 호출은 즉시 생성 — 칸/초, PropCraneHook.ReturnSpeed와 같은 상수 — 배치 설정 키 아님).</summary>
     public const float ReturnSpeed = 40f;
     /// <summary>5차: 도크(승강장) 표시 색(중립 기능 파랑 — WAVE_ENVIRONMENT_DESIGN).</summary>
     public static readonly Color DockColor = new Color(.25f, .55f, 1f);
@@ -765,6 +814,12 @@ public static class DungeonCranePaths
     public static Vector2Int Footprint(GameObject prefab) => prefab != null && prefab.TryGetComponent<WaveEnvironmentTool>(out var tool) ? tool.Footprint : Size;
     /// <summary>집(점 0)의 매달린 Player 발: 기준점(점유 칸 묶음 중심) + (0, −높이/2). 시설은 회전 0°로 둔다(배치 규약).</summary>
     public static Vector2 HomeFeet(GameObject prefab, Vector2 root) => root + new Vector2(0f, -Footprint(prefab).y * .5f);
+    /// <summary>
+    /// 7차(DESIGN_V7 V11): 매달린 Player 발(root 좌표계). 고정 크레인은 몸 중심이 그래플 고리 중심에 오도록 root + PropCraneAnchor.HangLocal(집 발보다 1.345칸 위),
+    /// 그 밖(경로 크레인 집 등)은 HomeFeet. 편집기 검사(도달 탐색·함정 금지 구역·함정 안전 경로·상호작용 간격·사슬 노드)와 격자 Tool 고리 그림이 이 값 하나를 쓴다.
+    /// 차지 칸(footprint)은 계속 HomeFeet 기준이다.
+    /// </summary>
+    public static Vector2 HangFeet(GameObject prefab, Vector2 root) => IsFixedCrane(prefab) ? root + PropCraneAnchor.HangLocal : HomeFeet(prefab, root);
     /// <summary>경로 점의 발 위치(root 좌표계).</summary>
     public static List<Vector2> Feet(GameObject prefab, Vector2 root, WaveDeviceSetting[] settings)
     {
@@ -842,7 +897,7 @@ public static class DungeonCranePaths
     private static GUIStyle labelStyle;
     /// <summary>
     /// 크레인 그림(격자 Tool DrawRange에서 부른다). origin = 기준점의 화면 좌표, zoom = 칸당 픽셀. 경로 크레인: 쓸기 띠(흐린 청록), 발 경로(밝은 선)·트롤리 선(발 + 4칸),
-    /// 꺾이는 점 관절 원과 번호, 왕복 화살(구간 가운데 양쪽 방향), 5차 양 끝 도크 표시(파랑 머리 보 + 게이트 기둥 2, '도크' 꼬리표). 공통: 매달림 몸 중심의 붙기 반경 점선 고리
+    /// 꺾이는 점 관절 원과 번호, 왕복 화살(구간 가운데 양쪽 방향), 5차 양 끝 도크 표시(파랑 머리 보 + 게이트 기둥 2, '도크' 꼬리표). 공통: 매달림 몸 중심의 붙기 반경 점선 고리(7차 V11: 고정 크레인 = 그래플 고리 중심 — HangFeet)
     /// (경로 크레인은 양 끝 도크 모두 — 끝 도크는 조금 흐리게). 고정 크레인: 위로 올라가는 기둥(craneCableLength).
     /// </summary>
     public static bool Draw(GameObject prefab, Vector2 origin, float zoom, WaveDeviceSetting[] settings, float alpha = 1f)
@@ -854,6 +909,9 @@ public static class DungeonCranePaths
         Vector2 S(Vector2 local) => origin + new Vector2(local.x, -local.y) * zoom;
         Color A(float a) => new Color(PathColor.r, PathColor.g, PathColor.b, a * alpha);
         var home = HomeFeet(prefab, Vector2.zero);
+        // 7차 V11: 붙기 반경 고리는 매달린 몸 중심 기준 — 고정 크레인은 그래플 고리 중심(HangFeet = 집 발 + 1.345칸), 경로 크레인은 집 발 그대로.
+        // 경로·쓸기 띠·도크·기둥 그림은 계속 집 발(HomeFeet) 기준이다.
+        var ringHome = HangFeet(prefab, Vector2.zero);
         var labels = new List<(Vector2 at, string text)>();
         Handles.BeginGUI();
         try
@@ -913,7 +971,7 @@ public static class DungeonCranePaths
             }
             // 붙기 반경 고리(점선, 매달림 몸 중심). 5차: 경로 크레인은 끝 도크에서도 붙으므로 끝 도크 고리도 그린다(조금 흐리게).
             float radius = Radius(prefab, settings) * zoom;
-            var rings = new List<(Vector2 feet, float a)> { (home, .5f) };
+            var rings = new List<(Vector2 feet, float a)> { (ringHome, .5f) };
             if (path)
             {
                 var offsets = Offsets(prefab, settings);

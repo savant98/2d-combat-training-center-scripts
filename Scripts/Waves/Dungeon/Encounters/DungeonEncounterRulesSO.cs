@@ -59,6 +59,12 @@ public class DungeonEncounterRulesSO : ScriptableObject
     [Tooltip("첫 파도의 Player 거리(칸).")]
     [Min(0f)] public float firstWaveClearance = 8f;
 
+    [Header("교전(6차)")]
+    [Tooltip("켜면 잠긴 전투 방에서 나온 비행 무리 적(Drone·Swarmer·Bomber)이 등장 연출이 끝나자마자 Player와 교전합니다(감지 거리 제한 없음). 끄면 Prefab 감지 거리(생성 자리 기준 9.5칸)를 씁니다. 어느 쪽이든 무리는 방·종류 단위로 나뉩니다. 규칙 SO가 없는 손 배치 던전(W2 보스 방 등)은 켠 것과 같습니다.")]
+    public bool engageOnLock = true;
+    [Tooltip("켜면 재입장 순찰의 비행 무리 적은 Prefab 감지 거리를 그대로 쓰되, 한 마리가 Player를 감지하면 같은 방·같은 종류 무리 전체가 함께 교전합니다. 끄면 개체마다 따로 감지합니다.")]
+    public bool patrolShareDetection = true;
+
     /// <summary>단계 번호(0~4)로 자른다.</summary>
     public static int LevelIndex(DungeonThreatLevel level) => Mathf.Clamp((int)level, 0, LevelCount - 1);
 

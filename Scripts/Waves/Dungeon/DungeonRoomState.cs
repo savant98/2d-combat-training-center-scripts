@@ -17,6 +17,11 @@ public sealed class DungeonRoomState
     public int clearOrder = -1;
     /// <summary>적과 싸우는 동안 출입구가 잠겨 있는지.</summary>
     public bool locked;
+    /// <summary>
+    /// 7차(DESIGN_V7 V5): 적을 모두 처치했지만 이 방에 아직 당기지 않은 레버가 남아 '레버 대기' 중인지. 이때 cleared는 false, locked는 true(문 잠김 유지)다.
+    /// 레버를 모두 당기고 방 클리어 처리(DungeonRoomClearGate → 기존 클리어 흐름)를 시작하기 직전에 false가 된다. 재도전·던전 종료는 방 상태를 새로 만든다.
+    /// </summary>
+    public bool objectiveHold;
     /// <summary>부서진 Prop(방 데이터 props 번호). 다시 들어와도 세우지 않는다.</summary>
     public readonly HashSet<int> destroyedProps = new();
     /// <summary>적을 내보낸 생성 앵커 Prop(방 데이터 props 번호). 다시 들어오면 '내보낸 뒤' 모습으로 세운다.</summary>

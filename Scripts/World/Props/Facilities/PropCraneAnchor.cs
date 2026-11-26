@@ -1,15 +1,21 @@
 using System;
 using UnityEngine;
 
-// 고정 크레인(DESIGN_V4 §2.4 — 4차 새 Prefab DungeonPropCraneAnchor · 5차 DESIGN_V5 §1 외형 '막대 끝 O'). 천장 기둥 끝의 그래플 고리에 붙기(↑)로 매달린다. 탑승해도 움직이지 않는다.
+// 고정 크레인(DESIGN_V4 §2.4 — 4차 새 Prefab DungeonPropCraneAnchor · 5차 DESIGN_V5 §1 외형 '막대 끝 O' · 7차 DESIGN_V7 V11 고리 한가운데 매달림).
+// 천장 기둥 끝의 그래플 고리에 붙기(↑)로 매달린다. 탑승해도 움직이지 않는다.
 // 점프·대시로 내리거나 다른 크레인으로 연쇄 붙기를 해 공중을 건넌다(고정 크레인 사이 간격 ≤ 붙기 반경 × 0.9 — 템플릿 규칙). 매달린 채 무장을 쓸 수 있다.
-// - 배치: footprint 2×4, 매달린 발 = (x + 1, y). 배치 설정 zipRadius(4~14, 기본 8), craneCableLength(천장 쪽 기둥 길이 0~12, 기본 3 — 표시만:
+// - 배치: footprint 2×4(차지 칸·기둥 기준 = 집 발 (x + 1, y) = 루트 (0, −2)). 배치 설정 zipRadius(4~14, 기본 8), craneCableLength(천장 쪽 기둥 길이 0~12, 기본 3 — 표시만:
 //   footprint 위 끝의 회전 관절에서 위로 그만큼 망원 기둥을 그리고 그 끝에 천장 앵커판을 둔다. 천장 위치는 물리 질의 없이 설정으로 정한다).
-// - 5차 외형: 천장 앵커판(경첩 너클) + 굵은 망원 기둥(바깥 관 0.22 + 안쪽 관 0.14 + 1칸마다 칼라, 길이대로 정점을 새로 채운다 — 늘이기 없음) +
-//   둥근 회전 관절(허브·잠금 링·파랑 잠금등) + 짧은 팔 + 큰 그래플 고리(바깥 반지름 0.5, 흰 외곽선) + 손잡이 바 + 손잡이 양쪽 잠금 걸쇠 + 고리 둘레 파랑 잠금등 3개.
-//   운반 케이지는 없다(매달리는 고리). 청록은 고리 위 비컨(붙을 수 있음)과 강조 테두리에만.
+// - 7차 V11(사용자 결정 — 안 A): 매달린 발 = 루트 + HangLocal (0, −0.655). Player 몸 중심(발 + 0.755)이 그래플 고리 중심(루트 (0, RingCenterY))에 온다
+//   (집 발보다 1.345칸 위). 붙기 반경·격자 Tool 범위 원의 중심도 고리 중심이다. 편집기 검사·격자 Tool은 DungeonCranePaths.HangFeet(prefab, root)로 같은 값을 쓴다.
+// - 외형(5차 · 7차 V11): 천장 앵커판(경첩 너클) + 굵은 망원 기둥(바깥 관 0.22 + 안쪽 관 0.14 + 1칸마다 칼라, 길이대로 정점을 새로 채운다 — 늘이기 없음) +
+//   둥근 회전 관절(허브·잠금 링·파랑 잠금등) + 짧은 팔 + 큰 그래플 고리(반지름 RingRadius 0.92·굵기 RingWidth 0.10 — 안쪽 끝 0.87이 공 모양 몸(반지름 0.75)보다 커서
+//   몸이 고리 안에 든다, 흰 외곽선) + 고리 안쪽 아래 잠금 걸쇠 2개(225°·315° — 체결 때 회전으로 몸을 묾) + 고리 둘레 파랑 잠금등 3개. 7차에 손잡이 바는 없앴다(몸 뒤에 가려짐).
+//   운반 케이지는 없다(매달리는 고리). 청록은 고리 위 비컨(붙을 수 있음)과 강조 테두리에만. 크레인 부품은 Player 뒤에 그려진다.
 // - 표시: 비컨(대기 점멸·선택되면 빠르게). 붙으면 잠금등 3개가 0.05초 간격으로 차례로 켜진다(체결 표시).
-//   흔들림은 관절 아래 묶음(Swing)의 회전만 — 대기 중 작은 진자, 탑승 중 멈춤, 도착 때 감쇠 진동 4°(ZipCraneBase.KickAngle)를 더한다.
+//   6차 T4: 붙기 직선·표적 괄호는 그래플 고리 중심(= 키 안내 자리, 흔들림을 따라감)을 가리킨다 — 7차 V11부터 이 점이 도착 몸 중심·시야 판정선 끝과 같다.
+//   괄호 상자 ±1.2 × ±1.2(강조 원 1.08 + 여유).
+//   흔들림은 관절 아래 묶음(Swing)의 회전만 — 대기 중 작은 진자, 탑승 중 멈춤, 도착 때 감쇠 진동 4°(ZipCraneBase.KickAngle)를 더한다(관절 ~ 고리 중심 1.68칸 → 고리는 최대 ±0.12칸 옆으로).
 [DisallowMultipleComponent]
 public sealed class PropCraneAnchor : ZipCraneBase
 {
@@ -18,8 +24,20 @@ public sealed class PropCraneAnchor : ZipCraneBase
     public const float MountTop = 2f;
     /// <summary>그래플 고리 중심(머리 로컬 y — 키 안내 자리).</summary>
     public const float RingCenterY = .1f;
+    /// <summary>
+    /// 7차(DESIGN_V7 V11 안 A): 매달린 발(루트 로컬). 몸 중심(발 + BodyHalfHeight 0.755)이 그래플 고리 중심(RingCenterY)에 온다 — 집 발 HangFeetLocal (0, −2)보다 1.345칸 위.
+    /// 실행 쪽(ZipFeet 재정의·범위 원)과 생성 도구는 crane7이 이 값을 쓰고, 편집기 검사·격자 Tool은 DungeonCranePaths.HangFeet(prefab, root)로 같은 값을 읽는다.
+    /// </summary>
+    public static readonly Vector2 HangLocal = new Vector2(0f, RingCenterY - BodyHalfHeight);
+    /// <summary>
+    /// 7차 V11: 그래플 고리 반지름(고리 몸체 가운데 선)·굵기(칸). 안쪽 끝 0.87 — Player 공 모양 몸(반지름 0.75)과 틈 0.12, 바깥 끝 0.97 < footprint 반폭 1.
+    /// 생성 도구(DungeonFacilitySetup.AnchorHead)·Verify·회귀가 같은 값을 쓴다.
+    /// </summary>
+    public const float RingRadius = .92f, RingWidth = .1f;
     /// <summary>잠금등이 차례로 켜지는 간격(초).</summary>
     public const float LockStep = .05f;
+    /// <summary>6차 T4 · 7차 V11: 표적 괄호 상자 반크기(고리 강조 원 반지름 1.08 + 0.12 — 5·6차 ±0.8). 생성 도구가 같은 값으로 괄호 Mesh를 굽는다.</summary>
+    public static readonly Vector2 FrameHalf = new Vector2(1.2f, 1.2f);
 
     [Header("고정 크레인(배치 기본값)")]
     [SerializeField, Range(0f, 12f), Tooltip("회전 관절에서 천장 앵커판까지 기둥 길이(칸, 표시만).")] private float cableLength = 3f;
@@ -134,8 +152,27 @@ public sealed class PropCraneAnchor : ZipCraneBase
 
     protected override bool HeadLeansItself => false;
 
+    /// <summary>
+    /// 7차 V11: 매달린 발 = 루트 + HangLocal(몸 중심 = 그래플 고리 중심 — 집 발 HomeFeet보다 1.345칸 위). 흔들림은 따르지 않는다(루트 기준 —
+    /// 도착 진동 4°에 고리가 최대 ±0.12칸 옆으로 움직여도 고리 안쪽과 몸 사이 틈 0.12 안). 붙기 반경·점수·이동 목표·시야 판정선 끝이 모두 이 점을 쓴다.
+    /// </summary>
+    public override Vector2 ZipFeet => transform.TransformPoint(HangLocal);
+
     /// <summary>키 안내 자리: 그래플 고리 안(흔들려도 고리를 따라간다).</summary>
     protected override Vector2 PromptPoint => head != null ? (Vector2)head.TransformPoint(new Vector3(0f, RingCenterY, 0f)) : base.PromptPoint;
+
+    /// <summary>6차 T4: 표시 기준점 G = 그래플 고리 중심(키 안내와 같은 점, 흔들림을 따라감). 머리가 없으면 매달림 몸 중심(7차 V11부터 고리 중심과 같은 점).</summary>
+    protected override Vector2 AimPoint => head != null ? (Vector2)head.TransformPoint(new Vector3(0f, RingCenterY, 0f)) : ZipFeet + Vector2.up * BodyHalfHeight;
+
+    /// <summary>격자 Tool 범위 미리보기: 붙기 반경 원(7차 V11: 중심 = 매달림 몸 중심 = 그래플 고리 중심 (0, RingCenterY) — 기반 클래스는 집 발 기준).</summary>
+    public override bool TryGetPropRange(WaveDeviceSetting[] overrides, out WaveDeviceRange range)
+    {
+        float radius = WaveDeviceSettings.Value(overrides, RadiusParameter);
+        range = new WaveDeviceRange(WaveEnvironmentTool.RangeShape.Circle, new Vector2(0f, RingCenterY), new Vector2(radius, radius), new Color(.25f, .95f, 1f, .9f));
+        return true;
+    }
+
+    protected override Vector2 AimFrameHalf => FrameHalf;
 
     protected override void TickMotion(float dt)
     {

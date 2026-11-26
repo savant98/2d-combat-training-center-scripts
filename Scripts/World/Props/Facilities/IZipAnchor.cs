@@ -2,7 +2,7 @@ using UnityEngine;
 
 /// <summary>
 /// 붙기(FacilityZip) 대상(DESIGN_V4 §2.2 · 5차 DESIGN_V5 §1 크레인) — 경로 크레인(PropCraneHook)·고정 크레인(PropCraneAnchor)이 구현한다.
-/// 5차: 경로 크레인의 빈 도크(호출 지점)도 이 계약으로 목록에 오른다(IZipCallTarget을 함께 구현 — 고르면 붙지 않고 크레인을 부른다).
+/// 5차: 경로 크레인의 빈 도크(호출 지점)도 이 계약으로 목록에 오른다(IZipCallTarget을 함께 구현 — 6차 T5: 고르면 크레인이 그 도크에 즉시 생기고 같은 프레임에 붙는다).
 /// 살아 있는 대상은 FacilityZip.Register/Unregister로 목록에 올린다(물리 질의 없이 고른다 — FacilityInteractPoint.Live 선례).
 /// 좌표는 모두 월드. '매달린 발' = 매달린 Player 몸통 바닥 가운데(배치 기준 (x + 1, y)).
 /// </summary>
@@ -31,14 +31,14 @@ public interface IZipAnchor
 }
 
 /// <summary>
-/// 5차(DESIGN_V5 §1 — 반대편 도크 B안): 붙기 확정 때 붙는 대신 '부르는' 대상(경로 크레인의 빈 도크).
-/// FacilityZip이 확정한 대상이 이 계약이면 Begin 대신 Call을 부르고 선입력을 지운다(구속·이동 없음).
-/// 크레인은 도착했을 때 그 도크가 여전히 선택돼 있으면 FacilityZip.TryAutoZip으로 붙기를 자동으로 시작한다.
+/// 경로 크레인의 빈 도크(호출 지점). 6차 T5(DESIGN_V6 — 5차 호출 B안 대체): FacilityZip이 확정한 대상이 이 계약이면 Call로 크레인을 그 도크에
+/// 즉시 생성하고(옛 자리 파괴·새 자리 생성 연출은 크레인이 낸다) 같은 프레임에 Owner로 붙기를 시작한다. 붙기가 막히면 크레인은 그 도크에서 기다린다.
+/// 6차 T3: Owner는 '방금 내린 크레인의 가족'(그 크레인 + 그 도크 호출 지점) 판정에도 쓴다.
 /// </summary>
 public interface IZipCallTarget
 {
-    /// <summary>크레인을 이 도크로 부른다. 이미 오는 중이면 아무것도 하지 않고 true. 부를 수 없으면 false.</summary>
+    /// <summary>크레인을 이 도크에 즉시 생성한다(같은 호출 안에서 크레인이 그 도크에서 쉬는 상태가 된다). 고를 수 없는 도크면 false(아무것도 하지 않는다).</summary>
     bool Call(PlayerController player);
-    /// <summary>이 호출 지점을 가진 크레인(자동 붙기 대상).</summary>
+    /// <summary>이 호출 지점을 가진 크레인(생성 뒤 붙는 대상·가족 판정).</summary>
     IZipAnchor Owner { get; }
 }

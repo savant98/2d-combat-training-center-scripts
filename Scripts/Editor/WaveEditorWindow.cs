@@ -5,7 +5,8 @@ using UnityEditor;
 using UnityEngine;
 
 // Scene 배치 없이 WaveData의 생성 좌표·시각과 공통 지형 이벤트를 편집한다.
-public sealed partial class WaveEditorWindow : EditorWindow
+// 6차(DESIGN_V6 T16): 던전 템플릿 편집기(DungeonTemplateEditorWindow)가 파생하도록 sealed를 풀었다. 파생 창 훅과 공통 배치 도우미는 WaveEditorWindow.Hooks.cs.
+public partial class WaveEditorWindow : EditorWindow
 {
     [SerializeField] private WaveDataSO data;
     [SerializeField] private int waveIndex;
@@ -77,25 +78,29 @@ public sealed partial class WaveEditorWindow : EditorWindow
     public WaveDataSO Data => data;
 
     [MenuItem("Tools/Training/Wave 격자 편집기")]
-    public static void Open() => GetWindow<WaveEditorWindow>("Wave 격자 편집기");
+    public static void Open() => OpenStandard();
     public void Select(WaveDataSO value)
     {
         pendingBackground = value != null ? value.backgroundPrefab : null;
         areaStart = areaEnd = null; copyBrush = -1;
         data = value; waveIndex = 0; selected = -1; selectedBatch = -1; selectedCell = null; time = 0; eventIndex = -1; timedOperation = WaveTerrainOperation.Add; creationStyle = 1; ResetGesture(); serialized = null;
         if (value != null) pan = new Vector2(-value.room.bounds.center.x, value.room.bounds.center.y) * zoom;
+        OnDataSelected();
         Repaint();
     }
-    private void OnEnable()
+    // 6차: Unity 메시지 메서드는 파생 창(던전 템플릿 편집기)에서도 찾도록 protected로 둔다(이름·동작 그대로).
+    protected void OnEnable()
     {
         minSize = new Vector2(780, 500);
         maxSize = new Vector2(10000, 10000);
+        // 6차(T17): 배치 모드 커서 유령 미리보기는 마우스 이동을 받아야 한다.
+        wantsMouseMove = true;
         Undo.undoRedoPerformed += Refresh;
         ReloadPalette();
     }
     // 예전에는 입력이 없어도 초당 10번 창 전체를 다시 그렸다. 입력 때는 Unity가 다시 그리므로,
     // 다른 곳(Inspector·Undo)에서 데이터가 바뀌었거나 Enemy 미리보기 이미지를 불러오는 중일 때만 다시 그린다.
-    private void OnInspectorUpdate()
+    protected void OnInspectorUpdate()
     {
         int dirty = data != null ? EditorUtility.GetDirtyCount(data) : -1;
         bool loading = AssetPreview.IsLoadingAssetPreviews();
@@ -105,15 +110,15 @@ public sealed partial class WaveEditorWindow : EditorWindow
         wasLoadingPreviews = loading;
         Repaint();
     }
-    private void OnProjectChange() { ReloadPalette(); geometry.Invalidate(); WavePrefabVisuals.Invalidate(); checkedBackdrop = null; Repaint(); }
-    private void OnDisable()
+    protected void OnProjectChange() { ReloadPalette(); geometry.Invalidate(); WavePrefabVisuals.Invalidate(); checkedBackdrop = null; Repaint(); }
+    protected void OnDisable()
     {
         Undo.undoRedoPerformed -= Refresh; ResetGesture();
         if (objectPaneTexture != null) DestroyImmediate(objectPaneTexture);
         if (objectHeaderTexture != null) DestroyImmediate(objectHeaderTexture);
         objectPaneStyle = objectHeaderStyle = null;
     }
-    private void OnLostFocus() => ResetGesture();
+    protected void OnLostFocus() => ResetGesture();
     private void Refresh() { serialized = null; geometry.Invalidate(); Repaint(); }
     private void ReloadPalette()
     {
@@ -131,48 +136,57 @@ public sealed partial class WaveEditorWindow : EditorWindow
             if (prefab.name.Contains("Backdrop") && WaveRoomBackground.IsBackground(prefab)) backgrounds.Add(prefab);
         }
     }
-    private void OnGUI()
+    protected void OnGUI()
     {
         if (markerStyle == null) markerStyle = new GUIStyle(EditorStyles.miniBoldLabel) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white }, clipping = TextClipping.Clip };
         if (cardNameStyle == null) cardNameStyle = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.UpperCenter, wordWrap = true, clipping = TextClipping.Clip };
         paletteWidth = Mathf.Clamp(paletteWidth, 150, Mathf.Min(480, position.width * .35f));
         detailsWidth = Mathf.Clamp(detailsWidth, 220, Mathf.Max(220, position.width - paletteWidth - 220 - 12));
-        Toolbar();
-        if (Current == null) { EditorGUILayout.HelpBox("WaveData를 선택하거나 새로 만드세요. 기존 데이터는 좌표와 생성 순서를 그대로 읽습니다.", MessageType.Info); return; }
+        // 6차: 툴바·왼쪽 열·격자 툴바·타임라인·오른쪽 열은 파생 창(던전 템플릿 편집기)이 바꿀 수 있는 훅이다(기본값 = 예전 그대로, WaveEditorWindow.Hooks.cs).
+        DrawToolbar();
+        if (Current == null) { EmptyStateGui(); return; }
         RotationShortcut();
         using (new EditorGUILayout.HorizontalScope())
         {
-            Palette();
+            DrawLeftColumn();
             leftSplitter = Splitter(true);
             using (new EditorGUILayout.VerticalScope())
             {
                 int nextMode = GUILayout.Toolbar(mode, new[] { "선택 / 이동", "배치", "지우기" });
                 if (nextMode != mode) { mode = nextMode; ResetGesture(); }
                 float middleWidth = position.width - paletteWidth - detailsWidth - 12;
-                using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-                {
-                    terrainSession = GUILayout.Toggle(terrainSession, new GUIContent("지형·발판 편집", "Wave 시작 지형 또는 시간별 지형 편집을 선택합니다."), EditorStyles.toolbarButton);
-                    if (middleWidth >= 330) PointEditPicker();
-                    if (GUILayout.Button("전체 보기", EditorStyles.toolbarButton)) Fit();
-                }
-                if (middleWidth < 330) PointEditPicker();
-                if (terrainSession)
-                {
-                    int target = terrainTarget == 1 ? 0 : 1;
-                    int nextTarget = GUILayout.SelectionGrid(target,new[] {
-                        new GUIContent("Wave 시작 지형","처음부터 있을 바닥·벽·발판을 칠합니다."),
-                        new GUIContent("시간별 지형 편집","기존 지형과 새 발판의 생성·소멸·수명·Wave 종료 후 유지를 함께 편집합니다.") },middleWidth<340?1:2,EditorStyles.miniButton);
-                    if(nextTarget!=target){terrainTarget=nextTarget==0?1:2;selectedBatch=-1;eventIndex=-1;selectedCell=null;ResetGesture();}
-                    EditorGUILayout.HelpBox(terrainTarget==1?"처음부터 있을 전체 맵입니다. Wave 전환 때 달라진 칸만 기계팔 패널 연출로 끼우고 뺍니다(기본 지형·생성 발판·OneWay 모두).":$"{time:G9}초 예약 · 칸을 선택해 생성/소멸 시각과 수명을 설정하세요. 지우기는 예약 취소입니다. 생성·소멸은 묶음 중심에서 가까운 칸부터 기계팔 패널로 끼우고 뺍니다.",MessageType.None);
-                }
+                GridToolbarGui(middleWidth);
                 canvas = GUILayoutUtility.GetRect(200, 200, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
                 DrawGrid();
                 GridInput();
-                ResizeTimeline();
-                Timeline();
+                if (ShowTimeline)
+                {
+                    ResizeTimeline();
+                    Timeline();
+                }
             }
             rightSplitter = Splitter(false);
-            Details();
+            DrawDetailsColumn();
+        }
+    }
+    // 격자 위 툴바(지형·발판 편집 · 점 편집 · 전체 보기)와 지형 편집 대상 선택. 6차에 OnGUI에서 떼어 냈다(동작 그대로).
+    private void StandardGridToolbar(float middleWidth)
+    {
+        using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+        {
+            terrainSession = GUILayout.Toggle(terrainSession, new GUIContent("지형·발판 편집", "Wave 시작 지형 또는 시간별 지형 편집을 선택합니다."), EditorStyles.toolbarButton);
+            if (middleWidth >= 330) PointEditPicker();
+            if (GUILayout.Button("전체 보기", EditorStyles.toolbarButton)) Fit();
+        }
+        if (middleWidth < 330) PointEditPicker();
+        if (terrainSession)
+        {
+            int target = terrainTarget == 1 ? 0 : 1;
+            int nextTarget = GUILayout.SelectionGrid(target,new[] {
+                new GUIContent("Wave 시작 지형","처음부터 있을 바닥·벽·발판을 칠합니다."),
+                new GUIContent("시간별 지형 편집","기존 지형과 새 발판의 생성·소멸·수명·Wave 종료 후 유지를 함께 편집합니다.") },middleWidth<340?1:2,EditorStyles.miniButton);
+            if(nextTarget!=target){terrainTarget=nextTarget==0?1:2;selectedBatch=-1;eventIndex=-1;selectedCell=null;ResetGesture();}
+            EditorGUILayout.HelpBox(terrainTarget==1?"처음부터 있을 전체 맵입니다. Wave 전환 때 달라진 칸만 기계팔 패널 연출로 끼우고 뺍니다(기본 지형·생성 발판·OneWay 모두).":$"{time:G9}초 예약 · 칸을 선택해 생성/소멸 시각과 수명을 설정하세요. 지우기는 예약 취소입니다. 생성·소멸은 묶음 중심에서 가까운 칸부터 기계팔 패널로 끼우고 뺍니다.",MessageType.None);
         }
     }
     private Vector2 DefaultPortalPoint()
@@ -229,28 +243,42 @@ public sealed partial class WaveEditorWindow : EditorWindow
             search = EditorGUILayout.TextField(search, EditorStyles.toolbarSearchField);
             iconSize = EditorGUILayout.Slider("미리보기 크기", iconSize, 40, 100);
             if (WavePrefabVisuals.IsEnvironmentTool(brush))
-                EditorGUILayout.HelpBox("셀 중심에 배치 · R: 반시계 90° 회전\n방향·세부 설정은 오른쪽 '배치 오브젝트 상세'에서 정합니다.", MessageType.None);
+                EditorGUILayout.HelpBox("셀 중심에 배치 · R: 반시계 90° 회전(허용 회전만)\n방향·세부 설정은 오른쪽 '배치 오브젝트 상세'에서 정합니다. 배치 모드에서는 커서 자리에 놓일 모습과 차지 칸(초록 = 가능 · 빨강 = 같은 칸·설치면·회전 문제)이 보입니다.", MessageType.None);
             var category = paletteCategory == 0 ? WavePrefabVisuals.Category.Enemy : paletteCategory == 1 ? WavePrefabVisuals.Category.Platform : paletteCategory == 2 ? WavePrefabVisuals.Category.Goal : paletteCategory == 3 ? WavePrefabVisuals.Category.Prop : WavePrefabVisuals.Category.Dungeon;
-            var items = palette.Where(p => p != null && WavePrefabVisuals.Classify(p) == category && p.name.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
+            // 6차(T17): 한글 이름(Prop 카탈로그)으로도 찾고, Prop·던전 탭은 종류 묶음(장식·플랫폼·파괴·함정·시설·표식)별로 나눠 보인다.
+            bool Matches(GameObject p) => string.IsNullOrEmpty(search) || p.name.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0
+                || DungeonPropCatalogSO.DisplayName(p).IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0;
+            var items = palette.Where(p => p != null && WavePrefabVisuals.Classify(p) == category && PaletteVisible(p) && Matches(p)).ToArray();
+            bool grouped = category == WavePrefabVisuals.Category.Prop || category == WavePrefabVisuals.Category.Dungeon;
+            var sections = grouped
+                ? items.GroupBy(DungeonPropCatalogSO.GroupOf).OrderBy(g => (int)g.Key).Select(g => (header: DungeonPropCatalogSO.GroupLabels[(int)g.Key], cards: g.OrderBy(DungeonPropCatalogSO.DisplayName, StringComparer.Ordinal).ToArray())).ToArray()
+                : new[] { (header: (string)null, cards: items) };
             GUILayout.Label($"{items.Length}개 · 클릭 후 격자에 배치", EditorStyles.miniLabel);
             paletteScroll = EditorGUILayout.BeginScrollView(paletteScroll);
             float cardWidth = iconSize + 12;
             int columns = Mathf.Max(1, Mathf.FloorToInt((paletteWidth - 20) / cardWidth));
-            for (int row = 0; row * columns < items.Length; row++)
+            foreach (var (header, cards) in sections)
             {
-                using (new EditorGUILayout.HorizontalScope())
-                    for (int column = 0; column < columns && row * columns + column < items.Length; column++)
-                    {
-                        var item = items[row * columns + column];
-                        var rect = GUILayoutUtility.GetRect(cardWidth, iconSize + 40, GUILayout.Width(cardWidth));
-                        var background = GUI.backgroundColor;
-                        if (brush == item) GUI.backgroundColor = new Color(.35f, .75f, 1);
-                        if (GUI.Button(rect, new GUIContent("", item.name))) UseBrush(item);
-                        GUI.backgroundColor = background;
-                        WavePrefabVisuals.Draw(new Rect(rect.x + 6, rect.y + 4, iconSize, iconSize), item, false, item == brush && WavePrefabVisuals.IsEnvironmentTool(item) ? brushRotationSteps : 0, item == brush ? brushSettings : null);
-                        var cellView = item.GetComponent<WaveTerrainCellView>();
-                        GUI.Label(new Rect(rect.x + 3, rect.y + iconSize + 6, rect.width - 6, 32), new GUIContent(cellView != null && !cellView.ownVisual ? cellView.kind.ToString() : item.name, item.name), cardNameStyle);
-                    }
+                if (header != null) GUILayout.Label($"{header} · {cards.Length}", EditorStyles.miniBoldLabel);
+                for (int row = 0; row * columns < cards.Length; row++)
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                        for (int column = 0; column < columns && row * columns + column < cards.Length; column++)
+                        {
+                            var item = cards[row * columns + column];
+                            var rect = GUILayoutUtility.GetRect(cardWidth, iconSize + 40, GUILayout.Width(cardWidth));
+                            var background = GUI.backgroundColor;
+                            if (brush == item) GUI.backgroundColor = new Color(.35f, .75f, 1);
+                            var entry = DungeonPropCatalogSO.Lookup(item);
+                            string tooltip = entry != null ? $"{entry.displayName} ({item.name})" + (string.IsNullOrWhiteSpace(entry.note) ? "" : "\n" + entry.note.Trim()) : item.name;
+                            if (GUI.Button(rect, new GUIContent("", tooltip))) UseBrush(item);
+                            GUI.backgroundColor = background;
+                            WavePrefabVisuals.Draw(new Rect(rect.x + 6, rect.y + 4, iconSize, iconSize), item, false, item == brush && WavePrefabVisuals.IsEnvironmentTool(item) ? brushRotationSteps : 0, item == brush ? brushSettings : null);
+                            var cellView = item.GetComponent<WaveTerrainCellView>();
+                            string caption = cellView != null && !cellView.ownVisual ? cellView.kind.ToString() : entry != null && !string.IsNullOrWhiteSpace(entry.displayName) ? entry.displayName : item.name;
+                            GUI.Label(new Rect(rect.x + 3, rect.y + iconSize + 6, rect.width - 6, 32), new GUIContent(caption, tooltip), cardNameStyle);
+                        }
+                }
             }
             EditorGUILayout.EndScrollView();
             CopySlots();
@@ -372,6 +400,8 @@ public sealed partial class WaveEditorWindow : EditorWindow
         }
         // 방 템플릿의 적 구성 Wave를 편집하는 동안 맵 층(Wave 1)의 배치를 흐리게 함께 그린다(WaveEditorWindow.Dungeon.cs).
         DungeonDrawMapLayerGhosts();
+        // 6차(T10): 템플릿 검사 위반 칸(함정 간격·크레인 경로 등)을 빨강 점선으로(WaveEditorWindow.Dungeon.cs).
+        DungeonDrawIssueCells();
         float[] times = WaveAuthoring.Times(Current);
         var view = new Rect(Vector2.zero, canvas.size);
         foreach (int i in MarkerOrder())
@@ -407,7 +437,9 @@ public sealed partial class WaveEditorWindow : EditorWindow
             Handles.DrawAAPolyLine(2, new Vector3(box.xMin, box.yMin), new Vector3(box.xMax, box.yMin), new Vector3(box.xMax, box.yMax), new Vector3(box.xMin, box.yMax), new Vector3(box.xMin, box.yMin));
             Handles.EndGUI();
         }
-        DrawSpawnPoint(Local(WaveRoomState.PlayerStartAt(data, waveIndex)), new Color(.2f, .7f, 1), $"Wave {waveIndex + 1} 시작점" + (Current.teleportAtStart ? " · Spawn" : ""));
+        // 6차(T17): 배치 모드 커서 유령 미리보기(WaveEditorWindow.Hooks.cs).
+        DrawPlacementGhost();
+        DrawSpawnPoint(Local(WaveRoomState.PlayerStartAt(data, waveIndex)), new Color(.2f, .7f, 1), StartPointLabel());
         DrawSpawnPoint(Local(Offset), new Color(1, .72f, .2f), "Enemy / 발판 생성 기준");
         if (data.overrideClearPortalPosition)
             DrawSpawnPoint(Local(data.clearPortalPosition), new Color(.75f, .9f, .35f), "전체 Wave 완료 · Lobby 포탈");
@@ -444,6 +476,8 @@ public sealed partial class WaveEditorWindow : EditorWindow
         editPlayerStart = editClearPortal = false;
         copyBrush = -1;
         if (value != brush) brushSettings = WaveDeviceSettings.None;
+        // 6차(T17): 새 브러시가 지금 방향을 허용하지 않으면 첫 허용 회전으로 맞춘다(카탈로그 밖이면 그대로).
+        if (value != brush && value != null) brushRotationSteps = FitRotationFor(value, brushRotationSteps);
         brush = value;if (WavePrefabVisuals.Classify(value) == WavePrefabVisuals.Category.Enemy || WavePrefabVisuals.IsEnvironmentTool(value)) { terrainSession = false;selected = -1;selectedBatch = -1;eventIndex = -1;selectedCell = null; }ResetGesture();
     }
     private static int NormalizeRotation(int value) => ((value % 4) + 4) % 4;
@@ -453,14 +487,17 @@ public sealed partial class WaveEditorWindow : EditorWindow
         if (e.type != EventType.KeyDown || e.keyCode != KeyCode.R || e.control || e.command || e.alt || EditorGUIUtility.editingTextField || GUIUtility.hotControl != 0) return;
         if (mode == 0 && selected >= 0 && selected < (Current.spawnObjects?.Length ?? 0) && WavePrefabVisuals.IsEnvironmentTool(Current.spawnObjects[selected].prefab))
         {
-            int index = selected, next = NormalizeRotation(Current.spawnObjects[index].rotationSteps + 1);
-            if (RotationBlocked(index, next) is int blocking && blocking >= 0)
+            // 6차(T17): 허용 회전만 돈다(Prop 카탈로그 — 카탈로그 밖 장치는 네 방향).
+            int index = selected, next = NextRotationFor(Current.spawnObjects[index].prefab, Current.spawnObjects[index].rotationSteps);
+            if (next == NormalizeRotation(Current.spawnObjects[index].rotationSteps))
+                ShowNotification(new GUIContent($"{DungeonPropCatalogSO.DisplayName(Current.spawnObjects[index].prefab)}은 돌리지 않습니다(허용 회전 하나 — Prop 카탈로그)."));
+            else if (RotationBlocked(index, next) is int blocking && blocking >= 0)
                 ShowNotification(new GUIContent($"돌리면 #{blocking + 1} {Current.spawnObjects[blocking].prefab?.name}과 같은 칸을 차지해 돌릴 수 없습니다."));
             else Mutate(() => Current.spawnObjects[index].rotationSteps = next);
         }
         else if (mode == 1 && WavePrefabVisuals.IsEnvironmentTool(brush))
         {
-            brushRotationSteps = NormalizeRotation(brushRotationSteps + 1);
+            brushRotationSteps = NextRotationFor(brush, brushRotationSteps);
             Repaint();
         }
         else return;
@@ -475,6 +512,8 @@ public sealed partial class WaveEditorWindow : EditorWindow
     {
         var e = Event.current;
         int id = GUIUtility.GetControlID(734, FocusType.Passive);
+        // 6차(T17): 커서 유령 미리보기용 마우스 위치(WaveEditorWindow.Hooks.cs).
+        TrackHover(e);
         if (e.rawType == EventType.MouseUp) { ResetGesture(); return; }
         bool inside = canvas.Contains(e.mousePosition);
         if (!inside && !gridGesture) return;
@@ -525,7 +564,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
         if (mode == 2) { EraseGrid(point); return; }
         if (mode != 1) return;
         if (editClearPortal) Mutate(() => { data.overrideClearPortalPosition = true; data.clearPortalPosition = Vector2Int.RoundToInt(point); });
-        else if (editPlayerStart) Mutate(() => { Current.overridePlayerStart = true; Current.playerStart = Vector2Int.RoundToInt(point); });
+        else if (editPlayerStart) { Mutate(() => { Current.overridePlayerStart = true; Current.playerStart = Vector2Int.RoundToInt(point); }); OnPlayerStartEdited(); }
         else if (copyBrush >= 0) { if (!drag) PasteCopy(cell); }
         else if (WavePrefabVisuals.IsEnvironmentTool(brush)) Place(point);
         else if (terrainSession) Paint(cell, false);
@@ -570,7 +609,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
     private void EraseGrid(Vector2 point)
     {
         var cell = Vector2Int.FloorToInt(point);
-        if (terrainSession && terrainTarget == 1) { PaintCell(cell,true);return; }
+        if (terrainSession && (terrainTarget == 1 || ForceInitialTerrain)) { PaintCell(cell,true);return; }
         int hit = Hit(point);
         if (!terrainSession && hit >= 0) { Mutate(() => { WaveAuthoring.SetTime(Current,hit,0,true); selected = -1; }); return; }
         int batch = BatchAt(cell),entry = TerrainAt(cell);
@@ -640,12 +679,27 @@ public sealed partial class WaveEditorWindow : EditorWindow
     private void Place(Vector2 point)
     {
         if (brush == null || !EditorUtility.IsPersistent(brush) || !WavePrefabVisuals.IsPaletteItem(brush)) return;
-        if (data.cellMap.enabled && brush.GetComponent<WaveTerrainCellView>() != null) { if (terrainSession && terrainTarget == 1) PaintCell(Vector2Int.FloorToInt(point), false); else PaintTimedCell(Vector2Int.FloorToInt(point)); return; }
+        // 6차: 템플릿 맵 층(ForceInitialTerrain)은 셀 브러시를 늘 처음 지형으로 칠한다(0초 생성 예약이 생기지 않게 — U3).
+        if (data.cellMap.enabled && brush.GetComponent<WaveTerrainCellView>() != null) { if (ForceInitialTerrain || terrainSession && terrainTarget == 1) PaintCell(Vector2Int.FloorToInt(point), false); else PaintTimedCell(Vector2Int.FloorToInt(point)); return; }
+        // 6차(T16): 템플릿 편집기의 층별 팔레트 제한(맵 층 = 적 제외, 적 구성 층 = 적만·테마 금지 Prop 제외)을 배치에도 적용한다.
+        // 층·템플릿을 바꿔도 brush가 남으므로 팔레트 표시만으로는 막을 수 없다. 기존 창은 PaletteVisible이 늘 true라 그대로다.
+        if (!PaletteVisible(brush))
+        {
+            ShowNotification(new GUIContent($"{DungeonPropCatalogSO.DisplayName(brush)}: 이 층(또는 이 테마)에는 놓을 수 없습니다."));
+            return;
+        }
         bool device = WavePrefabVisuals.IsEnvironmentTool(brush);
         int steps = device ? NormalizeRotation(brushRotationSteps) : 0;
         var target = WavePrefabVisuals.Placement(brush, point, steps);
         float lifetime = 0;
-        if (device && WavePrefabVisuals.OccupiesCells(brush) && !FitLifetime(WavePrefabVisuals.Cells(target, WavePrefabVisuals.Footprint(brush, steps)), time, -1, out lifetime)) return;
+        // 6차(T17): 길이 설정형은 늘어난 칸까지 같은 칸 규칙에 든다. 허용 회전·설치면이 맞지 않으면 템플릿 편집기는 막고(BlockInvalidPlacement), 기존 창은 유령 미리보기로만 알린다.
+        var occupied = device ? WavePrefabVisuals.OccupiedCells(brush, target, steps, brushSettings) : default;
+        if (device && BlockInvalidPlacement && PlacementProblemAt(brush, occupied, steps, -1) is string problem && !problem.StartsWith("같은 칸", StringComparison.Ordinal))
+        {
+            ShowNotification(new GUIContent($"{DungeonPropCatalogSO.DisplayName(brush)}: {problem}"));
+            return;
+        }
+        if (device && WavePrefabVisuals.OccupiesCells(brush) && !FitLifetime(occupied, time, -1, out lifetime)) return;
         Mutate(() =>
         {
             var list = (Current.spawnObjects ?? Array.Empty<WaveSpawnInfo>()).ToList();
@@ -659,6 +713,8 @@ public sealed partial class WaveEditorWindow : EditorWindow
     }
     private void PaintCell(Vector2Int position, bool erase)
     {
+        // 6차: 템플릿 편집기의 지형 잠금·적 구성 층 지형 금지(기존 창은 늘 허용).
+        if (!TerrainEditAllowed(true)) return;
         Mutate(() =>
         {
             if (!Current.overrideCellMap) Current.cells = WaveCellState.Initial(data, waveIndex).ToArray();
@@ -750,6 +806,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
     private void PaintBatchCell(Vector2Int position, bool erase)
     {
         if (erase) { CancelBatchCell(position); return; }
+        if (!TerrainEditAllowed(false)) return;
         Mutate(() =>
         {
             if (selectedBatch < 0 || selectedBatch >= Current.cellBatches.Length || Mathf.Abs(Current.cellBatches[selectedBatch].time - time) > .0005f)
@@ -769,12 +826,13 @@ public sealed partial class WaveEditorWindow : EditorWindow
     private void Paint(Vector2Int cell,bool erase)
     {
         if(!data.cellMap.enabled){PaintLegacy(cell,erase);return;}
-        if(terrainTarget==1){PaintCell(cell,erase);return;}
+        if(terrainTarget==1 || ForceInitialTerrain){PaintCell(cell,erase);return;}
         if(erase){EraseGrid((Vector2)cell+Vector2.one*.5f);return;}
         PaintTimedCell(cell);
     }
     private void PaintTimedCell(Vector2Int cell)
     {
+        if(!TerrainEditAllowed(false))return;
         if(timedOperation==WaveTerrainOperation.Add)
         {
             if(eventIndex>=0 && eventIndex<Current.terrainEvents.Length)
@@ -797,6 +855,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
     }
     private void AddTerrainReservation()
     {
+        if(!TerrainEditAllowed(false))return;
         Mutate(()=>
         {
             if(timedOperation==WaveTerrainOperation.Add)
@@ -808,6 +867,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
     }
     private void AddCustomTerrainReservation()
     {
+        if(!TerrainEditAllowed(false))return;
         Mutate(()=>{var list=Current.terrainEvents.ToList();list.Add(new WaveTerrainEvent{label=$"{time:G9}초 커스텀 지형",time=time,custom=true});Current.terrainEvents=list.ToArray();eventIndex=list.Count-1;selectedBatch=-1;selected=-1;selectedCell=null;terrainSession=true;terrainTarget=2;});
     }
     private bool SetReservationEnd(float end)
@@ -827,6 +887,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
     private void ScheduleInitialRemoval(float end)
     {
         if(!selectedCell.HasValue || !float.IsFinite(end) || end<0)return;
+        if(!TerrainEditAllowed(false))return;
         var initial=WaveCellState.Initial(data,waveIndex);
         var sources=initial.Where(c=>WaveGridGeometry.PresentedCell(data,waveIndex,time,c)==selectedCell.Value).ToArray();
         var positions=sources.Select(c=>WaveGridGeometry.PresentedCell(data,waveIndex,end,c)).Distinct().ToArray();
@@ -839,6 +900,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
     }
     private void PaintLegacy(Vector2Int cell, bool erase)
     {
+        if (!erase && !TerrainEditAllowed(terrainTarget == 1)) return;
         if (data.cellMap.enabled && terrainTarget == 2) { PaintBatchCell(cell, erase); return; }
         if (data.cellMap.enabled && terrainTarget == 1) { PaintCell(cell, erase); return; }
         if (erase && terrainTarget == 0) { CancelTerrainCell(cell); return; }
@@ -1286,7 +1348,9 @@ public sealed partial class WaveEditorWindow : EditorWindow
                 if (hasSelection) { GUILayout.Space(8); GUILayout.Label("방금 배치·선택한 항목", EditorStyles.miniBoldLabel); }
             }
             if (hasSelection) SelectedSpawnDetails();
-            else if (!brushPane)
+            // 6차(T17): 경로 크레인 경로 패널을 일반 WaveData에서도 보인다(전에는 템플릿 맵 층 전용 — WaveEditorWindow.Dungeon.cs).
+            DungeonCranePathPanel();
+            if (!hasSelection && !brushPane)
                 EditorGUILayout.HelpBox("선택 / 이동 모드에서 배치한 오브젝트를 누르면 방향·세부 설정·생성 시각·수명을 여기서 바꿉니다.\n배치 모드에서 팔레트의 장치를 고르면 배치할 값을 미리 정합니다.\n빈 곳을 드래그해 칸 범위를 고르고 우클릭하면 그 안의 오브젝트를 복사합니다.", MessageType.None);
             EditorGUILayout.EndScrollView();
         }
@@ -1296,26 +1360,33 @@ public sealed partial class WaveEditorWindow : EditorWindow
         var wave = serialized.FindProperty("waves").GetArrayElementAtIndex(waveIndex);
         var info = Current.spawnObjects[selected];
         int previousRotation = info.rotationSteps;
-        GUILayout.Label($"#{selected + 1} {(info.prefab != null ? info.prefab.name : "참조 없음")}", EditorStyles.boldLabel);
+        var catalogEntry = DungeonPropCatalogSO.Lookup(info.prefab);
+        GUILayout.Label($"#{selected + 1} {(info.prefab != null ? info.prefab.name : "참조 없음")}" + (catalogEntry != null && !string.IsNullOrWhiteSpace(catalogEntry.displayName) ? $" · {catalogEntry.displayName}" : ""), EditorStyles.boldLabel);
+        // 6차(T17): 일반 WaveData의 던전 전용 항목은 경고만 한다(실행 중에 작동하지 않음 — DUNGEON_WAVES.md).
+        if (!(data is DungeonRoomTemplateSO) && info.prefab != null && (WavePrefabVisuals.IsDungeonDoor(info.prefab) || WavePrefabVisuals.IsDungeonSlot(info.prefab) || WavePrefabVisuals.IsDungeonSpawnZone(info.prefab) || WavePrefabVisuals.IsDungeonFacility(info.prefab)))
+            EditorGUILayout.HelpBox("던전 전용 항목입니다. 일반 진행 Wave에서는 출입구·자리 표식·생성 구역은 생기지 않고, 크레인·수리대·텔레포트 같은 시설은 작동하지 않습니다(던전 방 템플릿에서 쓰세요).", MessageType.Warning);
         var spawn = wave.FindPropertyRelative("spawnObjects").GetArrayElementAtIndex(selected);
         bool device = WavePrefabVisuals.IsEnvironmentTool(info.prefab);
         WaveDeviceSetting[] nextSettings = null;
         if (device)
         {
             var rotation = spawn.FindPropertyRelative("rotationSteps");
-            rotation.intValue = EditorGUILayout.Popup("설치 방향 · R", NormalizeRotation(rotation.intValue), rotationLabels);
+            rotation.intValue = RotationField("설치 방향", info.prefab, rotation.intValue);
             var edited = DeviceSettingsFields(info.prefab, info.deviceSettings, out bool settingsChanged);
             if (settingsChanged) nextSettings = edited;
             EditorGUILayout.HelpBox("이 배치에만 저장합니다. Prefab 기본값과 팔레트 항목은 바뀌지 않습니다. 0°는 Prefab 원본 방향이며 장치 중심(한 칸은 셀 중심, 2×2는 격자 꼭짓점)을 기준으로 반시계 90°씩 회전합니다.", MessageType.None);
         }
         var previousPrefab = info.prefab; var previousPosition = info.spawnPosition; float previousLifetime = info.lifetime;
-        foreach (var pair in new[] { ("prefab", "Prefab"), ("spawnPosition", "생성 좌표 (원본 보존)"), ("isRequiredToClear", "처치 필수 목표"), ("isBossEnemy", "보스 등장"), ("keepAfterWave", "Wave 종료 후 유지"), ("lifetime", "생성 후 유지 제한 (0=무제한)"), ("goalKeyOverride", "목표 도달 키 (빈 값=원본)") }) Property(spawn, pair.Item1, pair.Item2);
+        // 6차(T16): 템플릿 맵 층은 생성 시각·수명·처치 필수·보스·유지를 실행이 쓰지 않아 숨긴다(ShowSpawnTiming — 던전 템플릿 편집기).
+        bool timing = ShowSpawnTiming;
+        foreach (var pair in new[] { ("prefab", "Prefab"), ("spawnPosition", "생성 좌표 (원본 보존)"), ("isRequiredToClear", "처치 필수 목표"), ("isBossEnemy", "보스 등장"), ("keepAfterWave", "Wave 종료 후 유지"), ("lifetime", "생성 후 유지 제한 (0=무제한)"), ("goalKeyOverride", "목표 도달 키 (빈 값=원본)") })
+            if (timing || pair.Item1 == "prefab" || pair.Item1 == "spawnPosition") Property(spawn, pair.Item1, pair.Item2);
         float originalTime = WaveAuthoring.Times(Current)[selected];
         bool preparation = info.prefab != null && info.prefab.GetComponent<TrainingCourseActivator>() != null;
         float nextTime = originalTime;
         if (preparation) EditorGUILayout.HelpBox("코스 열림은 Wave 시작 전 지형 준비 이벤트입니다. 개별 시작점 이동은 Wave 상세의 시작 좌표·텔레포트 설정을 사용합니다. 아래 대기 시간은 준비가 끝난 뒤 나머지 생성 타임라인에 적용합니다.", MessageType.None);
-        else nextTime = EditorGUILayout.FloatField("실제 생성 시각 (초)", originalTime);
-        Property(spawn, "spawnDelay", "이 항목 생성 후 대기 (초)");
+        else if (timing) nextTime = EditorGUILayout.FloatField("실제 생성 시각 (초)", originalTime);
+        if (timing) Property(spawn, "spawnDelay", "이 항목 생성 후 대기 (초)");
         if (device && WavePrefabVisuals.OccupiesCells(info.prefab))
         {
             int other = Conflict(Occupied(info), originalTime, info.lifetime, selected);
@@ -1326,7 +1397,8 @@ public sealed partial class WaveEditorWindow : EditorWindow
         var changedSpawn = Current.spawnObjects[selected];
         // 회전은 차지하는 칸이 바뀔 때(가로·세로가 다른 장치)만 같은 칸 규칙을 다시 본다. R 키 회전과 같은 규칙이다.
         bool placementChanged = changedSpawn.prefab != previousPrefab || changedSpawn.spawnPosition != previousPosition || !Mathf.Approximately(changedSpawn.lifetime, previousLifetime)
-            || WavePrefabVisuals.Footprint(changedSpawn.prefab, changedSpawn.rotationSteps) != WavePrefabVisuals.Footprint(changedSpawn.prefab, previousRotation);
+            || WavePrefabVisuals.OccupiedCells(changedSpawn.prefab, changedSpawn.spawnPosition + Offset, changedSpawn.rotationSteps, changedSpawn.deviceSettings).size
+               != WavePrefabVisuals.OccupiedCells(changedSpawn.prefab, changedSpawn.spawnPosition + Offset, previousRotation, changedSpawn.deviceSettings).size;
         var previousSettings = changedSpawn.deviceSettings;
         if (changedSpawn.prefab != previousPrefab && WavePrefabVisuals.IsEnvironmentTool(changedSpawn.prefab))
         {
@@ -1345,7 +1417,17 @@ public sealed partial class WaveEditorWindow : EditorWindow
                 ShowNotification(new GUIContent($"같은 칸의 #{blocking + 1} {Current.spawnObjects[blocking].prefab?.name}과 있는 시간이 겹쳐 되돌렸습니다."));
             }
         }
-        if (nextSettings != null) { int index = selected; Mutate(() => Current.spawnObjects[index].deviceSettings = nextSettings); }
+        if (nextSettings != null)
+        {
+            int index = selected;
+            // 6차(T17): 길이 설정을 늘리면 늘어난 칸도 같은 칸 규칙을 지킨다(겹치면 바꾸지 않는다).
+            var current = Current.spawnObjects[index];
+            int blocking = WavePrefabVisuals.OccupiesCells(current.prefab)
+                ? Conflict(WavePrefabVisuals.OccupiedCells(current.prefab, current.spawnPosition + Offset, current.rotationSteps, nextSettings), originalTime, current.lifetime, index) : -1;
+            if (blocking >= 0) ShowNotification(new GUIContent($"늘어난 칸이 #{blocking + 1} {Current.spawnObjects[blocking].prefab?.name}과 겹쳐 바꾸지 않았습니다."));
+            else Mutate(() => Current.spawnObjects[index].deviceSettings = nextSettings);
+        }
+        if (selected < 0 || selected >= Current.spawnObjects.Length) return;
         if (nextTime != originalTime && device && WavePrefabVisuals.OccupiesCells(Current.spawnObjects[selected].prefab))
         {
             int blocking = Conflict(Occupied(Current.spawnObjects[selected]), nextTime, Current.spawnObjects[selected].lifetime, selected);
@@ -1360,8 +1442,8 @@ public sealed partial class WaveEditorWindow : EditorWindow
     }
     private void BrushDetails()
     {
-        GUILayout.Label($"배치할 값 · {brush.name}", EditorStyles.boldLabel);
-        brushRotationSteps = EditorGUILayout.Popup("배치 방향 · R", NormalizeRotation(brushRotationSteps), rotationLabels);
+        GUILayout.Label($"배치할 값 · {DungeonPropCatalogSO.DisplayName(brush)}" + (DungeonPropCatalogSO.Lookup(brush) != null ? $" ({brush.name})" : ""), EditorStyles.boldLabel);
+        brushRotationSteps = RotationField("배치 방향", brush, brushRotationSteps);
         brushSettings = DeviceSettingsFields(brush, brushSettings, out _);
         EditorGUILayout.HelpBox("여기서 정한 값은 앞으로 배치하는 항목에만 저장합니다. Prefab 기본값은 바뀌지 않습니다.\n같은 칸에는 한 번에 하나만 둘 수 있습니다. 먼저 있던 장치의 수명이 끝난 시각부터 설치할 수 있습니다.", MessageType.None);
     }
@@ -1447,16 +1529,17 @@ public sealed partial class WaveEditorWindow : EditorWindow
     // 오브젝트가 차지하는 칸들. 환경 장치는 점유 크기(2×2 등)만큼, Enemy는 발이 닿는 한 칸이다.
     private RectInt Occupied(WaveSpawnInfo spawn)
     {
+        // 6차(T17): 길이 설정형은 늘어난 칸까지(WavePrefabVisuals.OccupiedCells — Prop 카탈로그 lengthKey).
         if (spawn.prefab != null && WavePrefabVisuals.IsEnvironmentTool(spawn.prefab))
-            return WavePrefabVisuals.Cells(spawn.spawnPosition + Offset, WavePrefabVisuals.Footprint(spawn.prefab, spawn.rotationSteps));
+            return WavePrefabVisuals.OccupiedCells(spawn.prefab, spawn.spawnPosition + Offset, spawn.rotationSteps, spawn.deviceSettings);
         return new RectInt(AnchorCell(spawn), Vector2Int.one);
     }
     // 장치를 next 방향으로 돌렸을 때 같은 칸·같은 시간에 걸리는 다른 장치. 가로·세로가 같은 장치는 늘 -1이다.
     private int RotationBlocked(int index, int next)
     {
         var spawn = Current.spawnObjects[index];
-        if (!WavePrefabVisuals.OccupiesCells(spawn.prefab) || WavePrefabVisuals.Footprint(spawn.prefab, next) == WavePrefabVisuals.Footprint(spawn.prefab, spawn.rotationSteps)) return -1;
-        var turned = WavePrefabVisuals.Cells(spawn.spawnPosition + Offset, WavePrefabVisuals.Footprint(spawn.prefab, next));
+        var turned = WavePrefabVisuals.OccupiedCells(spawn.prefab, spawn.spawnPosition + Offset, next, spawn.deviceSettings);
+        if (!WavePrefabVisuals.OccupiesCells(spawn.prefab) || turned.size == Occupied(spawn).size) return -1;
         return Conflict(turned, WaveAuthoring.Times(Current)[index], spawn.lifetime, index);
     }
     // 다른 장치로 바꿀 때 새 장치가 받는 설정만 남긴다(값은 새 장치의 범위로 다시 맞춘다).
@@ -1518,7 +1601,7 @@ public sealed partial class WaveEditorWindow : EditorWindow
         if (target == spawn.spawnPosition) return;
         // 같은 시간대에 다른 장치가 있는 칸으로는 옮기지 않는다.
         if (WavePrefabVisuals.OccupiesCells(spawn.prefab)
-            && Conflict(WavePrefabVisuals.Cells(target + Offset, WavePrefabVisuals.Footprint(spawn.prefab, spawn.rotationSteps)), WaveAuthoring.Times(Current)[index], spawn.lifetime, index) >= 0) return;
+            && Conflict(WavePrefabVisuals.OccupiedCells(spawn.prefab, target + Offset, spawn.rotationSteps, spawn.deviceSettings), WaveAuthoring.Times(Current)[index], spawn.lifetime, index) >= 0) return;
         Mutate(() => Current.spawnObjects[index].spawnPosition = target);
     }
 
@@ -1597,12 +1680,19 @@ public sealed partial class WaveEditorWindow : EditorWindow
     {
         var clip = WaveCopySlots.instance[copyBrush];
         if (clip.IsEmpty) return;
+        // 6차(T16): 붙일 항목 중 이 층에서 놓을 수 없는 것(적 구성 층의 함정, 맵 층의 적 등)이 있으면 하나도 붙이지 않는다.
+        var blocked = clip.items.FirstOrDefault(item => item?.info?.prefab != null && !PaletteVisible(item.info.prefab));
+        if (blocked != null)
+        {
+            ShowNotification(new GUIContent($"{DungeonPropCatalogSO.DisplayName(blocked.info.prefab)}: 이 층(또는 이 테마)에는 붙일 수 없습니다."));
+            return;
+        }
         // 모든 장치가 들어갈 수 있을 때만 붙인다(일부만 붙지 않게).
         var planned = new List<(RectInt cells, float start, float life)>();
         foreach (var item in clip.items)
         {
             if (item.info.prefab == null || !WavePrefabVisuals.OccupiesCells(item.info.prefab)) continue;
-            var cells = WavePrefabVisuals.Cells(cell + item.offset, WavePrefabVisuals.Footprint(item.info.prefab, item.info.rotationSteps));
+            var cells = WavePrefabVisuals.OccupiedCells(item.info.prefab, cell + item.offset, item.info.rotationSteps, item.info.deviceSettings);
             var target = cells.position;
             float start = time + item.timeOffset;
             int other = Conflict(cells, start, item.info.lifetime, -1);
@@ -1697,7 +1787,10 @@ public sealed class WaveDataEditor : Editor
     public override void OnInspectorGUI()
     {
         if (GUILayout.Button("Wave 격자 편집기에서 열기", GUILayout.Height(30))) GetWindow();
+        // 6차(T16): 방 템플릿은 던전 템플릿 편집기(템플릿 목록·템플릿 전용 상세·지형 잠금)로도 연다.
+        if (target is DungeonRoomTemplateSO template && GUILayout.Button("던전 템플릿 편집기에서 열기", GUILayout.Height(26))) DungeonTemplateEditorWindow.Open(template);
         DrawDefaultInspector();
     }
-    private void GetWindow() => EditorWindow.GetWindow<WaveEditorWindow>("Wave 격자 편집기").Select((WaveDataSO)target);
+    // 6차: 열린 던전 템플릿 편집기(파생 창)를 잡지 않도록 정확한 형식의 창을 연다.
+    private void GetWindow() => WaveEditorWindow.OpenStandard().Select((WaveDataSO)target);
 }

@@ -60,7 +60,7 @@ public struct FlightAvoidanceSettings
     [Min(0f)] public float stuckDistance;
     [Tooltip("목표에서 비껴가는 우회를 시작하면 같은 편(왼쪽·오른쪽)을 이 시간(초) 동안 고수합니다(벽 따라가기).")]
     [Min(0f)] public float detourCommit;
-    [Tooltip("유지 지점에 도착했는데 사격선이 이 시간(초)보다 오래 막혀 있으면 공격 위치를 다시 고릅니다(Drone·Aegis·Sniper).")]
+    [Tooltip("사격선이 이 시간(초)보다 오래 막혀 있으면 공격 위치를 다시 고릅니다(Drone·Aegis·Sniper). 유지 지점 근처에서는 지금 자리, 가는 중에는 유지 지점(재선정 자리) 자체의 사격선을 봅니다.")]
     [Min(0f)] public float losGrace;
     [Tooltip("유지 지점·대형 칸 보정 결과를 다시 쓰는 시간(초)입니다. 좌우 전환·감지 변화·기준점 1칸 이상 이동이면 바로 다시 계산합니다.")]
     [Min(0f)] public float holdCacheTime;

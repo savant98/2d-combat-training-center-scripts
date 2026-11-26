@@ -159,7 +159,8 @@ public sealed class DungeonSpawnMapInput
         if (prefab.GetComponent<EnemyController>() != null || prefab.GetComponent<DungeonDoor>() != null) return;
         if (prefab.GetComponent<DungeonSpawnZone>() != null) { AddZone(info); return; }
         if (prefab.GetComponent<DungeonTeleporter>() != null) { AddTeleport(info); return; }
-        if (prefab.GetComponent<DungeonObjectiveSlot>() != null || prefab.GetComponent<DungeonExitSlot>() != null) { AddFootprint(info, HazardMargin); return; }
+        // 6차: 도착 자리 표식(DungeonArrivalSlot, 5×6)도 출구 자리처럼 문 자리를 비운다(템플릿 단계 생성 후보 미리보기).
+        if (prefab.GetComponent<DungeonObjectiveSlot>() != null || prefab.GetComponent<DungeonExitSlot>() != null || prefab.GetComponent<DungeonArrivalSlot>() != null) { AddFootprint(info, HazardMargin); return; }
         var settings = prefab.GetComponent<IWaveDeviceSettings>();
         if (TryAddCrane(info, settings)) return;
         var prop = prefab.GetComponent<DungeonProp>();

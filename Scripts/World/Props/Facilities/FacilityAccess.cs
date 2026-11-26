@@ -12,6 +12,8 @@ using UnityEngine;
 //   피해·잡기를 막아 오르내리기만 반복해도 무적이 되기 때문이다(판단값 — 기본 진행 Wave에 놓으면 꺼진 받침처럼 안내가 뜨지 않는다).
 //   Anytime도 던전 밖에서는 이 규칙을 그대로 따른다(던전 밖 규칙 유지 — DESIGN_V3 §3).
 // - Wave 진행 중이면 Wave 준비(구속 상자·크레인 운반) 동안과 Wave 사이에는 쓰지 않는다(두 사용 시점 모두).
+// - 7차(DESIGN_V7 V5): 목표 레버는 CanUseObjective로 묻는다. 호스트가 IDungeonObjectiveGate를 구현하면 CanCompleteObjectives(방 클리어 뒤 또는 '레버 대기' — 적 전멸 뒤
+//   문이 잠긴 동안), 아니면 기존 HostAllows다. 텔레포트·수리대·출구 문은 그대로 CanUse(레버 대기 중에는 거절)다.
 /// <summary>시설을 언제 쓸 수 있는지(3차 계약).</summary>
 public enum FacilityUse
 {
@@ -68,6 +70,22 @@ public static class FacilityAccess
 
     /// <summary>시설 사용 조건 전부(던전 진행·Wave 진행·Player 상태).</summary>
     public static bool CanUse(PlayerController player) => HostAllows && WaveAllows && PlayerFree(player);
+
+    /// <summary>
+    /// 7차 V5: 던전 진행이 목표 실물(레버)을 허락하는지. 호스트가 IDungeonObjectiveGate면 CanCompleteObjectives(방 클리어 뒤 또는 레버 대기 — 전투 중에는 false),
+    /// 아니면 <see cref="HostAllows"/>(6차까지의 규칙 — 회귀의 가짜 호스트 등).
+    /// </summary>
+    public static bool ObjectiveAllows
+    {
+        get
+        {
+            var host = DungeonFacilityHost.Current;
+            return host is IDungeonObjectiveGate gate ? gate.CanCompleteObjectives : HostAllows;
+        }
+    }
+
+    /// <summary>7차 V5: 목표 실물(레버) 사용 조건 전부(<see cref="ObjectiveAllows"/>·Wave 진행·Player 상태).</summary>
+    public static bool CanUseObjective(PlayerController player) => ObjectiveAllows && WaveAllows && PlayerFree(player);
 
     /// <summary>
     /// 전투 중 시설(FacilityUse.Anytime)을 던전·Wave 진행이 허락하는지(Player 상태는 보지 않는다).

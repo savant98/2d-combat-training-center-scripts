@@ -155,6 +155,8 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
             foreach (var row in counts) enemies[row.Key] = Mathf.Max(enemies.TryGetValue(row.Key, out int n) ? n : 0, Mathf.Min(row.Value, MaxEnemiesPerPrefab));
             // 추격 분쇄기는 배치마다 띠 폭이 달라, 그 폭의 몸체 Mesh·부품과 이 Wave에 함께 나오는 수만큼의 몸체를 미리 만들어 둔다.
             ChasingGrinder.WarmWave(spawns);
+            // 6차 T15: 던전 분쇄 투입구가 빌려 쓰는 추격 분쇄기 몸체도 폭별로 미리 만든다(방 입장 때 Mesh를 새로 그리지 않게).
+            PropShredder.WarmWave(spawns);
         }
         int total = entities.Count, done = 0;
         foreach (var row in enemies) total += row.Value;

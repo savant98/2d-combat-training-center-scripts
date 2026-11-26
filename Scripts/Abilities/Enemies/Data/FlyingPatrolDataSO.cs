@@ -23,6 +23,18 @@ public class FlyingPatrolDataSO : FlyingAbilityDataSO
     [Tooltip("고리의 세로 비율입니다. 1보다 작으면 옆으로 넓은 타원이 됩니다.")]
     [Range(0.3f, 1f)] public float formationHeightRatio = 0.85f;
 
+    [Header("Path-first Formation")]
+    [Tooltip("켜면 무리의 추종 구성원은 자기 칸까지 몸이 지나갈 직선이 열려 있고 기준 구성원이 직선으로 날고 있을 때만 대형(기준 구성원 + 고리 칸)을 따릅니다. 아니면 유지 지점 기준의 가상 칸으로 길찾기 경로를 따라가고, 추종 구성원도 사격선이 막히면 공격 위치를 다시 고릅니다. 끄면 5차 대형(늘 기준 구성원 + 고리 칸)입니다.")]
+    public bool formationPathFirst = true;
+    [Tooltip("대형이 다시 가능해진 뒤 이 시간(초) 동안 계속 가능해야 대형으로 돌아갑니다(경계에서 대형·길찾기가 번갈아 바뀌지 않게).")]
+    [Min(0f)] public float formationRejoinDelay = 0.5f;
+    [Tooltip("추종 구성원과 자기 대형 칸 사이가 고리 간격 × 이 값(칸)보다 멀면 대형 대신 길찾기로 모입니다.")]
+    [Min(0.5f)] public float formationRegroupDistance = 2.5f;
+    [Tooltip("길찾기(경로·국소 우회) 중에는 같은 무리끼리 밀어내는 분리 힘에 이 배율을 곱합니다(좁은 통로에서 서로를 벽으로 밀지 않게). 1이면 그대로입니다.")]
+    [Range(0f, 1f)] public float pathSeparationScale = 0.5f;
+    [Tooltip("기준 구성원이 직선이 아닌 회피(경로·국소)로 이 시간(초)보다 오래 날거나 도달 불가가 나면 막힌 것으로 보고, 막히지 않은 구성원 가운데 유지 지점에 가까운 것으로 기준 구성원을 바꿉니다. 0이면 바꾸지 않습니다.")]
+    [Min(0f)] public float leaderBlockedDemote = 1.5f;
+
     [Header("Duration")]
     [Tooltip("거리를 유지하는 시간의 최소·최대(초)입니다. 끝나면 다음 패턴(추적)을 예약합니다.")]
     public Vector2 holdDuration = new(3f, 5f);

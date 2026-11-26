@@ -21,9 +21,19 @@ using UnityEngine.InputSystem;
 ///   훈련 상황 첫 줄 = '난이도 중급 · 클리어 5 · 다음 단계까지 1방'(최고 단계면 '최고 단계'), 목표 줄 끝 = '출구 잠김 레버 2/3' / '출구 개방 · 시작 방',
 ///   큰 지도에는 시작 방 출구 문 표식(잠김 흐림·열림 밝음 — DungeonMapMesh). 가운뎃점은 정적 글꼴에 없어 <see cref="DungeonUiText.MidDot"/>를 쓴다.
 /// - 그림은 열 때·지도 이동 때·열려 있는 동안 원본이 바뀔 때만 다시 만든다. 매 프레임은 Player 점 자리·깜박임과 연출만 — 할당 없음.
-/// - 5차(2026-11-25, DESIGN_V5 §1 S9): 큰 지도 표식은 배지형 픽토그램(크레인 2종·점프대 포함), 지금 방 = 굵은 밝은 테두리 + 꺾쇠 4개 + 위 표지 삼각형 + '현재 방' 글자
+/// - 5차(2026-11-25, DESIGN_V5 §1 S9): 큰 지도 표식은 배지형 픽토그램(점프대 포함), 지금 방 = 굵은 밝은 테두리 + 꺾쇠 4개 + 위 표지 삼각형 + '현재 방' 글자
 ///   (Current 층 — 지도를 다시 만들 때만 Mesh·글자 자리, 열려 있는 동안 currentPulsePeriod로 알파 맥동, 일시정지 중 실제 시간), 지도를 옮겨 지금 방이 영역 밖이면
-///   가장자리 화살. Player 표식은 빛 고리 + 바라보는 쪽 꼬리(원본이 IDungeonPlayerHeadingSource도 구현하면 — 선택 인터페이스 — localScale.x ±1). 범례 9칸.
+///   가장자리 화살. Player 표식은 빛 고리 + 바라보는 쪽 꼬리(원본이 IDungeonPlayerHeadingSource도 구현하면 — 선택 인터페이스 — localScale.x ±1).
+/// - 7차(2026-11-26, DESIGN_V7 §1.3·§1.4·§1.6):
+///   V2: 크레인 표식은 지도에 그리지 않는다(범례 7칸 — DungeonMapMesh).
+///   V4: 지금 방 = 주황 공기·벽 + 흰 Current 층(맥동 최저 0.6). 확대·축소 3단계(0 전체 = 5차 맞춤, 1 중간 = 두 pitch의 기하 평균, 2 확대 = 지금 방이 영역 짧은 쪽의 약 55%),
+///   열 때마다 확대·지금 방 가운데로 초기화. 배율을 바꿔도 보이던 가운데를 유지한다. 방향키 한 걸음은 화면 px 기준(panStepPixels — 배율과 무관하게 같은 거리).
+///   지도 모델(BuildFloorModel — 할당)은 원본이 바뀔 때만 다시 만들고, 이동·배율·끌기는 화면 맞춤(RefitView)만 한다(할당 없음).
+///   V7: 마우스 — 머리줄 오른쪽 버튼 [−][+][현재 방] 왼쪽 클릭, 지도 위 휠(한 칸 = 한 단계, 위 = 확대, wheelCooldown 간격), 지도 왼쪽 끌기 = 이동.
+///   EventSystem 포인터 이벤트를 받는 DungeonFieldTerminalPointer가 이 클래스의 공개 API를 부른다(입력 설정 에셋 무수정, Selectable 없음).
+///   열림 연출이 끝나고 닫는 중이 아닐 때만 DeviceRoot·ScreenClip CanvasGroup의 blocksRaycasts를 켠다(Prefab 값은 false). 닫힐 때·비활성 때 끌기·hover를 초기화한다.
+///   바닥줄 '[TAB] 닫기  [방향키/드래그] 이동  [휠] 확대/축소  [Z] 현재 방'(가운뎃점 대신 '/'). 기존 키보드(방향키·Z·Tab·Esc)는 그대로다.
+///   V6: 정보 판은 계기판형 DungeonTerminalStatusPanel에 맡긴다(Refresh·PlayIntro·Advance 위임). 패널이 없는 옛 Prefab이면 3~4차 글자 경로를 그대로 쓴다.
 /// Prefab(Assets/Resources/UI/DungeonFieldTerminal.prefab)은 tools/Unity/DungeonFieldTerminalSetup.cs가 만든다.
 /// </summary>
 [DisallowMultipleComponent]
@@ -52,16 +62,33 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     [Tooltip("5차 '현재 방' 표지 글자(비어 있으면 없음)")]
     [SerializeField] private TMP_Text currentLabel;
     [SerializeField] private string currentLabelText = "현재 방";
-    [Tooltip("5차 지금 방 테두리 맥동 주기(초, 실제 시간)와 최저 알파")]
+    [Tooltip("5차 지금 방 테두리 맥동 주기(초, 실제 시간)와 최저 알파(7차 V4: 0.45 → 0.6 — 맥동 최저에도 또렷하게)")]
     [SerializeField, Min(.1f)] private float currentPulsePeriod = 1.2f;
-    [SerializeField, Range(0f, 1f)] private float currentPulseMin = .45f;
+    [SerializeField, Range(0f, 1f)] private float currentPulseMin = .6f;
     [SerializeField, Min(0f)] private float mapPadding = 18f;
-    [Tooltip("단위 칸 한 칸의 최소·최대 px(큰 지도)")]
+    [Tooltip("단위 칸 한 칸의 최소·최대 px(큰 지도 '전체' 단계)")]
     [SerializeField, Min(4f)] private float minPitch = 48f;
     [SerializeField, Min(4f)] private float maxPitch = 190f;
-    [Tooltip("방향키 한 번의 지도 이동(단위 칸)")]
-    [SerializeField, Min(.05f)] private float panStep = .6f;
     [SerializeField, Min(.1f)] private float playerBlinkPeriod = .9f;
+
+    [Header("7차 확대·축소·마우스(DESIGN_V7 §1.4 V4·V7 — 판단값)")]
+    [Tooltip("배율 단계 수(0 전체 · 1 중간 · 2 확대). 전체 pitch가 확대 pitch 이상이면 한 단계로 줄고 버튼이 흐려진다.")]
+    [SerializeField, Range(1, 3)] private int zoomLevels = 3;
+    [Tooltip("열 때마다 쓰는 배율 단계(기본 2 = 확대·지금 방 가운데)")]
+    [SerializeField, Range(0, 2)] private int defaultZoom = 2;
+    [Tooltip("확대 단계에서 지금 방이 지도 영역 짧은 쪽에서 차지하는 비율")]
+    [SerializeField, Range(.1f, 1f)] private float zoomRoomShare = .55f;
+    [Tooltip("확대 단계의 최대 pitch(단위 칸 px)")]
+    [SerializeField, Min(4f)] private float maxZoomPitch = 420f;
+    [Tooltip("방향키 한 번의 지도 이동(px — 배율과 무관하게 같은 화면 거리)")]
+    [SerializeField, Min(4f)] private float panStepPixels = 140f;
+    [Tooltip("휠 한 칸 사이 최소 간격(초, 실제 시간)")]
+    [SerializeField, Min(0f)] private float wheelCooldown = .1f;
+    [Tooltip("7차 지도 조작 버튼 층(Controls — 비어 있으면 없음)")]
+    [SerializeField] private DungeonFieldTerminalMapGraphic controlsGraphic;
+
+    [Header("7차 계기판형 정보 판(비어 있으면 3~4차 글자 판)")]
+    [SerializeField] private DungeonTerminalStatusPanel statusPanel;
 
     [Header("Text (정적 글꼴 esamanru — 공백은 여백 태그)")]
     [SerializeField] private TMP_Text titleText;
@@ -76,7 +103,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     [Header("Labels")]
     [SerializeField] private string title = "현장 단말기";
     [SerializeField] private string context = "전투 구역 지도";
-    [SerializeField] private string footer = "[TAB] 닫기    [ESC] 닫기    [방향키] 지도 이동";
+    [SerializeField] private string footer = "[TAB] 닫기  [방향키/드래그] 이동  [휠] 확대/축소  [Z] 현재 방";
     [Header("4차 글자(정적 글꼴 — DungeonUiText.Glyphs 안)")]
     [SerializeField] private string threatRowLabel = "난이도";
     [SerializeField] private string exitRowLabel = "출구";
@@ -115,6 +142,13 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private DungeonMapMesh.FloorView view;
     private bool playerVisible;
     private readonly StringBuilder builder = new StringBuilder(512);
+    // 7차 확대·축소·마우스
+    private int zoomLevel, zoomCount = 1;
+    private float fullPitch = 1f, zoomedPitch = 1f;
+    private bool dragging;
+    private Vector2 dragLast;
+    private int controlHover = -1;
+    private float lastWheel = -999f;
 
     // ===== 검증이 읽는 값 =====
     public IDungeonMapSource Source => source;
@@ -154,6 +188,24 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     public TMP_Text ObjectiveText => objectiveText;
     public GameObject Presentation => presentation;
     public RectTransform TerminalRoot => terminalRoot;
+    /// <summary>7차: 지금 배율 단계(0 전체 · 1 중간 · 2 확대)와 지금 쓸 수 있는 단계 수(전체 ≥ 확대면 1).</summary>
+    public int ZoomLevel => zoomLevel;
+    public int ZoomLevelCount => zoomCount;
+    /// <summary>7차: '전체' 단계 pitch와 '확대' 단계 pitch(마지막 화면 맞춤 기준).</summary>
+    public float FullPitchValue => fullPitch;
+    public float ZoomedPitchValue => zoomedPitch;
+    public int DefaultZoom => defaultZoom;
+    public float PanStepPixels => panStepPixels;
+    public float WheelCooldown => wheelCooldown;
+    /// <summary>7차: 지도를 끌고 있는지.</summary>
+    public bool IsDragging => dragging;
+    /// <summary>7차: 마우스 입력을 받는지(열려 있고 닫는 중이 아니며 최상단 입력 수신자).</summary>
+    public bool AcceptsPointer => isOpen && !isClosing && IsTopInput;
+    /// <summary>7차: 레이 판정이 켜졌는지(열림 연출이 끝나고 닫는 중이 아닐 때만 — DeviceRoot·ScreenClip CanvasGroup.blocksRaycasts).</summary>
+    public bool RaycastsEnabled => terminalGroup != null && terminalGroup.blocksRaycasts && (screenGroup == null || screenGroup.blocksRaycasts);
+    public int ControlHover => controlHover;
+    public DungeonFieldTerminalMapGraphic ControlsGraphic => controlsGraphic;
+    public DungeonTerminalStatusPanel StatusPanel => statusPanel;
 
     private void Awake() => EnsureInit();
 
@@ -185,6 +237,8 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
             currentLabel.enabled = false;
         }
         ApplyPresentation(0f);
+        ApplyRaycast();
+        if (controlsGraphic != null) controlsGraphic.SetControls(0, 1, -1, false, false);
         if (presentation != null) presentation.SetActive(false);
     }
 
@@ -338,23 +392,159 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (!isOpen || isClosing || dir.sqrMagnitude < .01f) return;
         var step = new Vector2(Mathf.Abs(dir.x) > .5f ? Mathf.Sign(dir.x) : 0f, Mathf.Abs(dir.y) > .5f ? Mathf.Sign(dir.y) : 0f);
         if (step == Vector2.zero) return;
-        PanBy(step * panStep);
+        // 7차 V4: 화면 px 기준 한 걸음(확대해도 한 번에 수백 px씩 튀지 않게)
+        PanBy(step * (panStepPixels / Mathf.Max(1f, view.pitch)));
     }
 
-    /// <summary>지도를 단위 칸 기준으로 옮긴다(방향키·검증).</summary>
+    /// <summary>지도를 단위 칸 기준으로 옮긴다(방향키·검증). 화면 맞춤만 다시 한다(모델 재생성 없음 — 할당 없음).</summary>
     public void PanBy(Vector2 delta)
     {
         pan += delta;
-        RebuildMap();
-        // 범위 끝에서 더 밀리지 않게 실제로 적용된 이동량으로 되돌린다.
-        if (model != null) pan = view.center - DungeonMapMesh.FitFloor(model, CurrentRoom, MapArea, mapPadding, minPitch, maxPitch).center;
+        RefitView();
     }
 
-    public void OnConfirm()
+    public void OnConfirm() => Recenter();
+
+    /// <summary>7차: 지금 방 가운데로(배율은 그대로). Z 키·[현재 방] 버튼.</summary>
+    public void Recenter()
     {
         if (!isOpen || isClosing) return;
         pan = Vector2.zero;
-        RebuildMap();
+        RefitView();
+    }
+
+    /// <summary>7차: 배율 단계를 바꾼다(0 전체 · 1 중간 · 2 확대 — 쓸 수 있는 단계로 자른다). 보이던 가운데를 유지한다. 바뀌었으면 true.</summary>
+    public bool SetZoom(int level)
+    {
+        EnsureInit();
+        if (model == null || mapGraphic == null)
+        {
+            zoomLevel = Mathf.Clamp(level, 0, Mathf.Clamp(zoomLevels, 1, 3) - 1);
+            return false;
+        }
+        ComputeZoom();
+        level = Mathf.Clamp(level, 0, zoomCount - 1);
+        if (level == zoomLevel)
+        {
+            UpdateControls();
+            return false;
+        }
+        var keep = view.center;
+        zoomLevel = level;
+        pan = keep - DungeonMapMesh.FitFloor(model, CurrentRoom, MapArea, mapPadding, minPitch, maxPitch, Vector2.zero, false, PitchForLevel(level)).center;
+        RefitView();
+        return true;
+    }
+
+    /// <summary>7차: 한 단계 확대·축소([+]·[−] 버튼·휠). 열려 있고 닫는 중이 아닐 때만.</summary>
+    public bool ZoomIn() => isOpen && !isClosing && SetZoom(zoomLevel + 1);
+    public bool ZoomOut() => isOpen && !isClosing && SetZoom(zoomLevel - 1);
+
+    /// <summary>7차: 단계 level의 FitFloor zoomPitch(0 = 전체 맞춤). 마지막 화면 맞춤의 pitch 기준.</summary>
+    public float PitchForLevel(int level)
+    {
+        level = Mathf.Clamp(level, 0, Mathf.Max(1, zoomCount) - 1);
+        if (zoomCount <= 1 || level == 0) return 0f;
+        if (level >= zoomCount - 1) return zoomedPitch;
+        return Mathf.Sqrt(fullPitch * zoomedPitch);   // 중간 = 전체·확대의 기하 평균
+    }
+
+    // 지금 모델·지금 방·영역으로 '전체'·'확대' pitch와 쓸 수 있는 단계 수를 정한다(할당 없음).
+    private void ComputeZoom()
+    {
+        int levels = Mathf.Clamp(zoomLevels, 1, 3);
+        if (model == null)
+        {
+            zoomCount = 1;
+            fullPitch = zoomedPitch = maxPitch;
+            zoomLevel = Mathf.Clamp(zoomLevel, 0, levels - 1);
+            return;
+        }
+        var area = MapArea;
+        fullPitch = DungeonMapMesh.FullPitch(model, area, mapPadding, minPitch, maxPitch);
+        zoomedPitch = DungeonMapMesh.ZoomPitch(model, CurrentRoom, area, mapPadding, zoomRoomShare, maxZoomPitch, fullPitch);
+        zoomCount = zoomedPitch > fullPitch * 1.02f ? levels : 1;
+        zoomLevel = Mathf.Clamp(zoomLevel, 0, zoomCount - 1);
+    }
+
+    // ===== 7차 마우스(DungeonFieldTerminalPointer가 부른다 — 검증은 직접 부른다) =====
+
+    /// <summary>지도를 화면 px(지도 영역 로컬)만큼 끈다 — 지도가 포인터를 따라 움직인다.</summary>
+    public void PointerPan(Vector2 localDelta)
+    {
+        if (!AcceptsPointer || model == null) return;
+        pan -= localDelta / Mathf.Max(1f, view.pitch);
+        RefitView();
+    }
+
+    /// <summary>휠 한 칸 = 한 단계(위 = 확대). wheelCooldown 안의 다음 칸은 무시한다. 바뀌었으면 true.</summary>
+    public bool PointerScroll(float delta)
+    {
+        if (!AcceptsPointer || Mathf.Abs(delta) < 1e-3f) return false;
+        if (clock - lastWheel < wheelCooldown) return false;
+        lastWheel = clock;
+        return delta > 0f ? SetZoom(zoomLevel + 1) : SetZoom(zoomLevel - 1);
+    }
+
+    /// <summary>끌기 시작(지도 영역 로컬 점).</summary>
+    public void BeginPointerDrag(Vector2 local)
+    {
+        if (!AcceptsPointer) return;
+        dragging = true;
+        dragLast = local;
+    }
+
+    /// <summary>끌기 중 새 점(지도 영역 로컬) — 앞 점과의 차이만큼 옮긴다.</summary>
+    public void PointerDragTo(Vector2 local)
+    {
+        if (!dragging) return;
+        if (!AcceptsPointer)
+        {
+            EndPointerDrag();
+            return;
+        }
+        var delta = local - dragLast;
+        dragLast = local;
+        if (delta.sqrMagnitude > 1e-6f) PointerPan(delta);
+    }
+
+    /// <summary>끌기 끝(닫힘·비활성 때도 부른다).</summary>
+    public void EndPointerDrag() => dragging = false;
+
+    /// <summary>버튼 클릭(DungeonFieldTerminalMapGraphic.ControlZoomOut·ControlZoomIn·ControlRecenter). 받았으면 true.</summary>
+    public bool PressControl(int index)
+    {
+        if (!AcceptsPointer) return false;
+        switch (index)
+        {
+            case DungeonFieldTerminalMapGraphic.ControlZoomOut: ZoomOut(); return true;
+            case DungeonFieldTerminalMapGraphic.ControlZoomIn: ZoomIn(); return true;
+            case DungeonFieldTerminalMapGraphic.ControlRecenter: Recenter(); return true;
+            default: return false;
+        }
+    }
+
+    /// <summary>버튼에 마우스가 올라감·나감(밝게 그리기만).</summary>
+    public void SetControlHover(int index, bool on)
+    {
+        if (on) controlHover = index;
+        else if (controlHover == index) controlHover = -1;
+        UpdateControls();
+    }
+
+    private void UpdateControls()
+    {
+        if (controlsGraphic == null) return;
+        bool ready = isOpen && !isClosing && model != null;
+        controlsGraphic.SetControls(zoomLevel, zoomCount, ready ? controlHover : -1, ready && zoomLevel < zoomCount - 1, ready && zoomLevel > 0);
+    }
+
+    // 열림 연출이 끝나고 닫는 중이 아닐 때만 레이 판정을 켠다(Prefab 값은 false).
+    private void ApplyRaycast()
+    {
+        bool on = isOpen && !isClosing && !transitioning;
+        if (terminalGroup != null && terminalGroup.blocksRaycasts != on) terminalGroup.blocksRaycasts = on;
+        if (screenGroup != null && screenGroup.blocksRaycasts != on) screenGroup.blocksRaycasts = on;
     }
 
     public void OnCancel()
@@ -406,6 +596,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         Open(false);
         transitioning = false;
         ApplyPresentation(1f);
+        ApplyRaycast();
     }
 
     private void Open(bool liveOpen)
@@ -414,8 +605,13 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         isOpen = true;
         isClosing = false;
         pan = Vector2.zero;
+        // 7차 V4: 열 때마다 확대·지금 방 가운데로(쓸 수 없는 단계면 RefitView가 자른다), 끌기·hover 초기화
+        zoomLevel = Mathf.Clamp(defaultZoom, 0, Mathf.Clamp(zoomLevels, 1, 3) - 1);
+        dragging = false;
+        controlHover = -1;
         if (presentation != null) presentation.SetActive(true);
         RebuildAll();
+        if (statusPanel != null) statusPanel.PlayIntro();
         if (live)
         {
             UIManager.Instance.SetInputTarget(this, UIInputLayer.Gameplay);
@@ -430,7 +626,10 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     {
         if (!isOpen || isClosing) return;
         isClosing = true;
+        EndPointerDrag();
+        controlHover = -1;
         BeginTransition(0f, CloseDuration);
+        UpdateControls();
     }
 
     /// <summary>연출 없이 바로 닫고 입력·일시정지를 돌려준다. hide가 false면 표시 루트의 활성 상태는 그대로 둔다(비활성·파괴 도중).</summary>
@@ -449,6 +648,11 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         isClosing = false;
         live = false;
         playerVisible = false;
+        // 7차 V7: 닫히면 끌기·hover를 초기화하고 레이 판정을 끈다
+        dragging = false;
+        controlHover = -1;
+        ApplyRaycast();
+        UpdateControls();
         if (wasLive && UIManager.Instance != null) UIManager.Instance.ClearInputTarget(this);
         if (ownsPause)
         {
@@ -466,6 +670,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         transitionTime = 0f;
         transitionDuration = Mathf.Max(.01f, duration);
         transitioning = true;
+        ApplyRaycast();
     }
 
     // 기존 단말기(InventoryTerminalMenu.ApplyPresentation)와 같은 연출: 오른쪽 아래에서 기울어진 채 작게 → 제자리, 손목은 아래에서 올라온다.
@@ -527,12 +732,14 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
             {
                 transitioning = false;
                 if (transitionTo < .5f) FinishClose();
+                ApplyRaycast();
             }
         }
         else if (isOpen && fitRect != null && fitRect.rect.size != lastFitSize) ApplyPresentation(progress);
         if (!isOpen) return;
         if (dirty) RebuildAll();
         UpdatePlayer();
+        if (statusPanel != null) statusPanel.Advance(deltaTime);
     }
 
     private bool FloorActive() => SourceAlive() && source.HasFloor && source.Rooms != null && source.Rooms.Count > 0;
@@ -558,20 +765,45 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         RefreshTexts();
     }
 
+    // 7차 V4: 모델 재생성(원본이 바뀔 때만 — BuildFloorModel은 할당한다)과 화면 맞춤(이동·배율·끌기 — 할당 없음)을 나눈다.
     private void RebuildMap()
+    {
+        RebuildModel();
+        RefitView();
+    }
+
+    private void RebuildModel()
     {
         if (mapGraphic == null) return;
         if (!SourceAlive() || source.Rooms == null || !DetailAlive())
         {
             model = null;
-            mapGraphic.ClearFloor();
-            ClearCurrent();
             return;
         }
         model = DungeonMapMesh.BuildFloorModel(source.Rooms, detailSource, silhouettes);
-        view = DungeonMapMesh.FitFloor(model, CurrentRoom, MapArea, mapPadding, minPitch, maxPitch, pan);
+    }
+
+    /// <summary>지금 모델에 배율·이동을 적용해 지도·지금 방 층·버튼을 다시 그린다(할당 없음). 범위 끝에서 밀린 이동량은 버린다.</summary>
+    private void RefitView()
+    {
+        if (mapGraphic == null) return;
+        if (model == null || !DetailAlive())
+        {
+            model = null;
+            mapGraphic.ClearFloor();
+            ClearCurrent();
+            UpdateControls();
+            return;
+        }
+        ComputeZoom();
+        var area = MapArea;
+        float zoom = PitchForLevel(zoomLevel);
+        view = DungeonMapMesh.FitFloor(model, CurrentRoom, area, mapPadding, minPitch, maxPitch, pan, false, zoom);
+        // 범위 끝에서 더 밀리지 않게 실제로 적용된 이동량으로 되돌린다.
+        pan = view.center - DungeonMapMesh.FitFloor(model, CurrentRoom, area, mapPadding, minPitch, maxPitch, Vector2.zero, false, zoom).center;
         mapGraphic.SetFloor(model, CurrentRoom, view, detailSource, ObjectiveAlive() ? objectiveSource.ObjectiveMarkers : null);
         RebuildCurrent();
+        UpdateControls();
     }
 
     // 5차: 지금 방 테두리·꺾쇠·표지(지도를 다시 만들 때만). 지금 방 범위 = 큰 지도가 그 방 실루엣을 그린 사각형.
@@ -655,6 +887,12 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private void RefreshTexts()
     {
         if (contextText != null) contextText.text = BuildContext();
+        // 7차 V6: 계기판형 정보 판이 있으면 그쪽이 훈련·난이도·구역·목표를 모두 그린다(살아 있는 원본만 넘긴다).
+        if (statusPanel != null)
+        {
+            statusPanel.Refresh(SourceAlive() ? source : null, ObjectiveAlive() ? objectiveSource : null, ThreatAlive() ? threatSource : null, ExitAlive() ? exitSource : null);
+            return;
+        }
         RefreshTraining();
         RefreshObjective();
     }

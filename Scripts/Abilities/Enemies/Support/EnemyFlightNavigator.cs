@@ -501,6 +501,17 @@ public sealed class EnemyFlightNavigator : MonoBehaviour
         return fitted;
     }
 
+    // 길찾기 우선 무리(6차): from → to를 몸으로 쓸어 to(clearance 안쪽)까지 열려 있는지 clear에 넣는다(질의 1회).
+    // 회피가 꺼졌거나 모터가 없으면 열린 것으로 본다. 이번 프레임 질의 몫이 모자라면 false를 돌려준다(부른 쪽이 다음 프레임에 다시 본다).
+    public bool TryCheckBodyPath(Vector2 from, Vector2 to, in FlightAvoidanceSettings s, out bool clear)
+    {
+        clear = true;
+        if (!s.enabled || !EnsureMotor()) return true;
+        if (!HasCastBudget(1)) return false;
+        clear = IsClear(from, to, Mathf.Max(0f, s.clearance));
+        return true;
+    }
+
     // 대형 칸 지형 투영: from(기준 구성원)에서 slot까지 몸으로 쓸어 열린 비율(0~1)이다. 막히면 지형 앞 clearance에서 멈춘다.
     public float ProjectSlot(Vector2 from, Vector2 slot, in FlightAvoidanceSettings s)
     {

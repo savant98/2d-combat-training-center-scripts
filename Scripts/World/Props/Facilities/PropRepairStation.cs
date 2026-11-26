@@ -4,7 +4,8 @@ using UnityEngine;
 
 // 수리 정비대(N08, 회복 — 초록, 3차 외형 재디자인·기능 그대로). 방을 클리어한 뒤 앞에 서서 상호작용 키를 누르면 최대 체력의 30%를 회복한다(던전 한 층에 한 번).
 // - 사용 횟수: 던전 안이면 DungeonFacilityHost.TryUseFloorToken(TokenKey)(층 단위, 같은 층의 다른 수리대와 공유). 던전 밖이면 개체(대여)마다 한 번.
-//   체력이 가득하면 쓰지 않고 거절한다(기회를 날리지 않게).
+//   체력이 가득하면 쓰지 않고 거절한다(기회를 날리지 않게). 6차 T2(D4): 체력이 가득하면 키 안내도 숨긴다 — 같은 ↑는 거절음 대신 근처 크레인 붙기가 받는다
+//   (FacilityInteractPoint.Reject의 붙기 양보). 수리 중(Repairing 1.1초)에는 IFacilityBusy로 알려 크레인 직선·붙기를 막는다.
 // - 회복: HealthBase.Heal(PlayerHealth가 체력 갱신·초록 숫자·본체 초록 번쩍임을 낸다) + 회복 실행 효과(BurstHeal) 임시 재사용.
 // - 외형: 위 갠트리 보에 매달린 정비 팔 2개(왼쪽 = 용접 토치, 오른쪽 = 렌치), 오른쪽 기둥의 녹색 십자 + 렌치 표지판, 갠트리를 오가는 스캔 헤드(초록 스캔 빔),
 //   받침의 초록 진단 고리. 초록은 회복 기능부(표지판·스캔·진단 고리·회복 입자)에만, 몸체는 흑연 + 흰 발광.
@@ -12,7 +13,7 @@ using UnityEngine;
 //   수리 중 = 팔이 내려와(이동) 손목이 Player 쪽으로 꺾이고(회전) 토치 끝이 번쩍이며 불꽃 입자, 렌치는 톱니처럼 끊어 돌고, 스캔 헤드가 좌우로 훑으며
 //   초록 빔, 발치에서 녹색 회복 입자 / 방전(사용 뒤) = 발광 꺼짐·팔 접힘·상태등만 흐리게. 크기 늘이기 없음(이동·회전·밝기만).
 [DisallowMultipleComponent]
-public sealed class PropRepairStation : MonoBehaviour, IDungeonPropPart, IDungeonRoomPowered, IFacilityInteractTarget, IFacilityHighlightSource
+public sealed class PropRepairStation : MonoBehaviour, IDungeonPropPart, IDungeonRoomPowered, IFacilityInteractTarget, IFacilityHighlightSource, IFacilityBusy
 {
     public const string TokenKey = "DungeonRepairStation";
 
@@ -75,6 +76,8 @@ public sealed class PropRepairStation : MonoBehaviour, IDungeonPropPart, IDungeo
     public bool FacilityReady => isLive && state == State.Ready && powered;
     /// <summary>정비 팔이 내려온 정도(0 접힘 ~ 1 내려옴, 검사용).</summary>
     public float ArmExtension => arm;
+    /// <summary>6차 T2: 수리 중인지(IFacilityBusy — 그동안 크레인 직선·붙기를 막는다).</summary>
+    public bool FacilityBusy => isLive && state == State.Repairing;
 
     private void Awake() => Cache();
 
@@ -147,8 +150,15 @@ public sealed class PropRepairStation : MonoBehaviour, IDungeonPropPart, IDungeo
 
     // ── 상호작용 ─────────────────────────────
 
+    // 6차 T2(D4): 체력이 가득하면 안내를 띄우지 않는다(쓰지 않는 시설이 크레인 붙기를 가로막지 않게).
     public bool ShowFacilityHint(PlayerController player, FacilityInteractPoint point)
-        => isLive && state == State.Ready && powered && FacilityAccess.CanUse(player) && player.IsGrounded;
+        => isLive && state == State.Ready && powered && FacilityAccess.CanUse(player) && player.IsGrounded && NeedsRepair(player);
+
+    private static bool NeedsRepair(PlayerController player)
+    {
+        var health = player != null ? player.Health : null;
+        return health != null && health.currentHP < health.maxHP - .01f;
+    }
 
     public void FacilityInteract(PlayerController player, FacilityInteractPoint point)
     {
@@ -161,8 +171,7 @@ public sealed class PropRepairStation : MonoBehaviour, IDungeonPropPart, IDungeo
         Cache();
         if (!isLive || state != State.Ready || !powered || !isActiveAndEnabled) return false;
         if (!FacilityAccess.CanUse(player) || player.Health == null) return false;
-        var health = player.Health;
-        if (health.currentHP >= health.maxHP - .01f) return false;           // 가득하면 기회를 쓰지 않는다
+        if (!NeedsRepair(player)) return false;                               // 가득하면 기회를 쓰지 않는다
         if (usedHere) { state = State.Spent; Apply(); return false; }
         var host = DungeonFacilityHost.Current;
         if (host != null && !host.TryUseFloorToken(TokenKey))

@@ -10,7 +10,7 @@ using UnityEngine.UI;
 /// - Player: 작은 흰 마름모 + 청록 테두리(자기 사각형 가운데). Mesh는 고정이고 DungeonMinimap이 anchoredPosition만 매 프레임 옮긴다.
 /// - Guide(4차, 2026-11-25): 출구 해금 뒤 안내 — 지금 방이 출구 방이면 밝은 출구 표식, 아니면 출구 쪽 연결 출입구 테두리 + 겹 화살
 ///   (<see cref="DungeonMapMesh.WriteExitGuide"/>). 출구 상태·방이 바뀔 때만 다시 만들고, DungeonMinimap이 CanvasRenderer 알파로 맥동시킨다.
-/// - 5차(2026-11-25, DESIGN_V5 §1 S9): Marks는 고정 크기 배지형 픽토그램(크레인 2종·점프대·출구 램프·이웃 방 정보 점 포함 — 방 목록은 <see cref="SetRooms"/>),
+/// - 5차(2026-11-25, DESIGN_V5 §1 S9): Marks는 고정 크기 배지형 픽토그램(점프대·출구 램프·이웃 방 정보 점 포함 — 방 목록은 <see cref="SetRooms"/>, 7차 V2: 크레인 2종은 그리지 않음),
 ///   Player는 반대각선 8 + 빛 고리 + 바라보는 쪽 꼬리(+x — 왼쪽은 DungeonMinimap이 localScale.x를 뒤집는다), 새 층 Ping = 1.6초마다 퍼지는 고리
 ///   (Mesh 고정, DungeonMinimap이 localScale·알파만 바꾼다).
 /// Mesh는 <see cref="DungeonMapMesh"/>가 쓰고, Room·Marks·Pulse의 정점은 이 RectTransform 사각형 안으로 잘린다.

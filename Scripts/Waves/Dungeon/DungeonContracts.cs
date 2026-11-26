@@ -3,6 +3,8 @@ using UnityEngine;
 
 /// <summary>
 /// 부서지는 던전 Prop. DungeonManager(방 세우기)가 구독해 부서진 Prop을 기억하고, 그 방에 다시 들어와도 세우지 않는다.
+/// 7차(DESIGN_V7 V1): 한 번만 작동하고 사라지는 소모 Prop(낙석 PropRockfall — 블록이 부서져 사라진 순간 Broken)도 이 계약을 쓴다.
+/// 무기·드론 표적(IDungeonPropTarget)과는 무관하다 — 이 계약만으로 자동 조준 대상이 되지 않는다.
 /// </summary>
 public interface IDungeonBreakable
 {
@@ -82,6 +84,11 @@ public enum DungeonRoomPhase
     /// 상태 띠는 어두운 앰버 'HOSTILES n · BYPASS'를 잠깐 보이고 접으며, 적 위치 마커는 끈다.
     /// </summary>
     Patrol = 3,
+    /// <summary>
+    /// 7차(DESIGN_V7 V5): 적을 모두 처치했지만 이 방에 아직 당기지 않은 레버가 남은 '레버 대기'. 출입구는 잠긴 채이고 방 클리어(ROOM CLEAR·난이도 첫 클리어·시설 전원)는
+    /// 레버를 당긴 뒤로 미룬다. 상태 띠는 앰버 'PULL LEVER'(유지). HostilesRemaining·HostileEnemies는 0·빈 목록. 자세한 계약은 <see cref="IDungeonObjectiveGate"/>.
+    /// </summary>
+    Objective = 4,
 }
 
 /// <summary>
@@ -291,9 +298,10 @@ public enum DungeonDetailMarkerKind
     Exit = 4,
     /// <summary>
     /// 5차(S9): 경로 크레인(PropCraneHook). local = 집(점 0)의 매달린 발(방 로컬), index = <see cref="DungeonRoomDetail.cranePaths"/>의 경로 번호(없으면 -1), toRoom은 -1.
+    /// 7차(DESIGN_V7 V2): HUD 미니맵·현장 단말기 큰 지도에는 그리지 않는다 — 데이터만 유지한다(DungeonPlayRegression cranesOk).
     /// </summary>
     CranePath = 5,
-    /// <summary>5차(S9): 고정 크레인(PropCraneAnchor). local = 매달린 발(방 로컬), index는 Prop 번호, toRoom은 -1.</summary>
+    /// <summary>5차(S9): 고정 크레인(PropCraneAnchor). local = 집 발(차지 칸 (x + 1, y), 방 로컬 — 7차 V11 뒤 실제 매달린 발은 1.345칸 위), index는 Prop 번호, toRoom은 -1. 7차 V2: 지도에 그리지 않는다(데이터만 유지).</summary>
     CraneAnchor = 6,
     /// <summary>5차(S9): 점프대(WaveJumpPad). local = 배치 자리(방 로컬), index는 Prop 번호, toRoom은 -1.</summary>
     JumpPad = 7,
@@ -339,6 +347,7 @@ public sealed class DungeonRoomDetail
     /// <summary>
     /// 5차(S9, 선택): 경로 크레인 경로(방 로컬 매달린 발 목록 — 점 0 = 집, 마지막 = 끝 도크). <see cref="DungeonDetailMarkerKind.CranePath"/> 표식의 index가 이 배열의 번호다.
     /// 없으면 null(옛 원본·회귀의 가짜 상세) — UI는 경로 없이 훅 표식만 그린다.
+    /// 7차(DESIGN_V7 V2): 지도에는 그리지 않는다 — 데이터만 유지한다.
     /// </summary>
     public Vector2[][] cranePaths;
 }
@@ -558,4 +567,51 @@ public static class DungeonThreatText
 
     /// <summary>단계 색(감마 공간 UI 색).</summary>
     public static Color Color(DungeonThreatLevel level) => colors[Index(level)];
+}
+
+// ───────────── 던전 7차 계약(2026-11-26, DESIGN_V7 §3) ─────────────
+// 4차 규칙 그대로: 기존 인터페이스(IDungeonFacilityHost·IDungeonObjectiveHost·IDungeonCombatSource 등)에는 멤버를 더하지 않는다(회귀의 가짜 구현 보호).
+// 아래는 모두 선택 인터페이스다 — 쓰는 쪽은 'host is IDungeonObjectiveGate'처럼 확인하고, 없으면 6차 규칙으로 동작한다.
+
+/// <summary>
+/// 7차 V5: 레버 방의 '레버 대기' 단계(적 전멸 ≠ 방 클리어). DungeonManager가 구현하고 흐름(대기 시작·레버 뒤 클리어 재개)은 DungeonRoomClearGate에 맡긴다.
+/// - 적을 모두 처치한 순간 그 방에 아직 당기지 않은 레버(목표 SO gatesRoomClear)가 남았으면 방 클리어를 미루고 대기에 들어간다:
+///   출입구 잠김 유지(DungeonRoomState.objectiveHold = true · cleared = false · locked = true), DungeonRoomPhase.Objective(상태 띠 앰버 'PULL LEVER' 유지),
+///   함정·낙석 정지(IDungeonRoomHazard — 사용자 결정: 적 전멸 순간), 레버만 전원(빛·준비음), 레버 목표 마커 Ready(화면 밖 화살).
+///   동적 구성이 비어 적 없이 끝난 레버 방도 같다(문을 잠그고 대기).
+/// - 그동안 텔레포트·수리대·출구는 IDungeonFacilityHost.CanUseFacilities(false)로 계속 거절한다. 레버만 <see cref="CanCompleteObjectives"/>로 허용한다.
+///   전투 중(잠김·필수 적 남음)에는 지금처럼 레버도 거절한다.
+/// - 그 방 레버를 모두 당기면(레버 컷씬이 켜져 있으면 컷씬이 끝난 뒤, 꺼져 있으면 약 0.6초 뒤 — 판단값) 기존 방 클리어 흐름을 그대로 실행한다:
+///   ROOM CLEAR(RoomCleared) → 난이도 첫 클리어 기록(ThreatChanged) → 던전 조건 → 시설 전원 → 0.6초 뒤 문 열림(RoomUnlocked).
+/// UI(상태 띠·현장 단말기·미니맵)는 읽기 전용으로 구독하고, 레버 실물은 DungeonFacilityHost.Current as IDungeonObjectiveGate로 묻는다(FacilityAccess.CanUseObjective).
+/// </summary>
+public interface IDungeonObjectiveGate
+{
+    /// <summary>
+    /// 목표 실물(레버)을 지금 당길 수 있는지 = 기존 시설 조건(<see cref="IDungeonFacilityHost.CanUseFacilities"/>) 또는 지금 방이 레버 대기(<see cref="AwaitingObjective"/>).
+    /// 관 통과·컷씬·Wave 준비·패배·던전 조건 충족 뒤에는 false(CanUseFacilities와 같은 공통 조건).
+    /// </summary>
+    bool CanCompleteObjectives { get; }
+    /// <summary>
+    /// 지금 방이 레버 대기 단계인지. 그 방 레버를 모두 당긴 뒤에도 방 클리어 처리를 시작하기 직전(컷씬 대기 포함)까지 true다 —
+    /// 상태 띠가 'PULL LEVER'를 유지해 컷씬 동안 EXIT UNLOCKED를 대기열에 남기게 한다(ROOM CLEAR → EXIT 순서).
+    /// </summary>
+    bool AwaitingObjective { get; }
+    /// <summary>레버 대기 중인 방 id(대기가 아니면 -1). 대기 중에는 방을 떠날 수 없으므로 늘 지금 방이다.</summary>
+    int AwaitingRoom { get; }
+    /// <summary>
+    /// 레버 대기가 시작(awaiting = true)되거나 끝난(false) 순간(인자 = 방 id, awaiting). 끝은 방 클리어 처리 직전(같은 프레임, RoomCleared 앞)이거나,
+    /// 재도전·패배 정리·던전 종료로 대기가 버려질 때다(이때는 RoomCleared가 오지 않는다).
+    /// </summary>
+    event Action<int, bool> ObjectiveGateChanged;
+}
+
+/// <summary>
+/// 7차 V6(선택): 난이도 단계별 문턱(그 단계가 시작되는 첫 클리어 방 수). 현장 단말기 난이도 게이지의 '단계 안 진행' 점(채운 점·남은 점)에 쓴다.
+/// DungeonManager가 DungeonThreatTracker.Threshold로 위임한다(1줄). 없으면 UI는 IDungeonThreatSource.NextLevelAt − ClearedRooms(남은 방 빈 점)만 그린다.
+/// </summary>
+public interface IDungeonThreatLadder
+{
+    /// <summary>그 단계가 시작되는 첫 클리어 방 수(입문 = 0, 기본 0·2·4·6·8). 실시간 난이도가 없으면 0.</summary>
+    int ThreatThreshold(DungeonThreatLevel level);
 }

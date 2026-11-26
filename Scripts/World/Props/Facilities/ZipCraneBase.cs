@@ -4,15 +4,20 @@ using UnityEngine;
 
 /// <summary>
 /// 붙기 크레인 공통(DESIGN_V4 §2.2~2.4 · 5차 DESIGN_V5 §1 크레인) — 경로 크레인 PropCraneHook·고정 크레인 PropCraneAnchor가 상속한다.
-/// - 배치: footprint 2×4, (x, y) = 왼쪽 아래 칸, 매달린 Player 발 = (x + 1, y) → 루트(footprint 가운데) 기준 로컬 (0, −2). 몸 1.5×1.5 + 머리가 그 위 4칸 안.
+/// - 배치: footprint 2×4, (x, y) = 왼쪽 아래 칸, 집 발 = (x + 1, y) → 루트(footprint 가운데) 기준 로컬 (0, −2)(HangFeetLocal — 경로 크레인 매달림·차지 칸 기준).
+///   몸 1.5×1.5 + 머리가 그 위 4칸 안. 7차 V11: 고정 크레인은 ZipFeet를 재정의해 몸 중심이 그래플 고리 중심에 오게 매단다(PropCraneAnchor.HangLocal (0, −0.655)).
 /// - 타는 방법은 붙기(FacilityZip)뿐이다. Interact 트리거가 없고(InteractAbility의 '가까운 Collider 하나' 선택과 겹치지 않는다), 붙기 대상으로 '선택'됐을 때만
 ///   크레인 쪽(경로 크레인 = 케이지 안, 고정 크레인 = 고리 안)에 기존 키 안내(RoomTrigger 사본)를 띄운다. 도착하면 FacilityRide.BeginHandoff로 넘겨받는다 —
 ///   보호 없는 구속(피해를 받고 잡기만 막음), 입력을 막지 않아 매달린 채 무장을 쓴다. 매달림은 구속 바닥 접지라 점프 횟수가 다시 찬다(기존 동작).
 /// - 내리기: 점프 → 내리며 점프(JumpAbility.Jumped, 못 읽은 프레임엔 InputManager.Pressed(Jump) — 3차와 같음), 대시 → 내리며 그 방향 대시(DashAbility.IsActive를 보고
 ///   구속만 푼다 — 대시 속도는 대시가 이어서 넣는다), 상호작용(↑) → 다른 크레인으로 연쇄 붙기(FacilityZip이 ReleaseForZip을 부른다).
 ///   던전 조건을 채운 순간(FacilityAccess.CombatAllows false) 스스로 내려 준다. 사망·Wave 정지·구속 해제(FacilityRide.Interrupted)면 끊는다.
-/// - 5차 표시(S6): 반경 고리를 없앴다. 선택된 대상에만 Player → 대상 직선(흐르는 점선, 굵기 0.05, 크레인 쪽으로 3칸/초) + 표적 괄호 4개(회전만)를 그린다.
+/// - 5차 표시(S6): 반경 고리를 없앴다. 선택된 대상에만 Player → 대상 직선(흐르는 점선, 굵기 0.05, 크레인 쪽으로 3칸/초) + 표적 괄호 4개(이동·회전만)를 그린다.
 ///   ↑를 받아 확정을 기다리는 0.08초는 밝게(1.6), 평소 선택은 0.9. 반경 안이지만 선택되지 않은 크레인은 흐린 표적 괄호(0.3)만 둔다.
+///   6차 T4(크레인을 가리키게): 직선·표적 괄호의 기준은 '매달릴 몸 자리'가 아니라 크레인의 잡는 부분 = 표시 기준점 G(AimPoint — 판정·이동 목표와 무관,
+///   붙기 반경·점수·이동은 몸 중심 그대로). 고정 크레인 = 그래플 고리 중심(흔들림을 따라감), 경로 크레인 = 머리(스프레더) 중심, 빈 도크 = 생겨날 머리 자리.
+///   표적 괄호는 G를 두른 종류별 크기 상자(AimFrameHalf — 생성 도구가 크기별 Mesh를 굽는다, Scale 미사용), 직선 끝 = 몸 중심 → G 선이 그 상자와 만나는 점
+///   (시작 여백 0.55·최소 길이 0.35 유지 — 가까우면 시작 여백부터 줄이고, 상자 밖 길이가 0.35보다 짧으면 괄호만).
 /// - 5차 붙기 이동 연출(S5, 대시와 다르게): 출발 때 몸 중심의 십자 섬광 0.08초 + 청록 불꽃 + 출발음(TerrainPanelDrive 피치 1.5),
 ///   와이어 장력(가닥 간격 0.12 → 0.04로 모이며 밝기 1.2 → 2.0), 출발점 → 몸의 곧은 견인 띠(파랑 꼬리 → 청록 → 흰 머리, 정점만 다시 채움), 크레인 쪽으로 모이는 속도선.
 ///   도착하면 띠 꼬리가 0.12초에 머리를 따라잡으며 사라진다. 히트스톱은 넣지 않는다.
@@ -25,7 +30,10 @@ using UnityEngine;
 public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPropSettings, IDungeonRoomPowered, IFacilityHighlightSource, IZipAnchor
 {
     public const string ZipRadiusKey = "zipRadius";
-    /// <summary>루트 기준 매달린 발(로컬). footprint 2×4의 아래 변 가운데.</summary>
+    /// <summary>
+    /// 루트 기준 집 발(로컬). footprint 2×4의 아래 변 가운데 — 경로 크레인 매달림(경로 점 0)·차지 칸·격자 Tool 기둥 그림의 기준.
+    /// 7차 V11: 고정 크레인의 매달림은 PropCraneAnchor.HangLocal(ZipFeet 재정의 — 1.345칸 위, 몸 중심 = 그래플 고리 중심)이다.
+    /// </summary>
     public static readonly Vector2 HangFeetLocal = new Vector2(0f, -2f);
     /// <summary>Player 몸통 반높이(1.51의 절반 — 직선·표적 괄호·키 안내 기준).</summary>
     public const float BodyHalfHeight = .755f;
@@ -34,7 +42,8 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     /// <summary>5차 판단값: 크레인 흔들림(회전만) 진폭·주기·감쇠 시간.</summary>
     public const float KickDegrees = 4f, KickPeriod = .45f, KickDecay = .3f;
 
-    public enum Phase { Idle, Riding, Waiting, Returning, Calling }
+    /// <summary>6차 T5: 호출 이동(Calling)은 없앴다 — 빈 도크를 고르면 크레인이 그 도크에 즉시 생긴다(PropCraneHook.Summon).</summary>
+    public enum Phase { Idle, Riding, Waiting, Returning }
 
     [Header("붙기")]
     [SerializeField, Range(4f, 14f), Tooltip("붙기 반경 기본값(칸, 배치 설정 zipRadius).")] protected float zipRadius = 8f;
@@ -61,7 +70,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     [Header("5차 붙기 표시(생성 도구가 연결)")]
     [SerializeField, Tooltip("Player → 선택 대상 직선(흐르는 점선, 실행 중 다시 그림).")] protected MeshFilter aimLine;
     [SerializeField] protected Renderer[] aimLineLights = Array.Empty<Renderer>();
-    [SerializeField, Tooltip("표적 괄호 4개 묶음(원점 = 대상 매달림 몸 중심, 이동·회전만).")] protected Transform aimBrackets;
+    [SerializeField, Tooltip("표적 괄호 4개 묶음(원점 = 표시 기준점 G — 크레인의 잡는 부분, 이동·회전만).")] protected Transform aimBrackets;
     [SerializeField] protected Renderer[] aimBracketLights = Array.Empty<Renderer>();
 
     [Header("5차 붙기 이동 연출(생성 도구가 연결)")]
@@ -87,7 +96,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     [SerializeField, Min(0f)] protected float aimGap = .18f;
     [SerializeField, Min(0f), Tooltip("점선이 크레인 쪽으로 흐르는 속도(칸/초).")] protected float aimFlow = 3f;
     [SerializeField, Min(0f), Tooltip("직선 시작을 몸 중심에서 띄우는 거리(칸).")] protected float aimStartGap = .55f;
-    [SerializeField, Min(0f), Tooltip("직선 끝을 대상 중심(표적 괄호 안쪽)에서 띄우는 거리(칸).")] protected float aimEndGap = .8f;
+    // 6차 T4: 직선 끝 여백(aimEndGap)은 없앴다 — 직선은 표적 괄호 상자 가장자리에서 끝난다.
     [SerializeField, Min(0f)] protected float bracketSpin = 30f;          // 도/초(선택됐을 때만)
     [SerializeField, Min(0f)] protected float candidateLevel = .3f;       // 반경 안이지만 선택되지 않은 크레인의 표적 괄호 밝기
     [SerializeField, Min(0f)] protected float focusLevel = .9f;
@@ -164,9 +173,13 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     public float AimLevel { get; private set; }
     public Vector2 AimStart { get; private set; }
     public Vector2 AimEnd { get; private set; }
-    /// <summary>5차: 표적 괄호 밝기·중심(월드, 검사용).</summary>
+    /// <summary>5차: 표적 괄호 밝기·중심(월드, 검사용). 6차 T4: 중심 = 표시 기준점 G.</summary>
     public float BracketLevel { get; private set; }
     public Vector2 BracketCenter => aimBrackets != null ? (Vector2)aimBrackets.position : Vector2.zero;
+    /// <summary>6차 T4: 표적 괄호 상자 반폭·반높이(종류별 — 고정 ±1.2 × ±1.2(7차 V11 — 커진 고리), 경로·도크 ±1.25 × ±0.6).</summary>
+    public Vector2 BracketHalfSize => AimFrameHalf;
+    /// <summary>6차 T4: 이 크레인 자신의 표시 기준점 G(월드 — 잡는 부분, 검사용).</summary>
+    public Vector2 AimPointNow => AimPoint;
     /// <summary>5차: 견인 띠가 보이는지·섬광 횟수·속도선 수(검사용).</summary>
     public bool TowShown => towShown;
     public int LaunchFlashes { get; private set; }
@@ -192,6 +205,8 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     protected bool Usable => use == FacilityUse.Anytime || powered;
     /// <summary>쓸 수 있는 시점인지(살아 있음·켜짐·전원·사용 시점 허락 — 단계와 무관). 경로 크레인의 도크 호출 지점이 쓴다.</summary>
     protected bool ReadyToServe => isLive && isActiveAndEnabled && Usable && FacilityAccess.Allows(use);
+    /// <summary>6차 T5: Player가 이 크레인으로 붙어 오는 중인지(BeginZipIn ~ EndZipIn — 그동안 크레인을 다른 도크로 옮기지 않는다).</summary>
+    protected bool ZipIncoming => incoming != null;
 
     public void SetZipFocus(bool on)
     {
@@ -329,6 +344,18 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         SetZipFocus(false);
         incoming = null;
     }
+
+    // 6차: 대여 중(isLive)에 꺼졌다가 다시 켜지면(방 보류 등 — 풀 반환은 OnPropReturning이 먼저 isLive를 끈다) OnDisable이 내린 붙기 목록에 다시 올린다.
+    // 처음 켜질 때·풀에서 다시 나올 때는 OnPropSpawned가 올린다.
+    protected virtual void OnEnable()
+    {
+        if (!isLive || !Application.isPlaying) return;
+        FacilityZip.Register(this);
+        OnReenabled();
+    }
+
+    /// <summary>6차: 대여 중 다시 켜졌을 때 파생 시설의 추가 등록(경로 크레인은 도크 호출 지점).</summary>
+    protected virtual void OnReenabled() { }
 
     protected virtual void OnDestroy()
     {
@@ -614,15 +641,28 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         return (Vector2)shown + body.center - (Vector2)player.transform.position;
     }
 
-    // ── 직선·표적 괄호(5차 S6) ─────────────────────────────
+    // ── 직선·표적 괄호(5차 S6 · 6차 T4) ─────────────────────────────
 
     /// <summary>
-    /// 이 크레인이 지금 그릴 선택 표시(중심 = 대상 매달림 몸 중심, 밝기). 선택된 크레인 자신은 0.9(확정 대기 1.6), 파생(경로 크레인)은 선택된 도크 호출 지점을 그린다.
-    /// 없으면 false.
+    /// 6차 T4: 이 크레인 자신의 표시 기준점 G(월드 — 크레인의 잡는 부분). 판정·이동 목표와 무관하다(붙기 반경·점수·이동은 매달림 몸 중심).
+    /// 기본 = 매달림 몸 중심(파생이 고리 중심·머리 중심으로 바꾼다).
     /// </summary>
-    protected virtual bool TryAimTarget(out Vector2 center, out float level)
+    protected virtual Vector2 AimPoint => ZipFeet + Vector2.up * BodyHalfHeight;
+
+    /// <summary>6차 T4: 표적 괄호 상자 반폭·반높이(생성 도구가 같은 값으로 괄호 Mesh를 굽는다).</summary>
+    protected virtual Vector2 AimFrameHalf => new Vector2(.8f, .8f);
+
+    /// <summary>6차 T4: 선택된 동안 표적 괄호가 도는지(직사각형 괄호는 돌리지 않는다 — 직선 끝이 상자 가장자리에 맞게).</summary>
+    protected virtual bool BracketSpins => true;
+
+    /// <summary>
+    /// 이 크레인이 지금 그릴 선택 표시(center = 표시 기준점 G, half = 괄호 상자 반크기, 밝기). 선택된 크레인 자신은 0.9(확정 대기 1.6),
+    /// 파생(경로 크레인)은 선택된 도크 호출 지점을 그린다. 없으면 false.
+    /// </summary>
+    protected virtual bool TryAimTarget(out Vector2 center, out Vector2 half, out float level)
     {
-        center = ZipFeet + Vector2.up * BodyHalfHeight;
+        center = AimPoint;
+        half = AimFrameHalf;
         level = 0f;
         if (!focused || incoming != null || IsRiding) return false;
         var runner = FacilityZip.Runner;
@@ -630,26 +670,39 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         return true;
     }
 
-    // 여백을 줄인 뒤에도 남길 직선 최소 길이(칸). 이보다 가까우면 표적 괄호만 보인다.
+    // 여백을 줄인 뒤에도 남길 직선 최소 길이(칸). 괄호 상자 밖 길이가 이보다 짧으면 표적 괄호만 보인다.
     private const float MinAimLength = .35f;
+
+    /// <summary>
+    /// 6차 T4: G에서 dir 반대쪽(몸 쪽)으로 가다 반크기 half 상자 가장자리를 만나는 거리 t = min(hx/|dx|, hy/|dy|). 몸 중심 → G 선의 끝을 G − dir × t에 둔다.
+    /// </summary>
+    public static float FrameEdge(Vector2 dir, Vector2 half)
+    {
+        float tx = Mathf.Abs(dir.x) > 1e-5f ? half.x / Mathf.Abs(dir.x) : float.MaxValue;
+        float ty = Mathf.Abs(dir.y) > 1e-5f ? half.y / Mathf.Abs(dir.y) : float.MaxValue;
+        float t = Mathf.Min(tx, ty);
+        return t < float.MaxValue ? t : 0f;
+    }
 
     private void DrawAim(float dt)
     {
         var runner = FacilityZip.Runner;
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
         bool shown = runner != null && runner.CandidatesShown && player != null;
-        if (shown && TryAimTarget(out var center, out float level))
+        if (shown && TryAimTarget(out var center, out var half, out float level))
         {
             Vector2 body = ShownBodyCenter(player);
             Vector2 delta = center - body;
             float distance = delta.magnitude;
             Vector2 dir = distance > 1e-4f ? delta / distance : Vector2.right;
-            // 대상이 가까우면(도크 바로 아래 등) 앞뒤 여백을 비율대로 줄여 짧은 직선이라도 남긴다(최소 길이 MinAimLength).
-            float gaps = aimStartGap + aimEndGap, fit = gaps > 1e-4f ? Mathf.Clamp01((distance - MinAimLength) / gaps) : 1f;
-            Vector2 from = body + dir * (aimStartGap * fit), to = center - dir * (aimEndGap * fit);
+            // 6차 T4: 직선 끝 = 표적 괄호 상자 가장자리. 상자 밖 길이(reach)가 짧으면 시작 여백부터 줄여 최소 길이 MinAimLength를 남긴다.
+            float edge = FrameEdge(dir, half);
+            float reach = distance - edge;
+            float startGap = Mathf.Clamp(reach - MinAimLength, 0f, aimStartGap);
+            Vector2 from = body + dir * startGap, to = center - dir * edge;
             bool locked = level >= lockedLevel - 1e-3f;
             aimOffset += aimFlow * dt;
-            if (aimLine != null && Vector2.Dot(to - from, dir) > .1f && distance > MinAimLength)
+            if (aimLine != null && reach - startGap >= MinAimLength - 1e-4f)
             {
                 var space = aimLine.transform;
                 if (aimMeshName == null) aimMeshName = name + "_AimLine";
@@ -663,17 +716,17 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
                 aimLamp?.Set(level);
             }
             else HideAimLine();
-            PlaceBrackets(center, level, locked ? 0f : bracketSpin * dt);
+            PlaceBrackets(center, level, locked || !BracketSpins ? 0f : bracketSpin * dt);
             return;
         }
         HideAimLine();
-        // 반경 안이지만 선택되지 않은 크레인: 흐린 표적 괄호만(회전 없음).
+        // 반경 안이지만 선택되지 않은 크레인: 흐린 표적 괄호만(회전 없음). 반경은 매달림 몸 중심 기준, 괄호 자리는 G(6차 T4).
         if (shown && !AnyFocus && ZipAvailable && incoming == null && !IsRiding)
         {
             Vector2 own = ZipFeet + Vector2.up * BodyHalfHeight;
             if (Vector2.Distance(FacilityAccess.BodyRect(player).center, own) <= activeRadius)
             {
-                PlaceBrackets(own, candidateLevel, 0f);
+                PlaceBrackets(AimPoint, candidateLevel, 0f);
                 return;
             }
         }
@@ -721,7 +774,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         t.position = new Vector3(at.x, at.y, t.position.z);
     }
 
-    /// <summary>키 안내 자리(월드). 기본 = 매달린 발 + 0.1(경로 크레인은 케이지 안·선택된 도크, 고정 크레인은 고리 안).</summary>
+    /// <summary>키 안내 자리(월드). 기본 = 매달린 발 + 0.1(6차: 경로 크레인은 머리 바로 아래·선택된 도크의 같은 자리, 고정 크레인은 고리 안).</summary>
     protected virtual Vector2 PromptPoint => ZipFeet + Vector2.up * .1f;
 
     // ── 와이어·견인 띠(5차 S5) ─────────────────────────────
@@ -854,7 +907,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         activeRadius = WaveDeviceSettings.Value(overrides, RadiusParameter);
     }
 
-    /// <summary>격자 Tool 범위 미리보기: 붙기 반경 원(중심 = 매달림 몸 중심, 청록 — 편집기용이라 5차에도 유지).</summary>
+    /// <summary>격자 Tool 범위 미리보기: 붙기 반경 원(중심 = 집 발의 매달림 몸 중심, 청록 — 편집기용이라 5차에도 유지. 7차 V11: 고정 크레인은 재정의로 고리 중심).</summary>
     public virtual bool TryGetPropRange(WaveDeviceSetting[] overrides, out WaveDeviceRange range)
     {
         float radius = WaveDeviceSettings.Value(overrides, RadiusParameter);

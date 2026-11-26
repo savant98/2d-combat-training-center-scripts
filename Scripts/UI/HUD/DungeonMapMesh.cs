@@ -25,12 +25,20 @@ using UnityEngine.UI;
 ///   그 출입구를 가리키는 겹 화살. 미니맵이 이 층을 CanvasRenderer 알파로 맥동시킨다.
 /// - 5차(2026-11-25, DESIGN_V5 §1 S9): 표식을 셀 크기와 무관한 고정 크기 '배지형 픽토그램'(미니맵 11~16px·큰 지도 12~20px — <see cref="BadgeSide"/>)으로 바꿨다.
 ///   어두운 바탕 → 역할 색 테두리 → 밝은 안쪽 그림: 출입구 관(플랜지·열림 겹 꺾쇠·잠김 셔터·봉인 줄무늬 + 이웃 방 정보 점)·텔레포트 링·레버(배전반 손잡이)·
-///   출구(문틀 + 램프 = 레버 수)·수리대(흰 배지 + 초록 십자)·경로 크레인(훅 + 점선 경로 + 양 끝 도크)·고정 크레인(고리 + 사슬)·점프대(받침 + 겹 꺾쇠).
-///   크레인·점프대는 기능부 파랑(WAVE_ENVIRONMENT_DESIGN 중립 기능). 함정·적은 그리지 않는다. Player 표식은 빛 고리 + 바라보는 쪽 꼬리(<see cref="WritePlayerMarker"/>),
-///   핑 고리(<see cref="WritePing"/>), 큰 지도 지금 방 맥동 테두리·꺾쇠·표지 삼각형·화면 밖 화살(<see cref="WriteCurrentFrame"/>), 범례 9칸.
+///   출구(문틀 + 램프 = 레버 수)·수리대(흰 배지 + 초록 십자)·점프대(받침 + 겹 꺾쇠).
+///   점프대는 기능부 파랑(WAVE_ENVIRONMENT_DESIGN 중립 기능). 함정·적은 그리지 않는다. Player 표식은 빛 고리 + 바라보는 쪽 꼬리(<see cref="WritePlayerMarker"/>),
+///   핑 고리(<see cref="WritePing"/>), 큰 지도 지금 방 맥동 테두리·꺾쇠·표지 삼각형·화면 밖 화살(<see cref="WriteCurrentFrame"/>).
 ///   원·고리는 정적 단위 원 표로 그린다(할당 없음). Mesh는 지금처럼 SetVerticesDirty 때만 만든다.
 ///   출구 안내 층도 같은 기하를 따른다 — 출구는 배지 안 문틀만 밝히고 배지 + 램프 줄 자리(<see cref="ExitMarkBounds"/>)를, 출입구는 관 + 플랜지 + 꺾쇠 + 이웃 방 정보 점 자리
 ///   (<see cref="DoorMarkBounds"/>)를 여백을 두고 둘러싼다(표식 위에 테두리·옛 크기 그림을 덮어 그리지 않음).
+/// - 7차(2026-11-26, DESIGN_V7 §1.3·§1.4·§1.6):
+///   V2: 경로 크레인·고정 크레인 표식(훅·점선 경로·도크·고리)을 HUD 미니맵·큰 지도 모두에서 그리지 않는다. 표식 데이터(CranePath·CraneAnchor·cranePaths)는
+///   계약 그대로 남고(DungeonPlayRegression cranesOk), 지도에서만 빈 case로 건너뛴다('그 밖의 시설' 점으로 떨어지지 않게). 범례는 7칸(현재 방·잠긴 출입구·텔레포트·
+///   수리대·레버·출구·현재 위치).
+///   V4: 큰 지도 지금 방 = 주황 공기(<see cref="Style.currentAir"/>)·주황 벽(<see cref="Style.floorCurrentWall"/>) + 흰 Current 층(<see cref="Style.currentFrame"/> — 맥동 테두리·
+///   꺾쇠·표지·화면 밖 화살). 난이도 '상급' 주황(#FF8C1F)과 색이 겹치므로 흰 꺾쇠 모양으로 구분한다. 지금 방 안의 미클리어 점은 그리지 않는다.
+///   확대·축소: <see cref="FitFloor"/>의 선택 인자 zoomPitch(0이면 지금과 같음)와 단계 pitch 계산(<see cref="FullPitch"/>·<see cref="ZoomPitch"/>).
+///   V6: 현장 단말기 정보 판이 지도와 같은 레버·출구 배지를 그리도록 공개 감싸기 <see cref="WriteObjectiveBadge"/>를 둔다(기하·색 그대로).
 /// </summary>
 public static class DungeonMapMesh
 {
@@ -89,8 +97,13 @@ public static class DungeonMapMesh
         public Color32 roomAir = new Color32(20, 70, 86, 205);
         public Color32 roomWall = new Color32(43, 200, 226, 255);         // #2bc8e2
         public Color32 oneWayLine = new Color32(200, 250, 255, 255);
-        /// <summary>큰 지도: 현재 방 공기(밝은 청록, 반투명). 방문 방은 visitedFill, 벽은 currentLine/visitedLine/knownLine.</summary>
-        public Color32 currentAir = new Color32(64, 214, 236, 150);
+        /// <summary>
+        /// 큰 지도: 현재 방 공기. 7차 V4(사용자 지정): 주황 #FF8A1E 반투명(선형 블렌딩에서 진하게 보여 α150 → 120 — 판단값). 방문 방은 floorVisitedFill,
+        /// 벽은 floorCurrentWall(지금 방)/visitedLine/knownLine.
+        /// </summary>
+        public Color32 currentAir = new Color32(255, 138, 30, 120);
+        /// <summary>7차 V4: 큰 지도 지금 방 벽(밝은 주황 #FFA040). HUD 단위 칸 배치도(WriteMap)의 currentLine은 그대로 청록이다.</summary>
+        public Color32 floorCurrentWall = new Color32(255, 160, 64, 255);
         /// <summary>출입구 상태: 열림(밝은 청록 + 바깥 화살)·잠김(빨강 채움)·봉인(빨강 테두리).</summary>
         public Color32 doorOpen = new Color32(143, 244, 255, 235);
         public Color32 doorLocked = new Color32(255, 90, 60, 255);       // #ff5a3c(위험 빨강)
@@ -101,7 +114,7 @@ public static class DungeonMapMesh
         /// <summary>4차 출구 문: 열린 문 안쪽 빛(밝은 앰버)·안내 화살과 테두리.</summary>
         public Color32 exitGlow = new Color32(255, 231, 179, 230);
         public Color32 exitGuide = new Color32(255, 196, 72, 255);
-        /// <summary>그 밖의 시설(크레인·컨베이어 등 — 4차에 승강기 삭제) 작은 점.</summary>
+        /// <summary>그 밖의 시설(컨베이어 등 — 4차에 승강기 삭제, 7차 V2 크레인은 그리지 않음) 작은 점.</summary>
         public Color32 facility = new Color32(170, 240, 255, 220);
         /// <summary>Player 표식: 흰 마름모 + 청록 테두리.</summary>
         public Color32 player = new Color32(255, 255, 255, 255);
@@ -111,14 +124,11 @@ public static class DungeonMapMesh
         /// <summary>큰 지도 출입구 연결선 두께(px).</summary>
         public float connectorWidth = 2f;
 
-        // 5차(2026-11-25, DESIGN_V5 S9): 배지형 픽토그램·크레인·점프대·이웃 방 정보 점·큰 지도 지금 방·Player 강조
+        // 5차(2026-11-25, DESIGN_V5 S9): 배지형 픽토그램·점프대·이웃 방 정보 점·큰 지도 지금 방·Player 강조(7차 V2: 크레인 표식 색 삭제)
         /// <summary>배지 바탕(어두운 판)과 수리대 배지의 바깥 어두운 테두리.</summary>
         public Color32 badgeBack = new Color32(6, 14, 24, 235);
         public Color32 badgeEdge = new Color32(2, 6, 12, 255);
-        /// <summary>크레인 표식(기능부 파랑 — WAVE_ENVIRONMENT_DESIGN '중립 기능')·경로 점선·도크.</summary>
-        public Color32 crane = new Color32(92, 168, 255, 255);
-        public Color32 cranePath = new Color32(120, 186, 255, 200);
-        /// <summary>점프대 표식(중립 기능 파랑, 크레인보다 밝은 하늘색).</summary>
+        /// <summary>점프대 표식(중립 기능 파랑 — WAVE_ENVIRONMENT_DESIGN '중립 기능', 밝은 하늘색).</summary>
         public Color32 jumpPad = new Color32(120, 204, 255, 255);
         /// <summary>수리대 배지 판(흰 계열).</summary>
         public Color32 repairPlate = new Color32(226, 255, 234, 255);
@@ -132,8 +142,8 @@ public static class DungeonMapMesh
         public Color32 neighborUnknown = new Color32(120, 160, 172, 170);
         /// <summary>큰 지도: 지금 방이 아닌 방문 방 채움(지금 방이 더 돋보이게 α205 → 170).</summary>
         public Color32 floorVisitedFill = new Color32(26, 92, 110, 170);
-        /// <summary>큰 지도 지금 방 맥동 테두리·꺾쇠·표지 삼각형·화면 밖 화살.</summary>
-        public Color32 currentFrame = new Color32(143, 244, 255, 255);
+        /// <summary>큰 지도 지금 방 맥동 테두리·꺾쇠·표지 삼각형·화면 밖 화살. 7차 V4: 흰색 #F4F8FF(주황 방 위에서 모양으로 구분).</summary>
+        public Color32 currentFrame = new Color32(244, 248, 255, 255);
         public float currentFrameWidth = 3f, currentBracket = 14f, currentBracketWidth = 3f;
         /// <summary>Player 빛 고리(반투명 원판 + 밝은 테두리)·바라보는 쪽 꼬리·핑 고리.</summary>
         public Color32 playerHalo = new Color32(43, 200, 226, 80);
@@ -142,8 +152,6 @@ public static class DungeonMapMesh
         /// <summary>배지 한 변(px) = clamp(셀 px × 배율, 최소, 최대). 미니맵 11~16, 큰 지도 12~20.</summary>
         public float miniBadgeScale = 1.8f, miniBadgeMin = 11f, miniBadgeMax = 16f;
         public float floorBadgeScale = 4f, floorBadgeMin = 12f, floorBadgeMax = 20f;
-        /// <summary>크레인 훅·경로를 매달린 발보다 올려 그리는 칸 수(매달린 몸 가운데쯤). 도크는 발 높이.</summary>
-        public float craneLift = 2f;
 
         public static readonly Style Default = new Style();
     }
@@ -1178,8 +1186,8 @@ public static class DungeonMapMesh
         public int teleports, repairs, objectives, objectivesDone, facilities;
         /// <summary>4차: 출구 문 표식 수·그중 열린 것.</summary>
         public int exits, exitsOpen;
-        /// <summary>5차: 경로 크레인·고정 크레인·점프대 배지 수, 그린 도크 수(경로 하나에 양 끝 2).</summary>
-        public int cranePaths, craneAnchors, jumpPads, docks;
+        /// <summary>5차: 점프대 배지 수(7차 V2: 크레인 배지·도크는 그리지 않아 통계도 없앴다).</summary>
+        public int jumpPads;
         /// <summary>5차: 출입구 이웃 방 정보 점(전체·보스·방문 미클리어·클리어·미방문).</summary>
         public int neighborDots, neighborBoss, neighborOpen, neighborClear, neighborUnknown;
         /// <summary>5차: 출구 램프(전체·켜진 것).</summary>
@@ -1202,8 +1210,8 @@ public static class DungeonMapMesh
     /// 지금 방 표식(5차 S9 — 셀 크기와 무관한 고정 크기 배지형 픽토그램, 셀 2.3~9px 방에서도 11~16px):
     /// 연결된 출입구(실제 크기 2×3칸·최소 6×10px, 관 입구 플랜지 + 열림 = 밝은 청록 관 + 바깥 겹 꺾쇠, 잠김 = 빨강 몸통 + 셔터 줄 + 볼트, 봉인 = 빨강 테두리 + 경고 줄무늬;
     /// rooms가 있으면 출입구 위 이웃 방 정보 점), 텔레포트 링(짝 없으면 흐림 + 사선), 수리대(흰 배지 + 초록 십자), 레버(배전반 손잡이 — 완료 = 앰버 채움 + 녹색 표시등,
-    /// rooms로 본 이 방이 미클리어면 흐림), 출구 문(문틀·볼트 + 위쪽 램프 = 레버 수·켜진 램프 = 완료 수, <see cref="ExitOpen"/>), 경로 크레인(훅 배지 + 점선 경로 + 양 끝 도크 —
-    /// <see cref="DungeonRoomDetail.cranePaths"/>), 고정 크레인(고리 + 사슬), 점프대(받침 + 겹 꺾쇠), 그 밖의 시설(작은 점).
+    /// rooms로 본 이 방이 미클리어면 흐림), 출구 문(문틀·볼트 + 위쪽 램프 = 레버 수·켜진 램프 = 완료 수, <see cref="ExitOpen"/>), 점프대(받침 + 겹 꺾쇠), 그 밖의 시설(작은 점).
+    /// 7차 V2: 경로 크레인·고정 크레인 표식은 그리지 않는다(빈 case — '그 밖의 시설' 점으로도 떨어지지 않는다. 데이터는 계약대로 남는다).
     /// 배지는 영역 안으로 붙잡는다(잘리지 않게). states가 없으면 출입구는 열림으로 본다.
     /// </summary>
     public static RoomMarkStats WriteRoomMarks(VertexHelper vh, DungeonRoomDetail detail, IDungeonDetailSource states, IReadOnlyList<DungeonObjectiveMarker> objectives,
@@ -1216,7 +1224,6 @@ public static class DungeonMapMesh
         var ctx = new Ctx(vh, area, default);
         float cell = view.cell;
         float side = BadgeSide(cell, false, style), half = side * .5f;
-        var lift = new Vector2(0f, style.craneLift);
         if (drawDoors && detail.doors != null)
             foreach (var door in detail.doors)
             {
@@ -1264,11 +1271,8 @@ public static class DungeonMapMesh
                         }
                         break;
                     case DungeonDetailMarkerKind.CranePath:
-                        stats.docks += CranePathTrack(ref ctx, detail, point.index, view, side, style);
-                        if (CraneHookBadge(ref ctx, ClampBadge(area, view.ToScreen(point.local + lift), half), side, style)) { stats.cranePaths++; NoteBadge(ref stats.minBadge, side); }
-                        break;
                     case DungeonDetailMarkerKind.CraneAnchor:
-                        if (CraneAnchorBadge(ref ctx, ClampBadge(area, view.ToScreen(point.local + lift), half), side, style)) { stats.craneAnchors++; NoteBadge(ref stats.minBadge, side); }
+                        // 7차 V2: 크레인은 지도에 그리지 않는다(빈 case를 남겨 default의 '그 밖의 시설' 점으로 떨어지지 않게 한다).
                         break;
                     case DungeonDetailMarkerKind.JumpPad:
                         if (JumpPadBadge(ref ctx, ClampBadge(area, c, half), side, style)) { stats.jumpPads++; NoteBadge(ref stats.minBadge, side); }
@@ -1743,28 +1747,25 @@ public static class DungeonMapMesh
         return true;
     }
 
-    // 경로 크레인 훅: 트롤리 막대(위) + 줄 + J자 훅(기능부 파랑).
-    private static bool CraneHookBadge(ref Ctx ctx, Vector2 c, float side, Style style)
+    /// <summary>
+    /// 7차 V6: 현장 단말기 정보 판(DungeonTerminalGaugeGraphic)이 쓰는 레버·출구 배지 — 지도·미니맵·범례와 같은 기하·색(<see cref="LeverBadge"/>·<see cref="ExitBadge"/>)을
+    /// 그대로 그리는 공개 감싸기다. kind = <see cref="DungeonDetailMarkerKind.Objective"/>(레버: done = 완료, ready = 쓸 수 있음/발견 — 거짓이면 흐린 앰버) 또는
+    /// <see cref="DungeonDetailMarkerKind.Exit"/>(출구: open = 해금, 램프 = total개 중 doneCount개 켬). 정점은 area 안으로 잘린다(영역 밖이면 그리지 않는다). 그린 정점 수.
+    /// </summary>
+    public static int WriteObjectiveBadge(VertexHelper vh, Rect area, Vector2 c, float side, DungeonDetailMarkerKind kind, bool done, bool ready, bool open,
+                                          int doneCount, int total, Style style = null)
     {
-        if (!BadgeBase(ref ctx, c, side, style.crane, style)) return false;
-        float i = BadgeInner(side), t = Mathf.Max(1f, i * .26f);
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - i * .8f, c.y + i * .55f, c.x + i * .8f, c.y + i * .55f + t), style.crane);
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - t * .5f, c.y - i * .55f, c.x + t * .5f, c.y + i * .55f), style.crane);
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - i * .6f, c.y - i * .55f - t, c.x + t * .5f, c.y - i * .55f), style.crane);
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - i * .6f, c.y - i * .55f - t, c.x - i * .6f + t, c.y - i * .15f), style.crane);
-        return true;
-    }
-
-    // 고정 크레인: 천장 틱 + 사슬 2마디 + 아래 큰 고리(케이지 없음 — S3 '막대 끝 O').
-    private static bool CraneAnchorBadge(ref Ctx ctx, Vector2 c, float side, Style style)
-    {
-        if (!BadgeBase(ref ctx, c, side, style.crane, style)) return false;
-        float i = BadgeInner(side), t = Mathf.Max(1f, i * .24f);
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - i * .7f, c.y + i * .75f, c.x + i * .7f, c.y + i * .75f + t), style.crane);
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - t * .5f, c.y + i * .42f, c.x + t * .5f, c.y + i * .72f), style.crane);
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - t * .5f, c.y + i * .08f, c.x + t * .5f, c.y + i * .36f), style.crane);
-        RingPoly(ref ctx, c + new Vector2(0f, -i * .4f), i * .5f, Mathf.Max(1f, i * .22f), Oct, style.crane);
-        return true;
+        style ??= Style.Default;
+        if (vh == null || side < 4f) return 0;
+        int start = vh.currentVertCount;
+        var ctx = new Ctx(vh, area, default);
+        if (kind == DungeonDetailMarkerKind.Exit)
+        {
+            int lamps = 0, lit = 0;
+            ExitBadge(ref ctx, c, side, open, Mathf.Max(0, doneCount), Mathf.Max(0, total), style, ref lamps, ref lit);
+        }
+        else LeverBadge(ref ctx, c, side, done, ready, style);
+        return vh.currentVertCount - start;
     }
 
     // 점프대: 받침 막대 + 위로 겹 꺾쇠(^^).
@@ -1781,29 +1782,6 @@ public static class DungeonMapMesh
             Line(ref ctx, tip, new Vector2(c.x + i * .55f, y), t, style.jumpPad);
         }
         return true;
-    }
-
-    // 경로 크레인 경로: 매달린 발 + craneLift 높이의 점선(경로점 사이) + 양 끝 도크(발 높이의 작은 판). 그린 도크 수.
-    private static int CranePathTrack(ref Ctx ctx, DungeonRoomDetail detail, int index, RoomView view, float side, Style style)
-    {
-        var paths = detail != null ? detail.cranePaths : null;
-        if (paths == null || index < 0 || index >= paths.Length) return 0;
-        var path = paths[index];
-        if (path == null || path.Length < 2) return 0;
-        var lift = new Vector2(0f, style.craneLift);
-        float dash = Mathf.Max(2.5f, view.cell * .9f), gap = Mathf.Max(1.5f, view.cell * .6f);
-        for (int k = 0; k + 1 < path.Length; k++)
-            DashedLine(ref ctx, view.ToScreen(path[k] + lift), view.ToScreen(path[k + 1] + lift), 1.4f, dash, gap, style.cranePath);
-        return Dock(ref ctx, view.ToScreen(path[0]), side, style) + Dock(ref ctx, view.ToScreen(path[path.Length - 1]), side, style);
-    }
-
-    // 도크(승강장): 발 높이의 가로 판 + 가운데 기둥 표시.
-    private static int Dock(ref Ctx ctx, Vector2 c, float side, Style style)
-    {
-        float w = Mathf.Max(3f, side * .32f), t = Mathf.Max(1.2f, side * .12f);
-        if (!AddClipped(ref ctx, Rect.MinMaxRect(c.x - w, c.y - t, c.x + w, c.y), style.crane)) return 0;
-        AddClipped(ref ctx, Rect.MinMaxRect(c.x - t * .5f, c.y, c.x + t * .5f, c.y + w * .6f), style.cranePath);
-        return 1;
     }
 
     // 출입구 위(자리가 없으면 아래)의 이웃 방 정보 점: 클리어 = 초록, 보스(미클리어) = 빨간 마름모, 방문·미클리어 = 주황, 미방문 = 흐림.
@@ -2059,14 +2037,13 @@ public static class DungeonMapMesh
         }
     }
 
-    /// <summary>그릴 방(알게 됐거나 들어가 본 방, revealAll이면 전부)의 범위를 영역에 맞춘다. 넘치면 현재 방을 따라가되 끝이 안쪽으로 들어오지 않게. pan은 단위 공간 이동량.</summary>
-    public static FloorView FitFloor(FloorModel model, int currentRoom, Rect area, float padding, float minPitch, float maxPitch, Vector2 pan = default, bool revealAll = false)
+    // 그릴 방 범위(단위 공간)와 지금 방. 할당 없음(List 구조체 열거자).
+    private static bool TryFloorSpan(FloorModel model, int currentRoom, bool revealAll, out Rect span, out FloorRoom current)
     {
-        var view = new FloorView { center = Vector2.zero, pitch = Mathf.Max(1f, maxPitch), cellToUnit = model != null ? model.cellToUnit : .05f };
-        if (model == null) return view;
+        span = default;
+        current = null;
+        if (model == null) return false;
         bool any = false;
-        Rect span = default;
-        FloorRoom current = null;
         foreach (var e in model.rooms)
         {
             if (!IsDrawable(e.room, revealAll)) continue;
@@ -2075,10 +2052,48 @@ public static class DungeonMapMesh
             any = true;
             if (e.room.id == currentRoom) current = e;
         }
-        if (!any) return view;
+        return any;
+    }
+
+    /// <summary>
+    /// 7차 V4: '전체' 단계 pitch — 그릴 방 범위 전체가 영역(여백 padding)에 들어가는 pitch를 [minPitch, maxPitch]로 자른 값(<see cref="FitFloor"/>가 zoomPitch 0일 때 쓰는 값과 같다).
+    /// 그릴 방이 없으면 maxPitch.
+    /// </summary>
+    public static float FullPitch(FloorModel model, Rect area, float padding, float minPitch, float maxPitch, bool revealAll = false)
+    {
+        if (!TryFloorSpan(model, -1, revealAll, out var span, out _)) return Mathf.Max(1f, maxPitch);
+        float availW = Mathf.Max(1f, area.width - 2f * padding), availH = Mathf.Max(1f, area.height - 2f * padding);
+        float pitch = Mathf.Min(availW / Mathf.Max(.01f, span.width), availH / Mathf.Max(.01f, span.height));
+        return Mathf.Clamp(pitch, Mathf.Min(minPitch, maxPitch), maxPitch);
+    }
+
+    /// <summary>
+    /// 7차 V4: '확대' 단계 pitch — 지금 방 실루엣 범위가 영역 짧은 쪽의 share(기본 0.55)를 차지하는 pitch = share × min(가용 폭 / 방 폭, 가용 높이 / 방 높이)를
+    /// [fullPitch, max(fullPitch, maxPitch)]로 자른 값. 지금 방이 없으면 fullPitch. 순수 함수(할당 없음).
+    /// </summary>
+    public static float ZoomPitch(FloorModel model, int currentRoom, Rect area, float padding, float share, float maxPitch, float fullPitch)
+    {
+        fullPitch = Mathf.Max(1f, fullPitch);
+        var current = model != null ? model.Find(currentRoom) : null;
+        if (current == null || current.unitBounds.width <= 0f || current.unitBounds.height <= 0f) return fullPitch;
+        float availW = Mathf.Max(1f, area.width - 2f * padding), availH = Mathf.Max(1f, area.height - 2f * padding);
+        float pitch = Mathf.Clamp01(share) * Mathf.Min(availW / current.unitBounds.width, availH / current.unitBounds.height);
+        return Mathf.Clamp(pitch, fullPitch, Mathf.Max(fullPitch, maxPitch));
+    }
+
+    /// <summary>
+    /// 그릴 방(알게 됐거나 들어가 본 방, revealAll이면 전부)의 범위를 영역에 맞춘다. 넘치면 현재 방을 따라가되 끝이 안쪽으로 들어오지 않게. pan은 단위 공간 이동량.
+    /// 7차 V4: zoomPitch > 0이면 pitch = max(전체 맞춤 pitch, zoomPitch)(확대·축소 단계 — 0이면 지금과 같음). 초점·끝 규칙·pan 제한은 그대로다.
+    /// </summary>
+    public static FloorView FitFloor(FloorModel model, int currentRoom, Rect area, float padding, float minPitch, float maxPitch, Vector2 pan = default, bool revealAll = false,
+                                     float zoomPitch = 0f)
+    {
+        var view = new FloorView { center = Vector2.zero, pitch = Mathf.Max(1f, maxPitch), cellToUnit = model != null ? model.cellToUnit : .05f };
+        if (!TryFloorSpan(model, currentRoom, revealAll, out var span, out var current)) return view;
         float availW = Mathf.Max(1f, area.width - 2f * padding), availH = Mathf.Max(1f, area.height - 2f * padding);
         float pitch = Mathf.Min(availW / Mathf.Max(.01f, span.width), availH / Mathf.Max(.01f, span.height));
         pitch = Mathf.Clamp(pitch, Mathf.Min(minPitch, maxPitch), maxPitch);
+        if (zoomPitch > 0f) pitch = Mathf.Max(pitch, zoomPitch);
         Vector2 focus = current != null ? current.unitBounds.center : span.center;
         float halfW = availW * .5f / pitch, halfH = availH * .5f / pitch;
         var center = new Vector2(Axis(span.xMin, span.xMax, focus.x, halfW), Axis(span.yMin, span.yMax, focus.y, halfH));
@@ -2101,16 +2116,17 @@ public static class DungeonMapMesh
         /// <summary>4차: 출구 문 표식 수·그중 열린 것.</summary>
         public int exits, exitsOpen;
         public int bossMarks, startDots, unclearedDots, restMarks;
-        /// <summary>5차: 경로 크레인·고정 크레인·점프대 배지 수와 출구 램프 수.</summary>
-        public int cranePaths, craneAnchors, jumpPads, exitLamps;
+        /// <summary>5차: 점프대 배지 수와 출구 램프 수(7차 V2: 크레인 배지 통계 삭제).</summary>
+        public int jumpPads, exitLamps;
         public int clipped;
     }
 
     /// <summary>
     /// 큰 지도를 쓴다: 방 실루엣(현재 = 밝은 청록 채움 + 밝은 벽, 방문 = 중간 채움 + 청록 벽, 알게 된 미방문 = 흐린 벽만, 봉인 = 빨간 벽, 모름 = 안 그림)
     /// → 출입구끼리 꺾인 연결선(둘 다 방문 = 밝게, 잠김·봉인 = 빨강) → 텔레포트 연결(파란 점선) → 표식(텔레포트·수리대·목표·출구 문(4차)·보스·시작·미클리어).
-    /// 5차: 지금 방이 아닌 방문 방 채움은 floorVisitedFill(α170 — 지금 방이 더 돋보이게), 표식은 배지형 픽토그램(12~20px)에 경로 크레인(점선 경로·도크)·고정 크레인·점프대를 더한다.
+    /// 5차: 지금 방이 아닌 방문 방 채움은 floorVisitedFill(α170 — 지금 방이 더 돋보이게), 표식은 배지형 픽토그램(12~20px)에 점프대를 더한다.
     /// 배지가 영역 밖으로 나가면 그리지 않는다(지도 이동 중 가장자리에 쌓이지 않게).
+    /// 7차: 지금 방 = 주황 공기(currentAir) + 주황 벽(floorCurrentWall), 지금 방 안 미클리어 점은 그리지 않는다(V4). 크레인 표식은 그리지 않는다(V2).
     /// </summary>
     public static FloorMapStats WriteFloorMap(VertexHelper vh, FloorModel model, int currentRoom, Rect area, FloorView view, IDungeonDetailSource states,
                                               IReadOnlyList<DungeonObjectiveMarker> objectives, Style style = null, bool revealAll = false)
@@ -2131,7 +2147,7 @@ public static class DungeonMapMesh
             bool filled = current || e.room.visited || revealAll;
             if (filled) stats.filledRooms++; else stats.outlineOnlyRooms++;
             Color32 air = current ? style.currentAir : filled ? style.floorVisitedFill : new Color32(0, 0, 0, 0);
-            Color32 wall = e.room.sealedRoom ? style.boss : current ? style.currentLine : filled ? style.visitedLine : style.knownLine;
+            Color32 wall = e.room.sealedRoom ? style.boss : current ? style.floorCurrentWall : filled ? style.visitedLine : style.knownLine;
             Color32 oneWay = filled ? style.oneWayLine : new Color32(0, 0, 0, 0);
             WriteSilhouette(vh, e.silhouette, area, view.RoomViewFor(area, e), air, wall, oneWay, style, ref clipped);
         }
@@ -2195,7 +2211,6 @@ public static class DungeonMapMesh
         // 4. 표식(5차: 배지형 픽토그램)
         ObjectiveCounts(states, objectives, out int objectiveDone, out int objectiveTotal);
         float side = BadgeSide(scale, true, style);
-        var lift = new Vector2(0f, style.craneLift);
         int lamps = 0, lit = 0;
         foreach (var e in model.rooms)
         {
@@ -2221,13 +2236,7 @@ public static class DungeonMapMesh
                             bool open = ExitOpen(states);
                             if (ExitBadge(ref ctx, c, side, open, objectiveDone, objectiveTotal, style, ref lamps, ref lit)) { stats.exits++; if (open) stats.exitsOpen++; }
                             break;
-                        case DungeonDetailMarkerKind.CranePath:
-                            CranePathTrack(ref ctx, e.detail, p.index, roomView, side, style);
-                            if (CraneHookBadge(ref ctx, roomView.ToScreen(p.local + lift), side, style)) stats.cranePaths++;
-                            break;
-                        case DungeonDetailMarkerKind.CraneAnchor:
-                            if (CraneAnchorBadge(ref ctx, roomView.ToScreen(p.local + lift), side, style)) stats.craneAnchors++;
-                            break;
+                        // 7차 V2: 경로 크레인·고정 크레인(CranePath·CraneAnchor)은 그리지 않는다(이 switch에는 default가 없다).
                         case DungeonDetailMarkerKind.JumpPad:
                             if (JumpPadBadge(ref ctx, c, side, style)) stats.jumpPads++;
                             break;
@@ -2247,7 +2256,8 @@ public static class DungeonMapMesh
             {
                 if (Cross(ref ctx, box.center, mark, Mathf.Max(1.5f, mark * .4f), style.rest)) stats.restMarks++;
             }
-            if (e.room.visited && !e.room.cleared && !revealAll)
+            // 7차 V4: 지금 방은 미클리어 점을 생략한다(자기가 있는 방 — 주황 공기 위에 주황 점이 겹친다).
+            if (e.room.visited && !e.room.cleared && !revealAll && e.room.id != currentRoom)
             {
                 float s = mark * .9f;
                 if (AddClipped(ref ctx, CenteredRect(new Vector2(box.xMax - s * 1.2f, box.yMax - s * 1.2f), s), style.unclearedDot)) stats.unclearedDots++;
@@ -2306,12 +2316,13 @@ public static class DungeonMapMesh
         AddClipped(ref ctx, Rect.MinMaxRect(Mathf.Min(b.x, mx) - h, b.y - h, Mathf.Max(b.x, mx) + h, b.y + h), tint);
     }
 
-    /// <summary>범례 칩 수(5차: 현재 방·잠긴 출입구·텔레포트·수리대·레버·출구·크레인 경로·크레인 고정·현재 위치).</summary>
-    public const int LegendChips = 9;
+    /// <summary>범례 칩 수(7차 V2: 현재 방·잠긴 출입구·텔레포트·수리대·레버·출구·현재 위치 — 크레인 2칸 삭제).</summary>
+    public const int LegendChips = 7;
 
     /// <summary>
-    /// 큰 지도 범례 칩(5차 9칸 — 현재 방·잠긴 출입구·텔레포트·수리대·레버·출구·크레인 경로·크레인 고정·현재 위치)을 왼쪽부터 spacing 간격으로 쓴다.
+    /// 큰 지도 범례 칩(7차 7칸 — 현재 방·잠긴 출입구·텔레포트·수리대·레버·출구·현재 위치)을 왼쪽부터 spacing 간격으로 쓴다.
     /// 칩 가운데 = 왼쪽 + 10 + i × spacing(글자는 생성 도구가 같은 간격에 둔 TMP). 오른쪽 끝을 넘는 칩은 그리지 않는다. 그린 칩 수.
+    /// 7차 V4: 현재 방 칩 = 주황 공기 + 주황 벽 + 흰 꺾쇠 4개(큰 지도 지금 방과 같은 모양).
     /// </summary>
     public static int WriteLegend(VertexHelper vh, Rect rect, float spacing, Style style = null)
     {
@@ -2327,9 +2338,22 @@ public static class DungeonMapMesh
             switch (i)
             {
                 case 0:
-                    drew = AddClipped(ref ctx, CenteredRect(c, s), style.currentAir);
-                    Outline(ref ctx, CenteredRect(c, s), 1.5f, style.currentFrame);
+                {
+                    var chip = CenteredRect(c, s - 4f);
+                    drew = AddClipped(ref ctx, chip, style.currentAir);
+                    Outline(ref ctx, chip, 1f, style.floorCurrentWall);
+                    // 흰 꺾쇠(칩 바깥 2px, 길이 5·굵기 1.5) — 큰 지도 Current 층과 같은 모양 언어
+                    float l = chip.xMin - 2f, r = chip.xMax + 2f, b = chip.yMin - 2f, t = chip.yMax + 2f, k = 5f, w = 1.5f;
+                    AddClipped(ref ctx, Rect.MinMaxRect(l, t - w, l + k, t), style.currentFrame);
+                    AddClipped(ref ctx, Rect.MinMaxRect(l, t - k, l + w, t - w), style.currentFrame);
+                    AddClipped(ref ctx, Rect.MinMaxRect(r - k, t - w, r, t), style.currentFrame);
+                    AddClipped(ref ctx, Rect.MinMaxRect(r - w, t - k, r, t - w), style.currentFrame);
+                    AddClipped(ref ctx, Rect.MinMaxRect(l, b, l + k, b + w), style.currentFrame);
+                    AddClipped(ref ctx, Rect.MinMaxRect(l, b + w, l + w, b + k), style.currentFrame);
+                    AddClipped(ref ctx, Rect.MinMaxRect(r - k, b, r, b + w), style.currentFrame);
+                    AddClipped(ref ctx, Rect.MinMaxRect(r - w, b + w, r, b + k), style.currentFrame);
                     break;
+                }
                 case 1:
                     drew = AddClipped(ref ctx, new Rect(c.x - s * .3f, c.y - s * .5f, s * .6f, s), style.doorLocked);
                     AddClipped(ref ctx, new Rect(c.x - s * .3f + 1f, c.y - .75f, s * .6f - 2f, 1.5f), style.doorShutter);
@@ -2338,9 +2362,7 @@ public static class DungeonMapMesh
                 case 3: drew = RepairBadge(ref ctx, c, s, style); break;
                 case 4: drew = LeverBadge(ref ctx, c, s, false, true, style); break;
                 case 5: drew = ExitBadge(ref ctx, c, s, false, 0, 0, style, ref lamps, ref lit); break;
-                case 6: drew = CraneHookBadge(ref ctx, c, s, style); break;
-                case 7: drew = CraneAnchorBadge(ref ctx, c, s, style); break;
-                default:
+                default:   // 6: 현재 위치(Player 표식)
                     WritePlayerMarker(vh, c, s * .5f / 1.75f * 1.2f, style, true);
                     drew = true;
                     break;

@@ -26,11 +26,15 @@ using UnityEngine;
 /// 떠나거나 던전 조건을 채우면 거둠, Player 가까움 대기를 넘긴 파도는 같은 방 후보에서 먼 자리를 다시 고름, 목표 마커는 던전 HUD 위에 그림.
 /// 5차(DESIGN_V5 §1 S9): 방 상세 표식에 경로 크레인(경로 = 배치 설정 cranePath* → DungeonSpawnBlockers.TryCranePath)·고정 크레인·점프대를 더하고,
 /// Player가 바라보는 쪽(IDungeonPlayerHeadingSource — 미니맵·큰 지도 Player 표식 꼬리)을 내준다. 둘 다 읽기 전용이다.
+/// 6차(DESIGN_V6 T11): 레버·문 컷씬은 같은 GameObject의 DungeonCutsceneDirector가 맡는다(Wave를 넘는 코루틴 — EndFloor의 StopAllCoroutines를 피함).
+/// 여기에는 연결만 둔다: 목표 완료·출구 입장 직후 감독 호출, 컷씬 동안 방 이동 감지·시설 사용 막기, 미리보기 시작·끝(시작 방을 상태 변경 없이 세움 — 레버 방은 보류),
+/// 다음 던전 '시작 위치 복귀' 목적지 바꾸기, 재도전 때 감독 끊기, 던전 시작 방 도착 자리(room.arrival)에 도착 문 Prefab 넘기기.
+/// 7차(DESIGN_V7 V5): 레버가 남은 방은 적 전멸만으로 클리어되지 않는다 — '레버 대기'(IDungeonObjectiveGate, 흐름은 DungeonRoomClearGate)를 거쳐 레버 뒤에 방 클리어를 잇는다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonCombatSource, IDungeonFacilityHost, IDungeonFacilityTokens,
     IDungeonObjectiveHost, IDungeonObjectiveSource, IDungeonDetailSource, IDungeonFacilityRoute,
-    IDungeonExitHost, IDungeonExitSource, IDungeonObjectiveTargets, IDungeonThreatSource, IDungeonPlayerHeadingSource
+    IDungeonExitHost, IDungeonExitSource, IDungeonObjectiveTargets, IDungeonThreatSource, IDungeonPlayerHeadingSource, IDungeonObjectiveGate, IDungeonThreatLadder
 {
     // 관 통과·텔레포트 한 번의 요청(출발 지점·도착 방·도착 지점 번호·연출).
     private sealed class PassageRequest
@@ -50,6 +54,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     private WaveManager waves;
     private WaveCellTerrain terrain;
     private DungeonRoomStage stage;
+    // 6차 컷씬 감독(같은 GameObject, Configure가 붙인다).
+    private DungeonCutsceneDirector cutscenes;
     private DungeonFloor floor;
     private DungeonRoomState[] states = Array.Empty<DungeonRoomState>();
     private readonly List<DungeonMapRoom> mapRooms = new();
@@ -148,6 +154,10 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     public int BusyFacilityCount => busyFacilities.Count;
     /// <summary>지금 던전의 목표 진행(읽기 전용으로 쓸 것 — 회귀 검사·도구용).</summary>
     public DungeonObjectiveTracker Objectives => objectives;
+    /// <summary>6차 컷씬 감독(레버·문 컷씬 — 읽기 전용으로 쓸 것, 회귀 검사용).</summary>
+    public DungeonCutsceneDirector Cutscenes => cutscenes;
+    // 컷씬이 도는 동안 방 이동 감지·시설 사용을 막는다.
+    private bool CutsceneBlocking => cutscenes != null && cutscenes.BlocksDungeon;
 
     // ── 읽기 전용 상태(IDungeonCombatSource) ──
     public DungeonRoomPhase Phase => phase;
@@ -207,6 +217,16 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     public event Action<DungeonThreatLevel, DungeonThreatLevel> ThreatChanged { add => threat.ThreatChanged += value; remove => threat.ThreatChanged -= value; }
     /// <summary>실시간 난이도 추적(읽기 전용으로 쓸 것 — 회귀 검사·도구용).</summary>
     public DungeonThreatTracker Threat => threat;
+    public int ThreatThreshold(DungeonThreatLevel level) => HasThreat ? threat.Threshold(level) : 0;
+
+    // ── 7차 V5: 레버 대기(IDungeonObjectiveGate — 흐름은 DungeonRoomClearGate, 여기는 연결만. ClearGate는 회귀 검사용 읽기 전용) ──
+    private DungeonRoomClearGate clearGate;
+    public DungeonRoomClearGate ClearGate => clearGate ??= new DungeonRoomClearGate(RoomState, () => CutsceneBlocking,
+        (id, serial) => serial == floorSerial && floor != null && !WaveHalted() && currentRoom == id, (id, serial, fight) => FinishRoomClear(id, serial, fight, true));
+    public bool CanCompleteObjectives => FacilitiesOpen && RoomState(currentRoom) is DungeonRoomState s && ((s.cleared && !s.locked) || s.objectiveHold);
+    public bool AwaitingObjective => ClearGate.Awaiting;
+    public int AwaitingRoom => ClearGate.Room;
+    public event Action<int, bool> ObjectiveGateChanged { add => ClearGate.Changed += value; remove => ClearGate.Changed -= value; }
 
     // ── 읽기 전용 상태(IDungeonDetailSource) ──
     /// <summary>출입구 상태·현재 방·목표 완료 등 방 상세 표시가 바뀌었다(MapChanged와 함께, 그리고 목표 완료 때).</summary>
@@ -224,6 +244,9 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         threat.Reset();
         var looseParent = cells != null ? cells.transform : transform;
         stage = new DungeonRoomStage(cells, Origin, looseParent);
+        // 6차: 컷씬 감독(Wave를 넘는 연출은 거기서 돈다 — 여기는 연결만).
+        if (cutscenes == null && !TryGetComponent(out cutscenes)) cutscenes = gameObject.AddComponent<DungeonCutsceneDirector>();
+        cutscenes.Bind(this, manager);
         if (waves == null) return;
         waves.WaveIntroStarted += OnWaveIntro;
         waves.WaveStarted += OnWaveStarted;
@@ -296,6 +319,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
 
     private void OnWavesReset()
     {
+        // 6차: 재도전·강제 정리면 진행 중인 컷씬을 먼저 끊고 원복한다(미리보기 방·문 안의 Player·크레인 생략 사본).
+        if (cutscenes != null) cutscenes.Abort("재도전");
         bool retry = begun;
         EndFloor(true);
         if (!retry || run == null) return;
@@ -367,7 +392,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         SetWaveStart(start.entry);
         startMoved = false;
         // 시작 방 셀은 WaveManager의 지형 준비(PrepareWave)가 이미 깔았다. Prop·출입구·시설만 세운다(시작 방은 시차 배경 방 — 덮개가 없다).
-        stage.Enter(start, state, false, start.entry, DoorStateFor, next.objective, ExitPrefabFor(start));
+        stage.Enter(start, state, false, start.entry, DoorStateFor, next.objective, ExitPrefabFor(start), ArrivalPrefabFor(start));
         // 출구 문에 지금 진행(시작이므로 0)을 바로 맞춘다.
         PushExit(false);
         SyncMap();
@@ -390,6 +415,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     {
         AbortPassage();
         StopAllCoroutines();
+        clearGate?.Abandon();
         bool had = floor != null;
         floorSerial++;
         if (encounter != null) { encounter.Stop(true, !graceful); encounter = null; }
@@ -424,7 +450,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         if (startMoved && floor != null && WaveHalted()) RestoreWaveStart();
         // 출구 마커: 문이 실제로 열린 프레임에 Ready로 바꾼다(아래 방 이동 감지의 조건과 무관하게 본다).
         WatchExitOpen();
-        if (floor == null || passing || floorCleared || waves == null || !waves.IsWaveActive || waves.IsPreparingWave) return;
+        clearGate?.Tick(Time.deltaTime);
+        if (floor == null || passing || floorCleared || CutsceneBlocking || waves == null || !waves.IsWaveActive || waves.IsPreparingWave) return;
         var state = RoomState(currentRoom);
         if (state == null || !state.cleared || state.locked) return;
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
@@ -615,7 +642,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         // '시작 위치 복귀'(추격 분쇄기·함정 옵션)가 시작 방 좌표로 옮기지 않도록, 목적지를 이 방의 도착 지점 앞 발 자리로 바꾼다.
         SetWaveStart(door != null ? StandFeetLocal(door) : pad != null ? PadFeetLocal(pad) : room.entry);
         startMoved = true;
-        stage.Enter(room, state, true, roomPoint, DoorStateFor, floor.objective, ExitPrefabFor(room));
+        stage.Enter(room, state, true, roomPoint, DoorStateFor, floor.objective, ExitPrefabFor(room), ArrivalPrefabFor(room));
         // 출구 문은 '마지막으로 보인 진행'으로 바로 세운다. 새 풀림은 도착한 뒤(AfterArrival) 차례로 재생한다(지연 재생).
         PushExit(false);
         SyncMap();
@@ -689,6 +716,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         fight.EnemySpawned += (enemy, position) =>
         {
             if (serial != floorSerial || encounter != fight) return;
+            // 6차 T1(nav6): 무리 키·즉시 교전 설정을 생성 연출(PlayAnchor)보다 먼저 건다.
+            OnEncounterEnemySpawned(room, enemy, position, false);
             PlayAnchor(enemy, position);
         };
         // 적 구성 시작 직후: 붉은 상태 띠(HOSTILES n = 아직 나오지 않은 필수 적 포함).
@@ -710,6 +739,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     // 방 상태(클리어)·미니맵·출입구(보스 봉인 해제)·목표 대상·시설 전원·던전 조건만 맞춘다. 경고는 ComposeDynamic이 남긴다.
     private void ClearWithoutFight(DungeonRoomData room, DungeonRoomState state, int serial)
     {
+        // 7차 V5: 적 없이 끝난 레버 방도 레버를 요구한다 — 문을 잠그고 레버 대기로 간다(레버 뒤에는 기존 방 클리어 흐름, 난이도 첫 클리어 없음).
+        if (NeedsObjective(room.Id)) { HoldForObjective(room.Id, serial, null); return; }
         state.cleared = true;
         state.locked = false;
         phase = DungeonRoomPhase.None;
@@ -719,14 +750,43 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         NotifyMapChanged();
         if (currentRoom == room.Id) RebuildTargets();
         if (FloorConditionMet()) BeginFloorClear();
+        // 6차 T9(traps6): 싸울 적 없이 끝난 방도 함정을 멈춘다(조용히 클리어 — 정전 물결).
+        HaltRoomHazards(room.Id, PlayerPoint());
         if (currentRoom == room.Id) StartCoroutine(PowerUpRoom(room.Id, serial));
     }
 
+    // 7차 V5: 적 전멸 순간. 이 방에 당기지 않은 레버가 남았으면 레버 대기(문 잠김 유지), 아니면 바로 방 클리어(FinishRoomClear).
     private void OnRoomCleared(int id, int serial, DungeonEncounter fight)
+    {
+        if (serial == floorSerial && RoomState(id) is { cleared: false, objectiveHold: false } && NeedsObjective(id)) HoldForObjective(id, serial, fight);
+        else FinishRoomClear(id, serial, fight, false);
+    }
+
+    // 지금 방의 목표 SO가 방 클리어를 막고(gatesRoomClear) 이 방에 아직 끝내지 않은 목표가 있고, 그 실물(레버)이 실제로 세워져 있는지.
+    // fix7a: 실물이 없으면(생성 실패 등) 대기하지 않는다 — 당길 레버 없이 문이 잠긴 채 남는 갇힘 방지(6차처럼 적 전멸 = 방 클리어).
+    private bool NeedsObjective(int id) => floor != null && currentRoom == id && floor.objective != null && floor.objective.gatesRoomClear && objectives.PendingIn(id)
+        && stage != null && stage.ObjectivePoints.Any(p => p != null && p.RoomId == id && !p.IsCompleted);
+
+    // 레버 대기 시작: 장치 접기, 함정·낙석 정지(적 전멸 순간 — 사용자 결정, 미리보기 전이라 이 방 함정이 멈춘다), 레버만 전원(빛·준비음), 대기 표시(objectiveHold·이벤트), 레버 마커 Ready.
+    private void HoldForObjective(int id, int serial, DungeonEncounter fight)
+    {
+        var state = RoomState(id);
+        // 적 없이 끝난 레버 방(아직 잠그지 않음)은 여기서 잠근다(방 전체 한 번 — 잠금음).
+        if (!state.locked) { state.locked = true; stage.SetDoorStates(DoorStateFor, false, true); Play(Rules != null ? Rules.doorLockFeedback : null, PlayerPoint()); SyncMap(); NotifyMapChanged(); }
+        phase = DungeonRoomPhase.Objective;
+        if (encounter != null) encounter.RetractDevices(false);
+        HaltRoomHazards(id, PlayerPoint());
+        foreach (var part in stage.PoweredParts) if (part is IDungeonObjectivePoint) stage.SetPowered(part, true, false);
+        ClearGate.Hold(id, serial, fight);
+        RebuildTargets();
+    }
+
+    // 방 클리어 처리(6차까지의 OnRoomCleared 본문). fromHold = 레버 대기를 거쳐 왔음(함정은 대기 시작 때 이미 멈췄다 — 다시 보내지 않는다).
+    private void FinishRoomClear(int id, int serial, DungeonEncounter fight, bool fromHold)
     {
         if (serial != floorSerial || floor == null) return;
         var state = RoomState(id);
-        if (state == null || state.cleared) return;
+        if (state == null || state.cleared || state.objectiveHold) return;
         state.cleared = true;
         if (currentRoom == id) phase = DungeonRoomPhase.Cleared;
         // 이 구성이 놓은 함정 장치는 접어 넣는다. 남은 비필수 적은 방을 떠날 때 거둔다.
@@ -738,6 +798,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         var at = PlayerPoint();
         Play(rules != null ? rules.roomClearFeedback : null, at);
         PlayClearShake(rules, at);
+        // 6차 T9: ROOM CLEAR와 같은 프레임에 이 방 함정을 정지한다(연결 자리).
+        if (currentRoom == id && !fromHold) HaltRoomHazards(id, at);
         // 짝지은 텔레포트가 있으면 건너편 방을 알게 된다(미니맵 연결 표시).
         DiscoverTeleportPartners(id);
         SyncMap();
@@ -856,15 +918,9 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     /// <summary>시설을 쓸 수 있는지: 던전 진행 중·Wave 진행 중(준비 아님)·패배 아님·관 통과 아님·지금 방 클리어·잠금 해제·던전 조건 미충족.
     /// 던전 조건을 채운 뒤(Wave 종료 대기)에는 새로 쓰지 못한다 — 탑승이 Wave 전환에 끊기거나, 안내가 뜨는데 눌러도 거절되거나,
     /// 수리 도중 방이 거둬져 회복을 잃지 않게 한다. 이미 탄 탑승은 SetFacilityBusy로 종료를 미룬다(Interrupted는 이 값을 보지 않는다).</summary>
-    public bool CanUseFacilities
-    {
-        get
-        {
-            if (floor == null || floorCleared || passing || waves == null || !waves.IsWaveActive || waves.IsPreparingWave || WaveHalted()) return false;
-            var state = RoomState(currentRoom);
-            return state != null && state.cleared && !state.locked;
-        }
-    }
+    public bool CanUseFacilities => FacilitiesOpen && RoomState(currentRoom) is DungeonRoomState s && s.cleared && !s.locked;
+    // 시설·목표 사용의 공통 조건(던전 진행·Wave 진행·관 통과 아님·컷씬 아님·패배 아님·던전 조건 미충족 — 7차에 CanCompleteObjectives와 나눠 씀).
+    private bool FacilitiesOpen => floor != null && !floorCleared && !passing && !CutsceneBlocking && waves != null && waves.IsWaveActive && !waves.IsPreparingWave && !WaveHalted();
 
     /// <summary>층당 1회 표식을 이미 썼는지(IDungeonFacilityTokens). 같은 층에서 다시 세운 수리대가 처음부터 방전 상태로 선다.</summary>
     public bool IsFloorTokenUsed(string key) => floor != null && !string.IsNullOrEmpty(key) && floorTokens.Contains(key);
@@ -918,17 +974,17 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     /// 던전 조건 미충족. 지금 방의 클리어·잠금은 보지 않는다(CanUseFacilities와 다른 점).
     /// </summary>
     public bool CanUseFacilitiesInCombat
-        => floor != null && !floorCleared && !passing && waves != null && waves.IsWaveActive && !waves.IsPreparingWave && !WaveHalted();
+        => floor != null && !floorCleared && !passing && !CutsceneBlocking && waves != null && waves.IsWaveActive && !waves.IsPreparingWave && !WaveHalted();
 
     // ── 목표 접점(IDungeonObjectiveHost) ──
     /// <summary>
-    /// 목표 실물(레버 등)이 완료를 요청한다. 시설 사용 조건(지금 방 클리어·잠금 해제·관 통과 아님·던전 조건 미충족)과 지금 방·이 단계가 세운 실물·
+    /// 목표 실물(레버 등)이 완료를 요청한다. 목표 사용 조건(CanCompleteObjectives — 지금 방 클리어·잠금 해제 또는 7차 레버 대기, 관 통과 아님·던전 조건 미충족)과 지금 방·이 단계가 세운 실물·
     /// 배정(방·슬롯·번호)을 확인한 뒤 방 상태와 진행을 기록한다. 받아들이면 true(실물이 SetCompleted(true, false)로 연출을 적용한다).
     /// 마지막 목표면 던전 조건을 채워 Wave 종료로 넘어간다.
     /// </summary>
     public bool TryCompleteObjective(IDungeonObjectivePoint point)
     {
-        if (point == null || floor == null || !objectives.HasObjective || !CanUseFacilities) return false;
+        if (point == null || floor == null || !objectives.HasObjective || !CanCompleteObjectives) return false;
         if (point.RoomId != currentRoom || stage == null || !stage.Owns(point)) return false;
         var state = RoomState(currentRoom);
         int slot = point.Slot, index = point.Index;
@@ -942,9 +998,13 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         }
         Raise(DetailChanged);
         RebuildTargets();
+        // 6차 T11: 레버 컷씬 — 감독이 시작 방(출구 방)을 잠깐 세워 문이 풀리는 모습을 보이고 지연 재생 기록을 남긴다. 컷씬이 꺼졌거나 시작하지 못하면 4차 그대로.
+        bool revealing = cutscenes != null && cutscenes.TryPlayLeverReveal(point);
         // 4차: 마지막 목표로 출구가 열렸으면 해금 알림만 낸다(ExitChanged — 문은 시작 방에 돌아왔을 때 지연 재생). 지금 방이 출구 방이면 바로 재생한다.
-        if (objectives.ExitUnlocked) PushExit(true);
-        if (FloorConditionMet()) BeginFloorClear();
+        if (!revealing && objectives.ExitUnlocked) PushExit(true);
+        // 7차 V5: 레버 대기 방의 레버를 다 당겼으면 방 클리어를 잇는다(컷씬 뒤 또는 빗장 뒤). 던전 조건은 그 방 클리어 처리가 본다(SECTOR CLEAR가 ROOM CLEAR 뒤 — R3).
+        if (state.objectiveHold && !objectives.PendingIn(currentRoom)) ClearGate.Release(revealing);
+        else if (FloorConditionMet()) BeginFloorClear();
         return true;
     }
 
@@ -964,6 +1024,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         if (!open || !objectives.TryEnterExit()) return false;
         SetFacilityBusy(exit, true);
         StartCoroutine(ReleaseBusyAfter(exit, ExitBusyHold, floorSerial));
+        // 6차 T11: 문 컷씬(문짝 닫힘 → 다음 Wave는 도착 문에서 시작) — 감독이 SetFacilityBusy로 Wave 종료를 문이 닫힐 때까지 미룬다.
+        if (cutscenes != null) cutscenes.PlayExitEntry(exit);
         RebuildTargets();
         Raise(DetailChanged);
         if (FloorConditionMet()) BeginFloorClear();
@@ -1494,6 +1556,93 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     private GameObject ExitPrefabFor(DungeonRoomData room)
         => room != null && floor != null && floor.objective != null && objectives.UsesExit && room.Id == objectives.ExitRoom && room.HasExit ? floor.objective.ExitPrefab : null;
 
+    // ── 6차: 컷씬 감독 연결(연출 순서는 DungeonCutsceneDirector) ──
+    // 출구·도착 자리(5×6 뒤 벽) 가운데에서 문 앞에 선 몸통 중심까지(바닥 = 자리 가운데 − 3칸, 몸통 = 바닥 + 0.755).
+    private static readonly Vector2 ExitStandOffset = new Vector2(0f, -3f + .755f);
+
+    // 방에 세울 도착 문 Prefab(던전 시작 방의 도착 자리만): 규칙 SO의 arrivalGatePrefab, 없으면 이 훈련 목표 SO의 출구 문(겉모습이 앞 던전 출구 문과 같다).
+    private GameObject ArrivalPrefabFor(DungeonRoomData room)
+    {
+        if (room == null || floor == null || !room.HasArrival || room.Id != floor.layout.startRoom) return null;
+        var rules = Rules;
+        if (rules != null && rules.arrivalGatePrefab != null) return rules.arrivalGatePrefab;
+        if (run != null && run.floors != null)
+            foreach (var f in run.floors)
+                if (f != null && f.objective != null && f.objective.ExitPrefab != null) return f.objective.ExitPrefab;
+        return null;
+    }
+
+    /// <summary>Wave 생성 기준점(spawnRoot)의 월드 위치(방 로컬 → 월드, 읽기 전용 — 컷씬 감독·회귀 검사가 읽는다).</summary>
+    public Vector3 OriginWorld => Origin();
+    /// <summary>지형(셀) — 컷씬 감독이 끊긴 뒤 Player 자리를 정할 때 읽는다.</summary>
+    internal WaveCellTerrain Terrain => terrain;
+
+    /// <summary>
+    /// 레버 컷씬 미리보기 시작: 지금 방(레버 방)을 보류하고 출구 방(시작 방)을 상태 변경 없이 세운다(셀·Prop·출입구·출구 문 — 방문 수·발견·RoomEntered 없음).
+    /// 순찰·남은 적은 거두고(돌아와도 다시 내지 않는다 — 방문 순번을 올려 기다리던 순찰도 멈춘다) 출구 문은 '마지막으로 보인 진행'으로 바로 맞춘다. 실패하면 false.
+    /// </summary>
+    internal bool BeginExitPreview()
+    {
+        if (floor == null || stage == null || stage.IsPreviewing || !objectives.UsesExit) return false;
+        var start = floor.Room(objectives.ExitRoom);
+        if (start == null || start.Id == currentRoom || start.Id < 0 || start.Id >= states.Length) return false;
+        roomVisitSerial++;
+        if (encounter != null)
+        {
+            int total = encounter.RequiredTotal;
+            bool patrol = phase == DungeonRoomPhase.Patrol;
+            encounter.Stop(true, true);
+            encounter = null;
+            if (patrol) { phase = DungeonRoomPhase.None; Raise(HostilesChanged, 0, total); }
+        }
+        Vector2 point = start.HasExit ? start.exit.spawnPosition + ExitStandOffset : start.entry;
+        int startId = start.Id;
+        if (!stage.BeginPreview(start, states[startId], point, placement => DoorStateIn(startId, placement), floor.objective, ExitPrefabFor(start), ArrivalPrefabFor(start)))
+            return false;
+        var exit = stage.Exit;
+        if (exit != null)
+        {
+            int shown = objectives.ExitShownDone, total = objectives.Total;
+            bool shownUnlocked = objectives.ExitShownUnlocked;
+            SafeCall(() => exit.SetProgress(shown, total, shownUnlocked, true));
+        }
+        // 지금 방이 아닌 방이 서 있으므로 목표 대상은 비어 있다(마커가 저절로 사라진다).
+        RebuildTargets();
+        return true;
+    }
+
+    /// <summary>레버 컷씬 미리보기 끝: 미리보기 방을 거두고 보류한 레버 방을 되살린다(셀 = Player 몸통 쪽 공간). 미리보기 중이 아니면 아무것도 하지 않는다.</summary>
+    internal void EndExitPreview()
+    {
+        if (stage == null || !stage.IsPreviewing) return;
+        var held = stage.HeldRoom;
+        Vector2 point = TryGetPlayerLocal(out var local) ? local : held != null ? held.entry : Vector2.zero;
+        stage.EndPreview(point);
+        stage.SetDoorStates(DoorStateFor, true, true);   // 7차 V5 안전장치(R1): 보류 중 바뀐 잠금을 복귀한 방 출입구에 다시 맞춘다(같으면 그대로)
+        RebuildTargets();
+    }
+
+    /// <summary>지금 던전 실행 사본 Wave의 '시작 위치 복귀' 목적지를 바꾼다(문으로 도착한 다음 던전 — 걸어 나와 설 자리).
+    /// 값은 방 로컬의 Player Transform 위치다(복귀 경로가 이 좌표에 Transform을 그대로 놓는다 — 감독이 몸통 기준점을 빼서 넘긴다, fix6d).</summary>
+    internal void OverrideWaveStart(Vector2 standLocal)
+    {
+        if (floor != null) SetWaveStart(standLocal);
+    }
+
+    // ── 6차 다른 영역 연결(integration6이 nav6·traps6 패치를 넣었다) ──
+    // T1(nav6): 방 적 구성(잠긴 전투 = patrol false, 재입장 순찰 = true)이 적을 낸 순간. DungeonEnemyEngagement로 즉시 교전·무리 키를 건다.
+    // 무리 키 = Dungeon:{층 순번}:{방}:{종류}. 잠긴 방은 감지 거리 0(즉시 교전), 순찰은 Prefab 감지 거리 + 무리 감지 공유(생성 규칙 SO 스위치 — 손 배치 던전처럼 SO가 없으면 둘 다 켬).
+    private void OnEncounterEnemySpawned(DungeonRoomData room, EnemyController enemy, Vector3 position, bool patrol)
+    {
+        if (room == null) return;
+        DungeonEnemyEngagement.Configure(enemy, position, floorSerial, room.Id, patrol, floor != null ? floor.EncounterRules : null);
+    }
+    // T9(traps6): 방을 클리어한 순간(ROOM CLEAR와 같은 프레임). DungeonRoomStage의 함정 정지(판정 즉시 끔 + from에 가까운 순서 정전 물결)를 부른다.
+    private void HaltRoomHazards(int roomId, Vector3 from)
+    {
+        if (currentRoom == roomId && stage != null) stage.HaltHazards(from);
+    }
+
     /// <summary>
     /// 출구 문에 진행을 밀어 넣는다(출구 방에 있을 때만). reveal이 false면 '마지막으로 보인 진행'으로 연출 없이 맞추고(방을 세울 때),
     /// true면 지금 진행을 연출과 함께 적용한 뒤(아직 보이지 않은 풀림만 차례로 재생 — 실물 몫) 보인 값으로 기록한다.
@@ -1520,7 +1669,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     }
 
     // 지금 방의 목표 대상(레버·출구)을 다시 만든다. 위치 = 실물 점유 사각형의 윗변 가운데(월드). 상태: 완료 → Done,
-    // 레버는 방 클리어·잠금 해제면 Ready(아니면 Locked), 출구는 문이 실제로 열렸으면(IsOpen) Ready·아니면 Locked·입장 뒤 Done(objective4 보고서 5-2).
+    // 레버는 방 클리어·잠금 해제 또는 레버 대기(7차)면 Ready(아니면 Locked), 출구는 문이 실제로 열렸으면(IsOpen) Ready·아니면 Locked·입장 뒤 Done(objective4 보고서 5-2).
     private void RebuildTargets()
     {
         targets.Clear();
@@ -1529,7 +1678,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         if (floor != null && room != null && room.Id == currentRoom)
         {
             var state = RoomState(room.Id);
-            bool usable = state != null && state.cleared && !state.locked && !floorCleared;
+            bool usable = state != null && ((state.cleared && !state.locked) || state.objectiveHold) && !floorCleared;
             Vector2 at = Origin();
             if (floor.objective != null)
                 foreach (var slot in room.objectives ?? Array.Empty<DungeonObjectivePlacement>())
@@ -1754,6 +1903,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         fight.EnemySpawned += (enemy, position) =>
         {
             if (serial != floorSerial || encounter != fight) return;
+            // 6차 T1(nav6): 재입장 순찰은 Prefab 감지 거리 + 무리 감지 공유(생성 연출보다 먼저 건다).
+            OnEncounterEnemySpawned(room, enemy, position, true);
             PlayAnchor(enemy, position);
         };
         // 순찰 상태(어두운 앰버 'HOSTILES n · BYPASS' — UI가 Phase로 구분한다). 출입구는 잠그지 않는다.

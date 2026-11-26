@@ -2,7 +2,11 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>환경 장치의 시각 부품만 구동하며 풀 재사용 때 기준 자세와 케이블 속성을 복구한다.</summary>
+/// <summary>
+/// 환경 장치의 시각 부품만 구동하며 풀 재사용 때 기준 자세와 케이블 속성을 복구한다.
+/// 6차 T9: 방 클리어로 멈춘 함정은 Frozen으로 기어·배선 흐름을 세운다(자세는 마지막 시간 그대로). 감속해 세우는 장치(톱날)는
+/// Seek로 시간을 직접 정해 같은 식(기준 자세 × 시간 × 속도)으로 기어를 놓는다. 꺼지거나 풀에서 다시 꺼내면 Frozen은 풀린다.
+/// </summary>
 [DisallowMultipleComponent]
 public sealed class WaveMachineMotion : MonoBehaviour
 {
@@ -13,6 +17,8 @@ public sealed class WaveMachineMotion : MonoBehaviour
 
     public float MotionTime { get; private set; }
     public Vector2 CableOffset { get; private set; }
+    /// <summary>true면 Update가 시간을 진행하지 않는다(기어·배선 흐름 정지). OnEnable·Restore에서 false로 돌아간다.</summary>
+    public bool Frozen { get; set; }
 
     private static readonly int ScrollOffsetId = Shader.PropertyToID("_ScrollOffset");
     private Transform[] boundGears = Array.Empty<Transform>();
@@ -95,9 +101,26 @@ public sealed class WaveMachineMotion : MonoBehaviour
 
     private void Update()
     {
-        if (!bound || (lifecycle != null && !lifecycle.IsReady)) return;
+        if (!bound || Frozen || (lifecycle != null && !lifecycle.IsReady)) return;
         float delta = Time.deltaTime;
         if (delta <= 0f) return;
+        Advance(delta);
+    }
+
+    /// <summary>
+    /// 시간을 motionTime으로 옮기고 기어·배선 흐름을 그 시간에 맞춰 놓는다(6차 T9 — 감속 정지). 조금 되돌아가는 정지 자세도 받는다.
+    /// Frozen이어도 놓는다(정지 감속은 Frozen을 켠 채 이것으로 움직인다).
+    /// </summary>
+    public void Seek(float motionTime)
+    {
+        if (!bound) return;
+        float delta = motionTime - MotionTime;
+        if (Mathf.Abs(delta) < 1e-6f) return;
+        Advance(delta);
+    }
+
+    private void Advance(float delta)
+    {
         MotionTime += delta;
         for (int i = 0; i < boundGears.Length; i++)
             if (boundGears[i] != null)
@@ -141,6 +164,7 @@ public sealed class WaveMachineMotion : MonoBehaviour
         boundGears = Array.Empty<Transform>();
         restRotations = Array.Empty<Quaternion>();
         bound = false;
+        Frozen = false;
         MotionTime = 0f;
         CableOffset = Vector2.zero;
     }

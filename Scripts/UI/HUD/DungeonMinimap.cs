@@ -23,7 +23,8 @@ using UnityEngine;
 /// - 보임: 던전 진행 중 && PlayerHUD가 보임(UIManager.HUDVisible이 바꾸는 PlayerHUD CanvasGroup 알파) && 패배 화면·결과 보드가 열려 있지 않음.
 ///   HUD·가리는 화면 판정은 방 상태 띠와 함께 쓰는 <see cref="DungeonHudGate"/>가 한다.
 /// - 시간: 실제 시간(Time.unscaledDeltaTime) — 히트스톱·사망 정지(timeScale 0)·일시정지 중에도 일관. 매 프레임 할당 없음.
-/// - 5차(2026-11-25, DESIGN_V5 §1 S9): 표식은 고정 크기 배지형 픽토그램(크레인 2종·점프대·출구 램프·출입구 이웃 방 정보 점 — 표식 층에 방 목록 사본을 넘긴다).
+/// - 5차(2026-11-25, DESIGN_V5 §1 S9): 표식은 고정 크기 배지형 픽토그램(점프대·출구 램프·출입구 이웃 방 정보 점 — 표식 층에 방 목록 사본을 넘긴다).
+///   7차(2026-11-26, DESIGN_V7 V2): 경로 크레인·고정 크레인 표식은 그리지 않는다(DungeonMapMesh가 빈 case로 건너뜀 — 데이터는 계약대로 남는다).
 ///   Player 표식 = 반대각선 8 + 빛 고리 + 바라보는 쪽 꼬리(원본이 <see cref="IDungeonPlayerHeadingSource"/>도 구현하면 — 선택 인터페이스 — 바뀔 때만 localScale.x를 ±1로,
 ///   Mesh 재생성 없음) + 1.6초마다 퍼지는 핑 고리(PlayerPing 층, localScale·알파만). 판 아래 구역 띠(판 300×276): 왼쪽 = 던전 전체 단위 칸 배치도(SectorArea·지금 방 맥동,
 ///   MapChanged·RoomEntered 등 Refresh 때만 다시 만듦), 오른쪽 = 지금 방 이름(START ROOM·COMBAT ROOM·BOSS ROOM)·상태(CLEAR·HOSTILE). 구역 띠 부품이 없으면(4차 Prefab) 건너뛴다.

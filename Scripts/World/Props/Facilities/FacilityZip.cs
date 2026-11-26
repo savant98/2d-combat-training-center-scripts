@@ -6,23 +6,32 @@ using UnityEngine;
 /// 붙기(zip, DESIGN_V4 §2.2 · 5차 DESIGN_V5 §1 크레인) — 상호작용 키(↑)로 반경 안의 크레인(IZipAnchor)에 빠르게 날아가 매달린다. 정적 관리자 + 숨은 실행 개체 하나.
 /// - 입력: PlayerController.OnInteractInput을 구독한다(상태 기계를 거치지 않아 점프·대시 중에도 들어온다). 받은 입력은 선입력 0.2초 동안 남는다.
 ///   무시 조건(사용자 결정 2026-11-25 '오작동 방지'): 무장 공격 중·공격이 끝난 뒤 0.15초 안·위 조준 유지 중(↑가 이미 0.1초 넘게 눌려 있던 채 들어온 입력)·
-///   보통 상호작용 지점의 키 안내가 떠 있을 때(FacilityInteractPoint.Live의 HintVisible — 레버·수리대·텔레포트·출구가 우선)·사망·피격 경직·입력 차단·
-///   Wave 정지/준비·관 통과·던전 조건 충족 뒤(FacilityAccess.CombatAllows false)·크레인이 아닌 다른 구속 중·붙는 중·도착 뒤 0.1초.
+///   보통 상호작용 지점이 이번 ↑를 받을 때(6차 T2 — FacilityInteractArbiter.Preferred가 있음: 레버·수리대·텔레포트·출구가 우선)·시설 작동 중(Arbiter.IsBusy)·
+///   사망·피격 경직·입력 차단·Wave 정지/준비·관 통과·던전 조건 충족 뒤(FacilityAccess.CombatAllows false)·크레인이 아닌 다른 구속 중·붙는 중·도착 뒤 0.1초.
+///   6차 T2(한 번의 ↑ = 한 대상): 상호작용 지점이 같은 ↑를 처리했으면(Arbiter.HandledFrame ≥ 누른 프레임) 붙기 선입력을 버린다 —
+///   InteractAbility와 이 개체의 OnInteractInput 구독 순서와 무관하게, 0.08초 확정 대기 전에 걸러진다(LastIgnoreReason "상호작용 우선(같은 입력)").
 ///   4차 통합(붙기 오작동 보강): 받은 ↑는 0.08초(AttackCancelWindow) 동안 확정하지 않고 기다린다. 그 안에 무장 공격 입력(기본 무기·보조 무기·기어)이
 ///   들어오면 위 조준 공격으로 보고 아직 이동을 시작하지 않은 붙기를 취소한다. 확정 대기는 선입력 0.2초 안에서 일어나 선입력 규칙과 겹치지 않는다.
 /// - 대상 선택(5차, 매 프레임 표시용): 반경 안 && 쓸 수 있음 && 시야 열림. 매달린 크레인은 뺀다.
-///   방향 입력 없음 → 순수 가장 가까움(바라보는 쪽 가산 없음). 좌우·↓ 입력 → 그 방향 반각 100° 콘(내적 ≥ −0.17) 안에서 거리 × (1 + 0.6 × (1 − 내적)) 최소,
-///   콘 안에 후보가 없으면 '대상 없음'(되돌아가는 붙기 방지). ↑는 방향으로 쓰지 않는다(키보드 기본 배치에서 ↑ = 상호작용 — 입력 설정 무수정).
+///   방향 입력 없음 → 순수 가장 가까움(바라보는 쪽 가산 없음). 좌우·↓ 입력 → 그 방향 반각 100° 콘(내적 ≥ −0.17) 안에서 거리 × (1 + 0.6 × (1 − 내적)) 최소.
+///   7차 V9(사용자 결정 2026-11-26 — 방향은 걸러내기가 아니라 우선순위): 콘 안에 후보가 없으면 콘을 빼고 반경 안·시야 열린 모든 후보를 같은 점수로 고른다
+///   (반경 안에 붙을 수 있는 크레인이 하나면 방향과 관계없이 그것 — 5차의 '되돌아가는 붙기 방지'는 없앴다). 콘 안 후보가 있으면 결과는 지금과 같다.
+///   ↑는 방향으로 쓰지 않는다(키보드 기본 배치에서 ↑ = 상호작용 — 입력 설정 무수정).
 ///   방향은 기존 이동 입력만 읽는다(PlayerController.MoveInput.x, InputManager.MoveDownHeld).
-///   5차 검토 c6(연속 이동 때 원래 크레인으로 돌아오지 않게): 매달린 대상이 바뀌면(점프·대시·조건 충족 하차, 연쇄 붙기) 직전 대상을 1.5초(LeftMemory) 기억하고,
-///   방향 입력이 없을 때만 그 대상의 점수에 × 1.5(1 + LeftPenalty)를 곱한다(후보에서 빼지는 않는다 — 그것뿐이면 그대로 고른다. 방향 입력이 있으면 벌점 없음).
+///   5차 검토 c6(연속 이동 때 원래 크레인으로 돌아오지 않게): 매달린 대상이 바뀌면(점프·대시·조건 충족 하차, 연쇄 붙기) 직전 대상을 기억한다(6차: 3초 — LeftMemory,
+///   다른 크레인에 매달리면 교체). 6차 T3 '가족' = 직전 크레인 + 그 경로 크레인의 도크 호출 지점.
+///   · 땅·브래킷 위·매달림(연쇄): 방향 입력이 없을 때만 가족의 점수에 × 1.5(1 + LeftPenalty) — 후보에서 빼지 않는다(그것뿐이면 그대로 고른다).
+///   · 공중(매달림 아님·접지 아님 — 점프·대시로 내린 뒤): 입력 없음 → 가족 밖 후보가 있으면 가족을 빼고, 없으면 가족을 고른다.
+///     좌우·↓ 입력 → 가족은 그 방향이 가족을 '가리킬 때'(내적 ≥ cos 45° — FamilyAimCos)만 함께 경쟁한다(가리키지 않으면 가족 밖 후보만).
+///     7차 V9: 그래도 후보가 없으면 콘 없이 가족 밖 후보 → 가족 순서로 고른다(방금 내린 크레인은 마지막 순위 — 후보에서 빼지 않는다).
 ///   점수가 TieEpsilon(0.001칸) 안으로 같으면 매달림 발이 높은 대상을 고른다(등록 순서·부동소수 오차로 정하지 않는다 — 세로 사슬은 위로 오르는 쪽).
 /// - 누른 순간 고정(5차): ↑를 받은 순간 표시 중인 대상(지난 프레임 선택)과 방향을 저장한다. 0.08초 확정 대기 동안 표시는 그 대상에 고정하고,
 ///   확정 때 그 대상이 여전히 유효하면(쓸 수 있음·반경·시야를 새로 물음) 그 대상으로 붙는다. 무효면 저장한 방향으로 다시 고른다.
-/// - 호출(5차 B안): 확정한 대상이 IZipCallTarget(경로 크레인의 빈 도크)이면 붙지 않고 크레인을 부른다. 크레인이 도착했을 때 그 도크가 여전히
-///   선택돼 있으면 TryAutoZip으로 붙기를 자동으로 시작한다(무시 조건·반경·새 시야 질의를 그대로 본다 — 아니면 도크에서 기다린다).
-/// - 시야(물리 질의는 모터 공개 질의만): 몸통 중심과 진행 방향의 옆으로 몸 반폭 0.8배씩 띄운 세 점에서 RaycastMotor2D.RaycastEnvironment 3줄
-///   (가로로 날면 몸 위·가운데·아래) + 도착 자리 IsBodyBlockedAt. 위쪽으로 쏘는 광선은 통과 발판(OneWay)을 무시한다(모터 규칙).
+/// - 즉시 생성(6차 T5 — 5차 호출 B안을 대체): 확정한 대상이 IZipCallTarget(경로 크레인의 빈 도크)이면 Call로 크레인을 그 도크에 즉시 생성하고
+///   (옛 자리 파괴·새 자리 생성 연출은 크레인이 낸다) 같은 프레임에 그 크레인으로 붙기를 시작한다. 붙기가 막히면 크레인은 그 도크에 생긴 채 기다린다.
+/// - 시야(물리 질의는 모터 공개 질의만, 7차 V10 — 몸 두께가 아니라 몸 중심 직선): Player 몸통 중심 → 매달림 몸 중심 RaycastMotor2D.RaycastEnvironment 1줄
+///   + 도착 자리 IsBodyBlockedAt. 몸 가장자리가 지형을 스치는 것은 막지 않는다(붙기 이동은 구속 이동이라 지형을 지나가고, 끊기면 출발 자리로 옮긴다).
+///   통과 발판(OneWay)은 모터 규칙 그대로 — 위·옆·완만한 아래로는 통과, 30°보다 가파른 아래로 지금 서 있는(또는 위에 있는) OneWay를 지나면 막는다.
 ///   fix4zip: IsBodyBlockedAt는 Physics2D.SyncTransforms를 강제하므로 표시용 선택은 후보별 결과를 0.1초(SightReuseTime) 동안,
 ///   Player 몸 중심 칸·대상 매달림 발 칸이 그대로일 때만 재사용한다. 실제 붙기 확정(Begin 직전)과 거절음 양보 판단(WouldTakePress)은 늘 새로 묻는다.
 /// - 상호작용 지점 양보(fix4zip): 키 안내가 숨은(쓸 수 없는) 지점이 같은 ↑를 거절할 때, 이 입력을 붙기가 받을 수 있으면(WouldTakePress)
@@ -46,14 +55,19 @@ public sealed class FacilityZip : MonoBehaviour
     public const float ArrivalGuard = .15f;       // 도착 뒤 보호 유지
     public const float RegrabDelay = .1f;         // 도착 뒤 다시 붙지 못하는 시간
     public const float AimDeadZone = .3f;         // 5차: 좌우 이동 입력을 방향으로 보는 최소 크기
-    public const float ConeCos = -.17364818f;     // 5차: 방향 콘 반각 100°(cos 100°, DESIGN_V5 판단값)
+    public const float ConeCos = -.17364818f;     // 5차: 방향 콘 반각 100°(cos 100°, DESIGN_V5 판단값) — 7차 V9: 1차 고르기의 우선 범위(비면 콘 없이 다시 고름)
     public const float ForwardWeight = .6f;       // 5차: 앞쪽 가중 — 점수 = 거리 × (1 + 0.6 × (1 − 내적))
-    public const float SightInset = .8f;          // 옆 광선을 몸 반폭의 몇 배에 둘지
+    // 7차 V10: 옆 광선 간격(SightInset 0.8)은 없앴다 — 시야는 몸 중심 직선 1줄 + 도착 자리.
     public const float AttackCancelWindow = .08f; // ↑ 뒤 이 시간 안에 무장 공격 입력이 오면 붙기 취소(4차 통합 판단값, 선입력 BufferTime보다 짧아야 한다)
     public const float SightReuseTime = .1f;      // 표시용 시야 결과를 재사용하는 시간(fix4zip 판단값 — 확정 직전에는 늘 새로 묻는다)
-    public const float LeftPenalty = .5f;         // c6: 방향 입력이 없을 때 직전에 떠난 대상의 점수 배율 1 + 0.5(판단값)
-    public const float LeftMemory = 1.5f;         // c6: 직전에 떠난 대상을 기억하는 시간(초, 판단값)
+    public const float LeftPenalty = .5f;         // c6: 방향 입력이 없을 때 직전에 떠난 대상(6차: 가족)의 점수 배율 1 + 0.5(판단값 — 땅·매달림)
+    public const float LeftMemory = 3f;           // c6: 직전에 떠난 대상을 기억하는 시간(초, 판단값 — 6차 T3 1.5 → 3: 2단 점프 체공이 1초를 넘는다)
+    public const float FamilyAimCos = .70710678f; // 6차 T3: 공중에서 방향 입력이 가족을 '가리킨다'고 보는 내적 하한(cos 45°, 판단값)
     public const float TieEpsilon = 1e-3f;        // c6: 이 폭(칸) 안으로 점수가 같으면 높은 대상 우선
+    /// <summary>6차 T2: 상호작용 지점이 같은 ↑를 처리해 붙기 선입력을 버린 이유(검사용 문자열).</summary>
+    public const string SameInputReason = "상호작용 우선(같은 입력)";
+    /// <summary>6차 T5: 크레인을 빈 도크에 생성했지만 그 크레인으로 붙지 못해 대기로 남긴 이유(검사용 문자열).</summary>
+    public const string SummonWaitReason = "생성 뒤 붙기 막힘";
 
     private static readonly List<IZipAnchor> anchors = new List<IZipAnchor>();
     private static FacilityZip runner;
@@ -108,6 +122,7 @@ public sealed class FacilityZip : MonoBehaviour
     private readonly InputBuffer buffer = new InputBuffer(BufferTime);
     private float lastAttackTime = -999f;
     private float pressTime = -999f;          // 받아들인 마지막 ↑ 시각(확정 대기 기준)
+    private int pressFrame = int.MaxValue;    // 6차 T2: 받아들인 마지막 ↑의 프레임(상호작용 지점이 같은 ↑를 처리했는지 비교)
     private float attackInputTime = -999f;    // 마지막 무장 공격 입력 시각(공격 실행 여부와 무관)
     private float upHeld;
     private IZipAnchor focused;
@@ -152,9 +167,8 @@ public sealed class FacilityZip : MonoBehaviour
     public int Zips { get; private set; }
     public int Arrivals { get; private set; }
     public int Failures { get; private set; }
-    /// <summary>5차: 빈 도크 호출 수·호출 도착 때 자동으로 시작한 붙기 수(검사용).</summary>
+    /// <summary>6차 T5: 빈 도크를 골라 크레인을 그 도크에 즉시 생성한 수(검사용).</summary>
     public int Calls { get; private set; }
-    public int AutoZips { get; private set; }
     /// <summary>마지막으로 입력을 무시한 이유(검사용).</summary>
     public string LastIgnoreReason { get; private set; } = string.Empty;
     /// <summary>마지막 붙기의 이동 시간(초, 검사용).</summary>
@@ -186,25 +200,6 @@ public sealed class FacilityZip : MonoBehaviour
         if (r.attackInputTime >= Time.time) return false;
         if (r.focused != null && r.Valid(p, r.focused, true)) return true;
         return r.Pick(p, true, r.ReadAim(p)) != null;
-    }
-
-    /// <summary>
-    /// 5차 호출 B안: 불린 크레인(anchor)이 도크(dock — 호출 지점)에 도착했을 때 부른다. caller가 지금도 그 도크를 선택 중이고(지난 프레임 표시 대상),
-    /// 무시 조건에 걸리지 않고, 반경·새 시야 질의를 통과하면 붙기를 시작한다. 아니면 false(크레인은 그 도크에서 기다린다).
-    /// </summary>
-    public static bool TryAutoZip(IZipAnchor anchor, IZipAnchor dock, PlayerController caller)
-    {
-        var r = runner;
-        if (r == null || anchor == null || caller == null || !r.isActiveAndEnabled || r.player != caller) return false;
-        if (!ReferenceEquals(r.focused, dock) && !ReferenceEquals(r.focused, anchor)) return false;
-        if (r.zipping || r.Blocked(caller, false, out _)) return false;
-        if (!r.Valid(caller, anchor, true)) return false;
-        r.buffer.Reset();
-        r.pressTarget = null;
-        r.SetFocus(anchor);
-        r.AutoZips++;
-        r.Begin(anchor);
-        return true;
     }
 
     private void OnDisable()
@@ -240,6 +235,7 @@ public sealed class FacilityZip : MonoBehaviour
         lastLeftTime = -999f;
         upHeld = 0f;
         pressTime = attackInputTime = -999f;
+        pressFrame = int.MaxValue;
         if (player != null)
         {
             player.OnInteractInput += OnInteract;
@@ -252,6 +248,15 @@ public sealed class FacilityZip : MonoBehaviour
     private void OnInteract()
     {
         Presses++;
+        // 6차 T2: 같은 ↑를 상호작용 지점이 이미 처리했다(InteractAbility가 먼저 구독 — 수리 시작·거절음) → 붙기는 받지 않는다.
+        if (FacilityInteractArbiter.HandledThisFrame)
+        {
+            Ignored++;
+            LastIgnoreReason = SameInputReason;
+            buffer.Reset();
+            pressTarget = null;
+            return;
+        }
         if (Blocked(player, true, out string reason))
         {
             Ignored++;
@@ -261,6 +266,7 @@ public sealed class FacilityZip : MonoBehaviour
             return;
         }
         pressTime = Time.time;
+        pressFrame = Time.frameCount;
         buffer.RegisterInput();
         // 5차: 누른 순간 표시 중이던 대상과 방향을 고정한다(확정 때 ↑가 아직 눌려 있어도 대상이 바뀌지 않게).
         pressTarget = focused;
@@ -316,6 +322,15 @@ public sealed class FacilityZip : MonoBehaviour
         }
         SetFocus(best);
         if (!buffer.IsValid) { pressTarget = null; return; }
+        // 6차 T2: 이 ↑(또는 그 뒤의 ↑)를 상호작용 지점이 처리했으면 버린다 — 이 개체가 InteractAbility보다 먼저 구독돼 선입력을 먼저 받았어도 여기서 걸러진다.
+        if (FacilityInteractArbiter.HandledFrame >= pressFrame)
+        {
+            buffer.Reset();
+            pressTarget = null;
+            Ignored++;
+            LastIgnoreReason = SameInputReason;
+            return;
+        }
         if (Blocked(player, false, out _)) { buffer.Reset(); pressTarget = null; return; }
         // ↑ 뒤 0.08초 안에 무장 공격 입력이 왔으면 위 조준 공격으로 보고 버린다(아직 Begin 전 — 구속·이동 없음).
         if (attackInputTime >= pressTime && attackInputTime - pressTime <= AttackCancelWindow)
@@ -338,8 +353,17 @@ public sealed class FacilityZip : MonoBehaviour
         SetFocus(chosen);
         if (chosen is IZipCallTarget call)
         {
-            // 빈 도크: 붙지 않고 크레인을 부른다(구속·이동 없음). 도착 때 이 도크가 계속 선택돼 있으면 크레인이 TryAutoZip을 부른다.
-            if (call.Call(player)) Calls++;
+            // 6차 T5: 빈 도크 → 크레인을 그 도크에 즉시 생성하고(옛 자리 파괴·새 자리 생성 연출은 크레인이 낸다) 같은 프레임에 그 크레인으로 붙는다.
+            // 붙기가 막히면(생성된 크레인이 지금 대상이 될 수 없음) 크레인은 그 도크에 생긴 채 기다린다 — 다음 ↑에 바로 붙는다.
+            if (!call.Call(player)) return;
+            Calls++;
+            var owner = call.Owner;
+            if (owner != null && Valid(player, owner, true))
+            {
+                SetFocus(owner);
+                Begin(owner);
+            }
+            else LastIgnoreReason = SummonWaitReason;
             return;
         }
         Begin(chosen);
@@ -396,7 +420,8 @@ public sealed class FacilityZip : MonoBehaviour
         if (!p.CanReceiveInput) return false;
         var abilities = p.AbilityManager;
         if (abilities != null && abilities.HitAbility != null && abilities.HitAbility.IsActive) return false;
-        if (OtherHintVisible()) return false;
+        // 6차 T2: 이번 ↑를 받을 상호작용 지점이 있거나(키 안내가 그 지점에 뜬다) 시설이 작동 중(수리·레버 당김)이면 크레인 직선·키 안내를 숨긴다.
+        if (FacilityInteractArbiter.Preferred(p) != null || FacilityInteractArbiter.IsBusy) return false;
         if (!FacilityAccess.CombatAllows) return false;
         return !OtherHold(p);
     }
@@ -414,19 +439,12 @@ public sealed class FacilityZip : MonoBehaviour
         if (attack != null && attack.IsActive) { reason = "공격 중"; return true; }
         if (Time.time - lastAttackTime < AttackGrace) { reason = "공격 직후"; return true; }
         if (press && upHeld >= UpHoldLimit) { reason = "위 조준 유지"; return true; }
-        if (OtherHintVisible()) { reason = "상호작용 안내 우선"; return true; }
+        if (FacilityInteractArbiter.Preferred(p) != null) { reason = "상호작용 안내 우선"; return true; }
+        if (FacilityInteractArbiter.IsBusy) { reason = "시설 작동 중"; return true; }
         if (!FacilityAccess.CombatAllows) { reason = "진행 정지·조건 충족"; return true; }
         if (OtherHold(p)) { reason = "다른 구속"; return true; }
         if (zipping) { reason = "붙는 중"; return true; }
         if (Time.time < regrabAt) { reason = "재붙기 대기"; return true; }
-        return false;
-    }
-
-    private static bool OtherHintVisible()
-    {
-        var points = FacilityInteractPoint.Live;
-        for (int i = 0; i < points.Count; i++)
-            if (points[i] != null && points[i].HintVisible) return true;
         return false;
     }
 
@@ -453,24 +471,57 @@ public sealed class FacilityZip : MonoBehaviour
         return Sight(p, body, anchor, fresh);
     }
 
+    // 6차 T3 '가족' = 직전에 떠난 크레인(left) + 그 경로 크레인의 도크 호출 지점(IZipCallTarget.Owner가 left — 짧은 경로에서 방금 떠난 도크를 부르는 것도 되돌아감이다).
+    private static bool IsFamily(IZipAnchor anchor, IZipAnchor left)
+        => left != null && (ReferenceEquals(anchor, left) || (anchor is IZipCallTarget call && ReferenceEquals(call.Owner, left)));
+
+    // 6차 T3 공중 = 매달림 아님 && 접지 아님(점프·대시로 내린 뒤의 공중 ↑). 매달림은 구속 바닥 접지라 땅 규칙을 따른다.
+    private static bool Airborne(PlayerController p) => p != null && !p.IsGrounded && HangingOn(p) == null;
+
+    // 6차 T3 가족 처리: Penalty = 방향 입력이 없으면 × 1.5(땅·매달림), Exclude = 가족 제외, Only = 가족만, PointedOnly = 가족은 방향이 가리킬 때만.
+    private enum FamilyRule { Penalty, Exclude, Only, PointedOnly }
+
     // fresh = 시야를 기억 없이 새로 묻는다(붙기 확정·거절음 양보 판단). false면 표시용 — 기억을 재사용한다.
-    // aim = (0, 0)이면 가장 가까움(직전에 떠난 대상은 1.5초 동안 × 1.5 — c6), 아니면 반각 100° 콘 안에서 앞쪽 가중 점수 최소(콘 밖 후보는 버린다 — 후보가 없으면 null).
-    // 점수가 TieEpsilon 안으로 같으면 매달림 발이 높은 대상(c6 — 같은 높이면 먼저 등록된 대상).
+    // aim = (0, 0)이면 가장 가까움, 아니면 앞쪽 가중 점수 최소. 직전에 떠난 대상(가족)은 6차 T3 규칙(공중이면 제외·가리킬 때만, 땅·매달림이면 입력 없을 때 × 1.5).
+    // 7차 V9(방향·가족 = 우선순위, 걸러내기 아님) 2단계:
+    //   1차 = 지금 규칙(땅·매달림 Penalty, 공중 + 방향 PointedOnly, 공중 + 입력 없음 Exclude → Only — 방향이 있으면 반각 100° 콘 안만).
+    //   1차가 비었고 방향 입력이 있으면 2차 = 콘 없이 반경 안·시야 열린 모든 후보(땅·매달림 Penalty, 공중 Exclude → Only — 가족은 다른 후보가 없을 때만).
+    //   그래서 후보가 하나면 방향과 관계없이 그것을 고르고, 콘 안 후보가 있으면 결과는 지금과 같다.
+    // 2차는 1차가 null일 때만 돌고 표시용은 시야 기억(0.1초)을 같이 쓴다(질의·할당 증가 없음). 표시·확정·양보 판단(WouldTakePress)이 모두 이 함수를 쓴다.
     private IZipAnchor Pick(PlayerController p, bool fresh, Vector2 aim)
     {
         if (anchors.Count == 0) return null;
+        var left = RecentlyLeft;
+        bool air = left != null && Airborne(p);
+        bool directed = aim.sqrMagnitude > .01f;
+        IZipAnchor best;
+        if (!air) best = PickWith(p, fresh, aim, left, FamilyRule.Penalty, true);
+        else if (directed) best = PickWith(p, fresh, aim, left, FamilyRule.PointedOnly, true);
+        // 공중·입력 없음: 가족 밖 후보가 있으면 그중에서, 없으면 가족(실수로 뛰어내린 뒤 다시 잡기).
+        else best = PickWith(p, fresh, aim, left, FamilyRule.Exclude, true) ?? PickWith(p, fresh, aim, left, FamilyRule.Only, true);
+        if (best != null || !directed) return best;
+        // 7차 V9 2차: 콘 밖까지(방향은 점수로만 — 내적 −1이면 거리 × 2.2). 공중에서는 방금 내린 크레인을 마지막에 본다.
+        return !air ? PickWith(p, fresh, aim, left, FamilyRule.Penalty, false)
+            : PickWith(p, fresh, aim, left, FamilyRule.Exclude, false) ?? PickWith(p, fresh, aim, left, FamilyRule.Only, false);
+    }
+
+    // 점수가 TieEpsilon 안으로 같으면 매달림 발이 높은 대상(c6 — 같은 높이면 먼저 등록된 대상).
+    // 7차 V9: cone = 방향 입력의 반각 100° 콘·공중 가족 '가리킴' 규칙을 걸러내기로 쓸지(1차 true, 2차 false). 점수식은 둘 다 같다.
+    private IZipAnchor PickWith(PlayerController p, bool fresh, Vector2 aim, IZipAnchor left, FamilyRule rule, bool cone)
+    {
         Rect body = FacilityAccess.BodyRect(p);
         Vector2 center = body.center;
         float halfHeight = body.height * .5f;
         bool directed = aim.sqrMagnitude > .01f;
         Vector2 direction = directed ? aim.normalized : Vector2.zero;
-        var left = !directed ? RecentlyLeft : null;
         IZipAnchor best = null;
         float bestScore = float.MaxValue;
         for (int i = 0; i < anchors.Count; i++)
         {
             var anchor = anchors[i];
             if (anchor == null || !anchor.ZipAvailable || anchor.HasRider(p)) continue;
+            bool family = IsFamily(anchor, left);
+            if ((rule == FamilyRule.Exclude && family) || (rule == FamilyRule.Only && !family)) continue;
             Vector2 goal = anchor.ZipFeet + Vector2.up * halfHeight;
             Vector2 delta = goal - center;
             float distance = delta.magnitude;
@@ -479,10 +530,12 @@ public sealed class FacilityZip : MonoBehaviour
             if (directed)
             {
                 float dot = Vector2.Dot(delta / distance, direction);
-                if (dot < ConeCos) continue;
+                if (cone && dot < ConeCos) continue;
+                // 공중에서는 방향 입력이 가족을 가리킬 때(내적 ≥ cos 45°)만 가족이 함께 경쟁한다(1차만 — 2차는 Exclude → Only로 가족을 마지막에 둔다).
+                if (cone && rule == FamilyRule.PointedOnly && family && dot < FamilyAimCos) continue;
                 score = distance * (1f + ForwardWeight * (1f - dot));
             }
-            else if (ReferenceEquals(anchor, left)) score *= 1f + LeftPenalty;
+            else if (rule == FamilyRule.Penalty && family) score *= 1f + LeftPenalty;
             // 동점(TieEpsilon 안)은 높은 대상 우선 — 시야 질의 전에 거른다.
             if (score > bestScore + TieEpsilon) continue;
             if (best != null && score > bestScore - TieEpsilon && anchor.ZipFeet.y <= best.ZipFeet.y) continue;
@@ -512,7 +565,10 @@ public sealed class FacilityZip : MonoBehaviour
     }
 
     /// <summary>
-    /// 몸을 feetDelta만큼 직선으로 옮길 때 지형에 막히는지(모터 공개 질의만). 옆으로 띄운 광선 3줄 + 도착 자리 겹침.
+    /// 몸을 feetDelta만큼 직선으로 옮길 때 지형에 막히는지(모터 공개 질의만). 7차 V10: 몸 중심 직선 1줄 + 도착 자리 겹침.
+    /// 붙기 이동은 발을 직선 보간하므로 몸 중심도 body.center → body.center + feetDelta 선을 지난다. 몸 두께로 쓸지 않는다 — 가장자리가 지형을 스쳐도
+    /// 중심선이 열리면 붙는다(이동은 구속 이동이라 지형을 지나가고, 끊기면 출발 자리로 옮긴다). 중심선이 막히면 붙지 않는다.
+    /// 통과 발판(OneWay)은 모터 규칙 그대로(RaycastEnvironment — 30°보다 가파른 아래 방향에서 지금 서 있는/위의 OneWay만 막는다). 모터는 고치지 않는다.
     /// </summary>
     public static bool SightClear(PlayerController p, Rect body, Vector2 feetDelta)
     {
@@ -520,14 +576,7 @@ public sealed class FacilityZip : MonoBehaviour
         if (motor == null) return false;
         float distance = feetDelta.magnitude;
         if (distance < 1e-4f) return !motor.IsBodyBlockedAt(Vector2.zero);
-        Vector2 dir = feetDelta / distance;
-        Vector2 side = new Vector2(-dir.y, dir.x);
-        float half = (Mathf.Abs(side.x) * body.width + Mathf.Abs(side.y) * body.height) * .5f * SightInset;
-        for (int k = -1; k <= 1; k++)
-        {
-            Vector2 origin = body.center + side * (half * k);
-            if (motor.RaycastEnvironment(origin, dir, distance).collider != null) return false;
-        }
+        if (motor.RaycastEnvironment(body.center, feetDelta / distance, distance).collider != null) return false;
         return !motor.IsBodyBlockedAt(feetDelta);
     }
 

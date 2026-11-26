@@ -5,15 +5,20 @@ using UnityEngine;
 // 경로 크레인(DESIGN_V4 §2.3 — 4차 재작성 · 5차 DESIGN_V5 §1 왕복 도크, Prefab DungeonPropCraneHook 같은 GUID). 붙기(↑)로 매달리면 배치 설정의 다각선 경로를 따라
 // 반대편 도크(승강장)까지 옮겨 주고, 도착 도크에서 매달린 채 기다린다(점프·대시·다른 크레인 붙기로 내림).
 // - 5차 왕복: 경로 양 끝(점 0 = 집, 마지막 점)이 도크 2곳이다. 크레인은 마지막으로 도착한 도크(처음은 집)에서 쉬고, 거기서 붙으면 반대 도크로 간다(경로를 뒤집어 운반).
-//   도착 도크에서 내리면 그 도크가 쉬는 자리가 된다(돌아가지 않는다 — 경로를 다 간 뒤 대기로 바뀌기 전 한 물리 틱 안에 내려도 같다). 도중에 내리면(점프·대시·연쇄 붙기·자동 하차) 빈 채로 출발 도크로 40칸/초 복귀한다(복귀 중 붙기 대상 아님).
-//   반대편 빈 도크는 '호출 지점'(IZipCallTarget)으로 붙기 목록에 오른다: 그 도크를 고르고 ↑ → 크레인이 40칸/초로 오고, 도착 때 그 도크가 계속 선택돼 있으면
-//   FacilityZip.TryAutoZip으로 자동 붙기(B안). 아니면 그 도크에서 기다린다. 붙은 뒤 0.12초(DepartDelay) 기다렸다 출발한다(체결 흔들림 첫 반 주기가 읽히게).
+//   도착 도크에서 내리면 그 도크가 쉬는 자리가 된다(돌아가지 않는다 — 경로를 다 간 뒤 대기로 바뀌기 전 한 물리 틱 안에 내려도 같다). 도중에 내리면(점프·대시·연쇄 붙기·자동 하차) 빈 채로 출발 도크로 40칸/초 복귀한다(복귀 중 크레인 자신은 붙기 대상 아님).
+//   6차 T5 즉시 생성(5차 호출 B안 대체): 크레인이 없는 도크는 '호출 지점'(IZipCallTarget)으로 붙기 목록에 오른다(쉬는 중이면 반대 도크, 복귀 중이면 두 도크 모두).
+//   그 도크를 고르고 ↑ → Summon: 옛 자리에서 파괴 연출(자기 불꽃 입자 + 기존 해제음) → 같은 프레임에 그 도크에서 쉬는 크레인으로 옮기고 자세를 바로 맞춤
+//   → 새 자리 생성 연출(빈 도크 유령 윤곽 섬광 0.18초·도크등·불꽃 입자·기존 전원음 하나) → FacilityZip이 같은 프레임에 붙기를 시작한다(호출 이동·자동 붙기 대기 없음).
+//   붙기가 막히면 크레인은 그 도크에 생긴 채 기다린다. 흔들림·새 음원 없음. 붙은 뒤 0.12초(DepartDelay) 기다렸다 출발한다(체결 흔들림 첫 반 주기가 읽히게).
 // - 배치: footprint 2×4, 집(점 0)의 매달린 발 = (x + 1, y). 경로 점 i(1..7)는 집 기준 칸 오프셋(cranePath{i}X·Y, 눈금 0.5), 점 수 cranePathCount(2~8).
 //   캐리지는 '매달린 발 + 4칸' 높이의 레일(빛 통로) 위를 위아래 바퀴로 물고 달린다. 경로 공간 규칙(발 ~ 발 + 4칸, 폭 2칸 쓸기 상자가 고체와 겹치지 않음)은 템플릿 검사가 맡는다.
 // - 이동(AGENTS 물리 규칙): FacilityRide.HaulPath — 일정 속도 craneSpeed(5차 기본 24칸/초 = 대시 30의 0.8배), 시작·끝 0.1초만 가감속, 물리 틱마다 ShiftConfinement(위치 직접 대입 없음).
-//   빈 크레인의 복귀·호출 이동은 표시만 바꾼다(판정 없음 — 지금 복귀와 같다).
+//   빈 크레인의 복귀 이동·즉시 생성은 표시만 바꾼다(판정 없음 — 경로 위 거리 pathS만 바꾼다).
 // - 외형(5차 S3 '넓은 Π'): 레일을 문 캐리지(위 바퀴 2·아래 안내 롤러 2)·감기 드럼(이동 중 회전)·진행 방향 화살표 2개(다음 도크 쪽으로 회전, 이동 중 차례로 점멸)·
-//   벌어진 케이블 2가닥·긴 스프레더 머리(±0.98)·운반 케이지(캐리지에 붙음 — 머리 흔들림과 따로)·양 끝 도크(정지대 블록 + 게이트 기둥 + 파랑 도크등 + 빈 도크의 유령 윤곽).
+//   벌어진 케이블 2가닥·긴 스프레더 머리(±0.98)·운반 케이지(캐리지에 붙음 — 머리 흔들림과 따로)·양 끝 도크(정지대 블록 + 게이트 기둥 + 파랑 도크등 + 빈 도크의 유령 윤곽 —
+//   6차: 캐리지·케이지에 스프레더 점선을 더함).
+// - 6차 T4: 붙기 직선·표적 괄호는 머리(스프레더) 중심 = 매달린 발 + 1.97(빈 도크는 생겨날 머리 자리)을 가리킨다. 괄호 상자 ±1.25 × ±0.6(돌지 않음),
+//   키 안내는 머리 바로 아래 매달린 발 + 1.25(선택된 빈 도크도 같은 자리).
 //   레일은 파랑 2가닥 선 + 흐린 띠 + 1칸마다 침목 + 꺾이는 점 관절 고리 + 흐르는 빛 덩어리(다음 도크 쪽으로). 기능부는 파랑, 청록은 붙기 강조에만.
 // - 탑승부 효과(R7): 탑승 중 케이지 표시등 최대·케이지 아래 작은 추진 불꽃·속도 반대쪽 잔선, 이동 중 트롤리 접점 불꽃(속도 비례) + RollerSparkFeedback 0.25초 간격,
 //   구동음 travelLoop(기존 효과음). 탑승 중 수레는 Player의 화면 보간 위치(FixedMotionBody)를 따른다.
@@ -29,12 +34,22 @@ public sealed class PropCraneHook : ZipCraneBase
     public const float PathEase = .1f;
     /// <summary>5차 기본 이동 속도(칸/초, 대시 30의 0.8배 — DESIGN_V5 판단값).</summary>
     public const float DefaultSpeed = 24f;
-    /// <summary>5차 빈 크레인 복귀·호출 속도(칸/초, 상수 — 배치 설정 키를 늘리지 않는다).</summary>
+    /// <summary>5차 빈 크레인 복귀 속도(칸/초, 상수 — 배치 설정 키를 늘리지 않는다). 6차: 빈 도크 호출은 이동 없이 즉시 생성한다.</summary>
     public const float ReturnSpeed = 40f;
     /// <summary>5차 체결 뒤 출발 지연(초).</summary>
     public const float DepartDelay = .12f;
-    /// <summary>5차 호출 뒤 이 시간 안에 도착해야 자동 붙기를 시도한다(초 — 그보다 늦으면 도크에서 기다린다).</summary>
-    public const float CallAutoWindow = 3f;
+    /// <summary>6차 T4: 표시 기준점 G의 머리 로컬 y(머리 원점 = 매달린 발 + 2 → G = 매달린 발 + 1.97, 강조 테두리 중심 — 스프레더·훅 블록·집게를 한 상자에 담는다).</summary>
+    public const float HeadAimY = -.03f;
+    /// <summary>6차 T4: 매달린 발 → 표시 기준점 G(빈 도크 = 생겨날 머리 자리).</summary>
+    public const float AimOffset = 1.97f;
+    /// <summary>6차 T4: 표적 괄호 상자 반크기(강조 상자 1.1 × 0.43 + 여유). 생성 도구가 같은 값으로 괄호 Mesh를 굽는다.</summary>
+    public static readonly Vector2 FrameHalf = new Vector2(1.25f, .6f);
+    /// <summary>6차 T4: 키 안내 자리 = 매달린 발 + 1.25(머리 바로 아래 — 예전 0.1은 꺼진 케이지 바닥의 허공이었다).</summary>
+    public const float PromptOffset = 1.25f;
+    /// <summary>6차 T5: 즉시 생성 직후 새 도크 유령 윤곽·도크등 섬광 시간(초, 판단값).</summary>
+    public const float SummonFlashTime = .18f;
+    /// <summary>6차 T5: 옛 자리 파괴·새 자리 생성 때 터뜨리는 불꽃 입자 수(판단값 — 곧 붙기 도착 때 14개가 다시 터진다).</summary>
+    public const int VanishSparks = 10, AppearSparks = 8;
 
     /// <summary>경로 점 i(1..7)의 가로·세로 설정 키.</summary>
     public static string PathXKey(int i) => "cranePath" + i + "X";
@@ -84,7 +99,7 @@ public sealed class PropCraneHook : ZipCraneBase
     [SerializeField] private FeedbackDataSO sparkFeedback;
     [SerializeField, Min(.05f)] private float sparkInterval = .25f;
 
-    // 빈 도크 호출 지점(붙기 목록에 따로 오른다 — 고르면 붙지 않고 크레인을 부른다).
+    // 빈 도크 호출 지점(붙기 목록에 따로 오른다 — 6차 T5: 고르면 크레인이 그 도크에 즉시 생기고 같은 프레임에 붙는다).
     private sealed class DockPoint : IZipAnchor, IZipCallTarget
     {
         private readonly PropCraneHook hook;
@@ -114,8 +129,8 @@ public sealed class PropCraneHook : ZipCraneBase
     private float pathS;                    // 수레가 있는 경로 위 거리(0 = 집 도크, pathLength = 끝 도크)
     private int restDock, departDock, targetDock;
     private float moveFrom, moveDistance, moveSign, moveTime;
-    private PlayerController caller;
-    private float callTime;
+    private float summonFlash = -1f;        // 6차 T5: 즉시 생성 뒤 경과(음수 = 섬광 없음)
+    private int summonDock;
     private readonly bool[] dockFocus = new bool[2];
     private DockPoint[] dockPoints = Array.Empty<DockPoint>();
     private float flow;
@@ -136,13 +151,16 @@ public sealed class PropCraneHook : ZipCraneBase
     public bool LastRideArrived { get; private set; }
     /// <summary>도중 하차 뒤 출발 도크로 돌아온 횟수(검사용).</summary>
     public int Returns { get; private set; }
-    /// <summary>5차: 받은 호출 수·호출로 도크에 도착한 수·도착 때 자동 붙기를 시작한 수(검사용).</summary>
+    /// <summary>6차 T5: 빈 도크 호출로 그 도크에 즉시 생성한 수·파괴/생성 연출을 낸 수(검사용, 대여마다 0).</summary>
     public int Calls { get; private set; }
-    public int CallArrivals { get; private set; }
-    public int AutoZips { get; private set; }
+    public int SummonEffects { get; private set; }
+    /// <summary>6차 T5: 마지막 즉시 생성 직전의 수레 매달린 발(옛 자리, 월드, 검사용).</summary>
+    public Vector2 LastSummonFrom { get; private set; }
+    /// <summary>6차 T5: 새 도크 섬광이 진행 중인지(검사용).</summary>
+    public bool SummonFlashing => summonFlash >= 0f;
     /// <summary>탑승 중 찍은 최고 속도(칸/초, 검사용).</summary>
     public float PeakSpeed { get; private set; }
-    /// <summary>5차: 빈 크레인 복귀·호출 이동 중 찍은 최고 속도(칸/초, 검사용).</summary>
+    /// <summary>5차: 빈 크레인 복귀 이동 중 찍은 최고 속도(칸/초, 검사용 — 6차: 즉시 생성은 이동이 없어 올리지 않는다).</summary>
     public float PeakMoveSpeed { get; private set; }
     /// <summary>5차: 붙은 뒤 실제로 출발하기까지 걸린 시간(초, 검사용).</summary>
     public float LastDepartWait { get; private set; }
@@ -168,7 +186,7 @@ public sealed class PropCraneHook : ZipCraneBase
     // ── 설정 ─────────────────────────────
 
     private WaveDeviceParameter CountParameter => new WaveDeviceParameter(PathCountKey, "경로 점 수", "집(점 0)을 포함한 경로 점 수입니다. 2면 집에서 점 1까지 곧게 갑니다. 양 끝이 도크(승강장)입니다.", "개", MinPoints, MaxPoints, 1f, pathCount, true);
-    private WaveDeviceParameter SpeedParameter => new WaveDeviceParameter(SpeedKey, "이동 속도", "Player를 태우고 경로를 따라 옮기는 일정 속도입니다(시작·끝 0.1초만 가감속). 빈 크레인의 복귀·호출은 40칸/초입니다.", "칸/초", 10f, 40f, 1f, travelSpeed);
+    private WaveDeviceParameter SpeedParameter => new WaveDeviceParameter(SpeedKey, "이동 속도", "Player를 태우고 경로를 따라 옮기는 일정 속도입니다(시작·끝 0.1초만 가감속). 도중에 내린 빈 크레인은 40칸/초로 돌아가고, 빈 도크를 골라 ↑를 누르면 크레인이 그 도크에 바로 생겨납니다.", "칸/초", 10f, 40f, 1f, travelSpeed);
 
     private WaveDeviceParameter PointParameter(int i, bool y)
     {
@@ -241,11 +259,12 @@ public sealed class PropCraneHook : ZipCraneBase
     protected override float ShakeScale => 1.2f;
     protected override bool AnyFocus => ZipFocused || dockFocus[0] || dockFocus[1];
 
-    // 빈 도크 i를 호출 지점으로 고를 수 있는지: 크레인이 반대 도크에서 쉬는 중(또는 이미 i로 오는 중)이고 쓸 수 있는 시점.
+    // 빈 도크 i를 호출 지점으로 고를 수 있는지: 쓸 수 있는 시점이고, 크레인이 반대 도크에서 쉬는 중이거나(6차 T5) 도중 하차 뒤 복귀 중(두 도크 모두 — 복귀를 끊고 그 도크로).
+    // 탑승 중·붙어 오는 중이면 고르지 않는다.
     private bool DockCallable(int index)
     {
-        if (!ReadyToServe || pathLength < .05f || IsRiding) return false;
-        if (phase == Phase.Calling) return targetDock == index;
+        if (!ReadyToServe || pathLength < .05f || IsRiding || ZipIncoming) return false;
+        if (phase == Phase.Returning) return true;
         return phase == Phase.Idle && restDock != index;
     }
 
@@ -257,21 +276,47 @@ public sealed class PropCraneHook : ZipCraneBase
     }
 
     /// <summary>
-    /// 5차 호출(B안): 크레인을 도크 index로 부른다(빈 채로 40칸/초). 이미 그 도크로 오는 중이면 true만 돌려준다. 쉬는 중이 아니면 false.
-    /// 도착 때 caller가 그 도크를 계속 선택 중이면 FacilityZip.TryAutoZip으로 붙는다. 검사에서도 쓴다.
+    /// 6차 T5: 크레인을 도크 index에 즉시 생성한다(빈 도크 호출 지점의 Call — 쉬는 중·복귀 중). 고를 수 없는 도크면 false(아무것도 하지 않는다).
+    /// 붙기는 부른 쪽(FacilityZip)이 같은 프레임에 시작한다 — 직접 부르면(검사 등) 크레인은 그 도크에서 기다린다. player는 쓰지 않는다(계약 유지).
     /// </summary>
     public bool Call(PlayerController player, int index)
     {
         if (index < 0 || index > 1 || !DockCallable(index)) return false;
-        if (phase == Phase.Calling) return true;
-        caller = player;
-        callTime = Time.time;
-        Calls++;
-        StartMove(index, Phase.Calling);
+        Summon(index);
         return true;
     }
 
-    // 빈 크레인을 도크 dock으로 옮기기 시작한다(복귀·호출 공통, 표시만 — 판정 없음).
+    // 6차 T5: 옛 자리 파괴 연출 → 그 도크에서 쉬는 크레인으로 즉시 옮김(복귀 중이면 복귀를 끊는다 — 복귀 수는 세지 않는다) → 새 자리 생성 연출.
+    // 위치는 경로 위 거리(pathS)와 표시 부품만 바꾼다(판정 없음 — 빈 크레인은 원래 표시 전용). 흔들림·새 음원 없음.
+    private void Summon(int dock)
+    {
+        Calls++;
+        // ① 옛 자리 파괴: 옮기기 전에 자기 불꽃 입자를 터뜨린다(월드 공간 입자라 옛 자리에 남는다). 소리는 크레인 자신의 해제음(기존 — 거리 감쇠).
+        Vector2 oldHook = ZipHookPoint;
+        LastSummonFrom = carriagePlaced ? lastCarriageFeet : ZipFeet;
+        FacilityFeedback.Burst(arrivalSparks, VanishSparks);
+        FacilityFeedback.Burst(trolleySparks, VanishSparks);
+        FacilityFeedback.Play(releaseFeedback, oldHook);
+        // ② 그 도크에서 쉬는 크레인.
+        targetDock = restDock = dock;
+        pathS = DockS(dock);
+        moveFrom = moveDistance = moveTime = 0f;
+        travelVelocity = Vector2.zero;
+        hauledToDock = false;
+        phase = Phase.Idle;
+        phaseTime = 0f;
+        // ③ 바퀴·드럼이 순간 이동을 굴러간 거리로 세지 않게 한 뒤 자세를 바로 맞춘다(수레·훅이 새 도크로 — 같은 프레임의 붙기 연출이 거기서 시작한다).
+        carriagePlaced = false;
+        ApplyPose(0f);
+        // ④ 새 자리 생성: 유령 윤곽·도크등 섬광(UpdateDockLights)·불꽃 입자·전원음 하나(곧 붙기 출발음·도착 체결음이 이어진다).
+        summonFlash = 0f;
+        summonDock = dock;
+        FacilityFeedback.Burst(arrivalSparks, AppearSparks);
+        FacilityFeedback.Play(powerOnSound, ZipHookPoint);
+        SummonEffects++;
+    }
+
+    // 빈 크레인을 도크 dock으로 옮기기 시작한다(도중 하차 복귀, 표시만 — 판정 없음).
     private void StartMove(int dock, Phase movePhase)
     {
         targetDock = dock;
@@ -287,19 +332,12 @@ public sealed class PropCraneHook : ZipCraneBase
 
     private void FinishMove()
     {
-        bool calling = phase == Phase.Calling;
         pathS = DockS(targetDock);
         restDock = targetDock;
         travelVelocity = Vector2.zero;
         phase = Phase.Idle;
         phaseTime = 0f;
-        if (!calling) { Returns++; return; }
-        CallArrivals++;
-        var who = caller;
-        caller = null;
-        // 도착 때 그 도크가 계속 선택돼 있으면(FacilityZip이 확인) 자동으로 붙는다. 아니면 이 도크에서 기다린다.
-        if (who != null && Time.time - callTime <= CallAutoWindow && targetDock < dockPoints.Length && FacilityZip.TryAutoZip(this, dockPoints[targetDock], who))
-            AutoZips++;
+        Returns++;
     }
 
     // ── 수명 ─────────────────────────────
@@ -322,13 +360,15 @@ public sealed class PropCraneHook : ZipCraneBase
     {
         LastRideArrived = false;
         hauledToDock = false;
-        Returns = Calls = CallArrivals = AutoZips = 0;
+        Returns = Calls = SummonEffects = 0;
         PeakSpeed = PeakMoveSpeed = LastDepartWait = 0f;
+        LastSummonFrom = Vector2.zero;
+        summonFlash = -1f;
+        summonDock = 0;
         pathS = 0f;
         restDock = departDock = targetDock = 0;
         moveFrom = moveDistance = moveTime = 0f;
         moveSign = 1f;
-        caller = null;
         dockFocus[0] = dockFocus[1] = false;
         for (int i = 0; i < 2; i++) dockLampLevels[i] = dockGhostLevels[i] = arrowLevels[i] = -1f;
         flow = 0f;
@@ -352,11 +392,16 @@ public sealed class PropCraneHook : ZipCraneBase
         for (int i = 0; i < dockPoints.Length; i++) FacilityZip.Register(dockPoints[i]);
     }
 
+    // 6차: 대여 중 다시 켜지면 도크 호출 지점도 다시 올린다(OnDisable이 내렸다).
+    protected override void OnReenabled()
+    {
+        for (int i = 0; i < dockPoints.Length; i++) FacilityZip.Register(dockPoints[i]);
+    }
+
     private void UnregisterDocks()
     {
         for (int i = 0; i < dockPoints.Length; i++) FacilityZip.Unregister(dockPoints[i]);
         dockFocus[0] = dockFocus[1] = false;
-        caller = null;
     }
 
     protected override void OnReturning()
@@ -466,7 +511,6 @@ public sealed class PropCraneHook : ZipCraneBase
         PeakSpeed = 0f;
         LastDepartWait = 0f;
         departDock = restDock;
-        caller = null;
         if (pathLength < .05f)
         {
             phase = Phase.Waiting;
@@ -558,25 +602,36 @@ public sealed class PropCraneHook : ZipCraneBase
 
     // ── 선택 표시(도크 호출 지점) ─────────────────────────────
 
-    protected override bool TryAimTarget(out Vector2 center, out float level)
+    // 6차 T4·T5: 선택된 빈 도크는 크레인이 생겨날 머리 자리(도크 매달린 발 + 1.97)를 같은 크기 괄호로 가리킨다. 밝기는 일반 선택과 같게 0.9(예전 0.5 — 호출이 곧 탑승).
+    protected override bool TryAimTarget(out Vector2 center, out Vector2 half, out float level)
     {
         for (int i = 0; i < 2; i++)
         {
             if (!dockFocus[i] || IsRiding) continue;
-            center = DockFeet(i) + Vector2.up * BodyHalfHeight;
+            center = DockFeet(i) + Vector2.up * AimOffset;
+            half = FrameHalf;
             var runner = FacilityZip.Runner;
-            level = runner != null && i < dockPoints.Length && ReferenceEquals(runner.Locked, dockPoints[i]) ? lockedLevel : .5f;
+            level = runner != null && i < dockPoints.Length && ReferenceEquals(runner.Locked, dockPoints[i]) ? lockedLevel : focusLevel;
             return true;
         }
-        return base.TryAimTarget(out center, out level);
+        return base.TryAimTarget(out center, out half, out level);
     }
 
+    /// <summary>6차 T4: 표시 기준점 G = 머리(스프레더) 중심(매달린 발 + 1.97). 머리가 없으면 수레 매달린 발 + 1.97.</summary>
+    protected override Vector2 AimPoint => head != null ? (Vector2)head.TransformPoint(new Vector3(0f, HeadAimY, 0f)) : (carriagePlaced ? lastCarriageFeet : ZipFeet) + Vector2.up * AimOffset;
+
+    protected override Vector2 AimFrameHalf => FrameHalf;
+
+    // 직사각형 괄호는 돌리지 않는다(직선 끝이 상자 가장자리에 맞게).
+    protected override bool BracketSpins => false;
+
+    // 6차 T4: 키 안내는 머리 바로 아래(매달린 발 + 1.25). 선택된 빈 도크도 같은 자리.
     protected override Vector2 PromptPoint
     {
         get
         {
-            for (int i = 0; i < 2; i++) if (dockFocus[i]) return DockFeet(i) + Vector2.up * .1f;
-            return (carriagePlaced ? lastCarriageFeet : ZipFeet) + Vector2.up * .1f;
+            for (int i = 0; i < 2; i++) if (dockFocus[i]) return DockFeet(i) + Vector2.up * PromptOffset;
+            return (carriagePlaced ? lastCarriageFeet : ZipFeet) + Vector2.up * PromptOffset;
         }
     }
 
@@ -585,7 +640,7 @@ public sealed class PropCraneHook : ZipCraneBase
     protected override void TickMotion(float dt)
     {
         if (transform.position != builtAt) RebuildPath();
-        if (phase == Phase.Returning || phase == Phase.Calling)
+        if (phase == Phase.Returning)
         {
             moveTime += dt;
             float before = pathS;
@@ -597,15 +652,16 @@ public sealed class PropCraneHook : ZipCraneBase
             if (moveTime >= duration) FinishMove();
         }
         if (cageFlash >= 0f) { cageFlash += dt; if (cageFlash > .2f) cageFlash = -1f; }
+        if (summonFlash >= 0f) { summonFlash += dt; if (summonFlash > SummonFlashTime) summonFlash = -1f; }
 
         float speed = travelVelocity.magnitude;
-        bool moving = (phase == Phase.Riding || phase == Phase.Returning || phase == Phase.Calling) && speed > .2f;
+        bool moving = (phase == Phase.Riding || phase == Phase.Returning) && speed > .2f;
         // 레일: 대기 중 흐리고 느리게, 탑승 중 밝고 빠르게, 빈 이동 중 중간, 쓸 수 없으면 거의 꺼짐. 빛 덩어리는 다음 도크 쪽으로 흐른다.
         bool available = ZipAvailable;
         float line, band, joint, pulse, flowSpeed;
         float toward = NextDockSign();
         if (IsRiding) { line = 1.1f; band = .6f; joint = 1f; pulse = 1.4f; flowSpeed = 14f; }
-        else if (phase == Phase.Returning || phase == Phase.Calling) { line = .6f; band = .35f; joint = .6f; pulse = .8f; flowSpeed = 8f; }
+        else if (phase == Phase.Returning) { line = .6f; band = .35f; joint = .6f; pulse = .8f; flowSpeed = 8f; }
         else if (available) { line = .45f; band = .28f; joint = .5f; pulse = .6f; flowSpeed = 3f; }
         else { line = .15f; band = .1f; joint = .15f; pulse = 0f; flowSpeed = 0f; }
         float p = Mathf.Max(.25f, power);
@@ -649,20 +705,19 @@ public sealed class PropCraneHook : ZipCraneBase
     private float NextDockSign()
     {
         if (phase == Phase.Riding || phase == Phase.Waiting) return departDock == 0 ? 1f : -1f;
-        if (phase == Phase.Returning || phase == Phase.Calling) return moveSign;
+        if (phase == Phase.Returning) return moveSign;
         return restDock == 0 ? 1f : -1f;
     }
 
-    // 도크등: 크레인이 있으면 켜짐, 빈 도크에서 부를 수 있으면 천천히 점멸(선택되면 조금 빠르게), 호출 중이면 빠르게 점멸, 그 밖에는 흐리게.
-    // 유령 윤곽: 크레인이 없는 도크에만 흐리게.
+    // 도크등: 크레인이 있으면 켜짐, 빈 도크에서 부를 수 있으면 천천히 점멸(선택되면 조금 빠르게), 그 밖에는 흐리게.
+    // 유령 윤곽: 크레인이 없는 도크에만 흐리게. 6차 T5: 즉시 생성 직후 0.18초는 그 도크의 유령 윤곽이 0.6 → 2.4 → 0으로 번쩍이고 도크등도 함께 섬광.
     private void UpdateDockLights()
     {
         for (int i = 0; i < 2; i++)
         {
             bool here = Mathf.Abs(pathS - DockS(i)) < .05f;
             float lamp;
-            if (phase == Phase.Calling && targetDock == i) lamp = Mathf.Repeat(clock, .25f) < .12f ? 1.3f : .2f;
-            else if (here) lamp = 1f;
+            if (here) lamp = 1f;
             else if (DockCallable(i))
             {
                 float period = dockFocus[i] ? .5f : 1.2f;
@@ -671,6 +726,12 @@ public sealed class PropCraneHook : ZipCraneBase
             else lamp = .2f;
             lamp *= Mathf.Max(.25f, power);
             float ghost = here ? 0f : (dockFocus[i] ? .6f : .3f) * Mathf.Max(.25f, power);
+            if (summonFlash >= 0f && i == summonDock)
+            {
+                float f = Mathf.Clamp01(summonFlash / SummonFlashTime);
+                ghost = f < 1f / 3f ? Mathf.Lerp(.6f, 2.4f, f * 3f) : Mathf.Lerp(2.4f, 0f, (f - 1f / 3f) * 1.5f);
+                lamp = Mathf.Max(lamp, 1.6f * (1f - f));
+            }
             // 값이 바뀔 때만 밝기를 넣는다(MaterialPropertyBlock을 매 프레임 쓰지 않게).
             if (i < dockLampLights.Length && Mathf.Abs(dockLampLevels[i] - lamp) > .002f) dockLamp?.SetOne(i, lamp);
             if (i < dockGhostLights.Length && Mathf.Abs(dockGhostLevels[i] - ghost) > .002f) ghostLamp?.SetOne(i, ghost);

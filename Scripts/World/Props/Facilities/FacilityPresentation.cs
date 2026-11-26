@@ -3,20 +3,42 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// 시설의 반복 소리(구동음·웅웅거림). 카메라와의 거리로 음량을 줄이고(DungeonPropFeedback와 같은 7~24칸 규칙), 들리지 않으면 음원을 반납한다.
+/// 시설의 반복 소리(구동음·웅웅거림). 카메라와의 거리로 음량을 줄이고(DungeonPropFeedback와 같은 7~24칸 규칙 — 7차: 가까운·먼 거리를 따로 받는 오버로드), 들리지 않으면 음원을 반납한다.
 /// SoundManager.PlayLoop 경로를 그대로 쓰므로 효과음 음량 설정·믹서를 따른다. 새 음원 파일은 쓰지 않는다(임시 기존 효과음).
+/// 7차 V3(겹침 감쇠 결함 수정): SoundManager.PlayLoop는 같은 Clip이 이미 k개 울리면 시작 음량에 crowdedVolumeMultiplier^k를 곱한다. 예전에는 다음 프레임부터
+/// source.volume = 음량 × 거리 배율로 덮어써 그 겹침 배율이 사라졌다. 이제 시작 직후 그 배율(CrowdScale)을 기억하고 매 프레임 함께 곱한다(멈췄다 다시 켜면 다시 잰다).
+/// 겹침 배율은 시작 순간의 동시 재생 수로 정해진다(SoundManager와 같은 규칙 — 먼저 울리던 소리가 멈춰도 이미 울리는 소리는 그대로).
 /// </summary>
 public sealed class FacilityLoopSound
 {
     private SoundHandle handle;
     private SoundOptions playing;
+    private float crowd = 1f;
 
     public bool IsPlaying => handle != null && handle.IsValid;
-
-    /// <summary>매 프레임 부른다. active가 false이거나 멀면 멈춘다. level은 0~1 추가 배율(가속·감속).</summary>
-    public void Update(SoundOptions options, Vector3 position, bool active, float level = 1f)
+    /// <summary>7차 V3: 지금 재생에 곱하는 겹침 배율(시작 때 SoundManager가 정한 값, 재생 중이 아니면 1 — 검사용).</summary>
+    public float CrowdScale => crowd;
+    /// <summary>지금 음원 음량(재생 중이 아니면 0 — 검사용).</summary>
+    public float CurrentVolume
     {
-        float gain = active && options != null && options.clip != null ? DungeonPropFeedback.DistanceGain(position) * Mathf.Clamp01(level) : 0f;
+        get
+        {
+            var source = IsPlaying ? handle.GetSource() : null;
+            return source != null ? source.volume : 0f;
+        }
+    }
+
+    /// <summary>매 프레임 부른다. active가 false이거나 멀면 멈춘다. level은 0~1 추가 배율(가속·감속). 거리 감쇠는 기본 7~24칸.</summary>
+    public void Update(SoundOptions options, Vector3 position, bool active, float level = 1f)
+        => Update(options, position, active, level, DungeonPropFeedback.NearDistance, DungeonPropFeedback.FarDistance);
+
+    /// <summary>
+    /// 7차 V3: 거리 감쇠 범위를 따로 받는다(near 안 원음, far 밖 정지, 사이 smoothstep — DungeonPropFeedback.DistanceGain 오버로드).
+    /// 텔레포트 받침 웅웅거림은 받침 근처 4~14칸만 들리게 한다(DungeonTeleporter.humNear·humFar).
+    /// </summary>
+    public void Update(SoundOptions options, Vector3 position, bool active, float level, float near, float far)
+    {
+        float gain = active && options != null && options.clip != null ? DungeonPropFeedback.DistanceGain(position, near, far) * Mathf.Clamp01(level) : 0f;
         if (gain <= .001f)
         {
             Stop();
@@ -29,10 +51,13 @@ public sealed class FacilityLoopSound
             handle = SoundManager.Instance.PlayLoop(options, position);
             playing = options;
             if (handle == null) return;
+            // SoundManager가 시작 음량에 곱한 겹침 배율(같은 Clip이 먼저 k개 울리면 crowdedVolumeMultiplier^k)을 기억한다.
+            var started = handle.GetSource();
+            crowd = started != null && options.volume > 1e-4f ? Mathf.Clamp01(started.volume / options.volume) : 1f;
         }
         handle.SetPosition(position);
         var source = handle.GetSource();
-        if (source != null) source.volume = options.volume * gain;
+        if (source != null) source.volume = options.volume * gain * crowd;
     }
 
     public void Stop()
@@ -40,6 +65,7 @@ public sealed class FacilityLoopSound
         if (handle != null && handle.IsValid) handle.Stop();
         handle = null;
         playing = null;
+        crowd = 1f;
     }
 }
 

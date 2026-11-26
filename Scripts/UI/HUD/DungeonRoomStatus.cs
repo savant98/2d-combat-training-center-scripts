@@ -1,3 +1,4 @@
+using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -27,6 +28,16 @@ using UnityEngine.UI;
 /// - 5차(2026-11-25, DESIGN_V5 §1 S8): 자식 부품 <see cref="DungeonUnlockBurst"/>(UnlockBurst) — RoomCleared(잠금이 있던 방, 보스 방 포함)에 화면 가장자리 녹색 빛 +
 ///   띠 아래 '잠금 해제!' 문구를 재생하고, RoomUnlocked(문 열림)에 한 번 더 맥동시킨다. 띠 상태 기계와 따로 흐르는 평행 연출이라 띠 순서·시간은 그대로다.
 ///   보임은 띠와 같은 던전 HUD 판정 + 패배 정지 아님(던전 성공 SECTOR CLEAR가 이어지는 중에는 마저 보임). 부품이 없으면(4차 Prefab) 아무것도 하지 않는다.
+/// - 6차(2026-11-26, DESIGN_V6 T12): 단계 상승 알림은 대기열 자리(ROOM CLEAR + roomToSectorDelay)에 띄우고 띠의 THREAT 단계는 건너뛴다(EXIT·SECTOR 순서 그대로).
+///   던전 컷씬(DungeonCutsceneDirector)이 도는 동안은 알림을 기다렸다가 컷씬 뒤에 띄운다.
+/// - 7차(2026-11-26, DESIGN_V7):
+///   · V8 난이도 상승 계기: 단계 상승은 등급 알림(위 가운데 붉은 띠 — 6차에 재사용하던 것, 이제 main 그대로)과 다른 자리·다른 모양인 자식 부품
+///     <see cref="DungeonThreatRise"/>(ThreatRise — 오른쪽 HUD 열 미니맵 아래 세로 5칸 사다리·빛 기둥, 약 3.65초)로 띄운다. 이전 배율은 이 띠가 기억한다(densityShown).
+///     재생 중 컷씬·HUD 숨김·일시정지(현장 단말기 포함)면 시간표를 멈추고, 다음 전투 방 HOSTILES에 0.3초 안에 접고, 새 던전·재도전·패배·Unbind면 바로 끈다.
+///     계기를 띄울 수 없으면(부품 없음·규칙에서 끔·훈련 기록 아님 = DungeonThreatAlert.Available 거짓) 4차 THREAT 띠로 대신한다.
+///   · V5 레버 대기: 원본이 IDungeonObjectiveGate를 함께 구현하면 ObjectiveGateChanged를 구독한다. 적 전멸 뒤 레버가 남은 방(Phase = Objective)은
+///     앰버 'PULL LEVER'(판 Exit 톤, 저절로 걷히지 않음)를 유지한다 — 유지되는 동안 EXIT UNLOCKED 등은 대기열에 남아 레버 컷씬 뒤 ROOM CLEAR 다음에 보인다.
+///     레버를 당겨 방 클리어되면 RoomCleared로 ROOM CLEAR, 대기가 버려지면(재도전·종료) 원본 단계(None) 폴링으로 걷는다.
 /// Prefab은 tools/Unity/DungeonRoomStatusSetup.cs가 만든다.
 /// </summary>
 [DisallowMultipleComponent]
@@ -46,6 +57,8 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         ExitUnlocked = 5,
         /// <summary>4차: 단계 상승 '▲ THREAT 중급'.</summary>
         Threat = 6,
+        /// <summary>7차 V5: 레버 대기 'PULL LEVER'(앰버, 레버를 당길 때까지 유지).</summary>
+        Objective = 7,
     }
 
     [Header("Parts")]
@@ -63,6 +76,8 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     [SerializeField] private DungeonEnemyMarkers markers;
     [Tooltip("5차 방 클리어 녹색 빛·'잠금 해제!' 부품(비어 있으면 연출 없음)")]
     [SerializeField] private DungeonUnlockBurst unlockBurst;
+    [Tooltip("7차 난이도 상승 계기(미니맵 아래, 비어 있으면 4차 THREAT 띠로 대신)")]
+    [SerializeField] private DungeonThreatRise threatRise;
 
     [Header("Labels (정적 글꼴 — 영문 대문자·숫자만)")]
     [SerializeField] private string hostileLabel = "HOSTILES";
@@ -77,6 +92,8 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     [SerializeField] private string exitLabel = "EXIT UNLOCKED";
     [Tooltip("4차 단계 상승 띠의 앞 글자(뒤에 한글 단계 이름 — DungeonThreatText.Label)")]
     [SerializeField] private string threatLabel = "THREAT";
+    [Tooltip("7차 레버 대기 띠(적 전멸 뒤 레버가 남은 방 — 앰버, 유지)")]
+    [SerializeField] private string objectiveLabel = "PULL LEVER";
     [Tooltip("HOSTILES 글자의 왼쪽·오른쪽 여백(아이콘·숫자 자리)")]
     [SerializeField] private Vector2 hostileLabelMargin = new Vector2(46f, 86f);
 
@@ -125,6 +142,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     private IDungeonCombatSource source;
     private IDungeonExitSource exitSource;
     private IDungeonThreatSource threatSource;
+    private IDungeonObjectiveGate gateSource;
     private bool initialized;
     private float clock;
     private float alpha;
@@ -144,6 +162,11 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     // 4차 대기열·순찰
     private bool threatPending, exitPending, patrolSeen, lastExitUnlocked;
     private DungeonThreatLevel threatShown = DungeonThreatLevel.Intro;
+    // 6차 알림(7차 V8 — 난이도 상승 계기): 띠 대신 띄울 단계 상승(이전 → 새), 컷씬 중이면 기다린다.
+    private bool alertPending;
+    private DungeonThreatLevel alertFrom = DungeonThreatLevel.Intro, alertTo = DungeonThreatLevel.Intro;
+    // 7차 V8: 마지막으로 보인 적 수 배율(원본은 지금 배율만 준다 — 연결·재도전 때 지금 값, 상승 대기 시작 때 이전 값으로 붙잡고, 띄운 뒤 갱신).
+    private float densityShown = 1f, alertFromDensity = 1f;
 
     // ===== 검증·디버그가 읽는 값 =====
     public IDungeonCombatSource Source => source;
@@ -157,6 +180,11 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     public DungeonEnemyMarkers Markers => markers;
     /// <summary>5차 방 클리어 녹색 빛·'잠금 해제!' 부품(없으면 null).</summary>
     public DungeonUnlockBurst UnlockBurst => unlockBurst;
+    /// <summary>7차 난이도 상승 계기 부품(없으면 null).</summary>
+    public DungeonThreatRise ThreatRise => threatRise;
+    /// <summary>7차 레버 대기 원본(IDungeonObjectiveGate, 없으면 null).</summary>
+    public IDungeonObjectiveGate GateSource => gateSource;
+    public string ObjectiveLabel => objectiveLabel;
     public DungeonStatusPlateGraphic Plate => plate;
     public RectTransform Band => band;
     public Image Flash => flash;
@@ -184,6 +212,20 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     public CanvasGroup HudGroupOverride { get; set; }
     /// <summary>보스 바 보임을 직접 지정한다(검증용). null이면 StageHUD.CurrentBoss로 판정.</summary>
     public bool? BossBarOverride { get; set; }
+    /// <summary>단계 상승 알림을 받을 곳(검증용 — 이전·새 단계·이전·새 적 수 배율을 받아 띄웠으면 true). null이면 7차 난이도 상승 계기(ThreatRise).</summary>
+    public Func<DungeonThreatLevel, DungeonThreatLevel, float, float, bool> ThreatAlertOverride { get; set; }
+    /// <summary>7차: 난이도 상승 계기를 띄울 수 있는지 직접 지정한다(검증용). null이면 DungeonThreatAlert.Available(규칙 켬 + 훈련 기록 중).</summary>
+    public bool? ThreatRiseAvailableOverride { get; set; }
+    /// <summary>7차: 일시정지(GameTimeController.IsPaused — 일시정지 메뉴·현장 단말기)를 직접 지정한다(검증용). null이면 실제 값.</summary>
+    public bool? PauseOverride { get; set; }
+    /// <summary>7차: 마지막으로 보인(또는 상승 대기 시작 때 붙잡은) 적 수 배율(검증용).</summary>
+    public float DensityShown => densityShown;
+    /// <summary>6차: 컷씬 진행 여부를 직접 지정한다(검증용). null이면 DungeonCutsceneDirector.AnyPlaying.</summary>
+    public bool? CutsceneOverride { get; set; }
+    /// <summary>6차: 띄우려고 기다리는 단계 상승 알림이 있는지(컷씬 중 등, 검증용).</summary>
+    public bool ThreatAlertPending => alertPending;
+    /// <summary>알림(7차 계기 또는 검증용 대체)으로 띄운 단계 상승 수(검증용).</summary>
+    public int ThreatAlertsShown { get; private set; }
 
     private void Awake() => EnsureInit();
 
@@ -201,6 +243,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         if (band != null) bandBase = band.anchoredPosition;
         if (markers != null) markers.EnsureInit();
         if (unlockBurst != null) unlockBurst.EnsureInit();
+        if (threatRise != null) threatRise.EnsureInit();
         bandAlpha = 0f;
         Apply();
     }
@@ -232,6 +275,8 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         // 4차 선택 인터페이스: 원본(DungeonManager)이 출구·난이도도 내주면 함께 구독한다(DungeonManager가 따로 Bind해도 같은 결과).
         if (combatSource is IDungeonExitSource exits) BindExit(exits);
         if (combatSource is IDungeonThreatSource threats) BindThreat(threats);
+        // 7차 V5: 레버 대기 접점(선택).
+        if (combatSource is IDungeonObjectiveGate gate) BindGate(gate);
         SyncFromSource();
     }
 
@@ -251,8 +296,10 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         source = null;
         UnbindExit();
         UnbindThreat();
+        UnbindGate();
         sectorPending = unlocked = false;
         threatPending = exitPending = patrolSeen = false;
+        alertPending = false;
         SetState(BandState.Hidden);
         bandAlpha = 0f;
         fadeStart = -1f;
@@ -260,6 +307,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         {
             if (markers != null) markers.Clear();
             if (unlockBurst != null) unlockBurst.Stop();
+            if (threatRise != null) threatRise.Stop();
             Apply();
         }
     }
@@ -290,6 +338,23 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         if (threatSource == null) return;
         threatSource.ThreatChanged += OnThreatChanged;
         threatShown = threatSource.ThreatLevel;
+        densityShown = threatSource.DensityMultiplier;
+    }
+
+    /// <summary>7차 V5: 레버 대기 원본을 연결한다(같은 원본이면 그대로). 연결 순간 이미 대기 중이면 원본 단계 폴링(Objective)이 'PULL LEVER'를 맞춘다.</summary>
+    public void BindGate(IDungeonObjectiveGate gate)
+    {
+        EnsureInit();
+        if (ReferenceEquals(gateSource, gate)) return;
+        UnbindGate();
+        gateSource = gate;
+        if (gateSource != null) gateSource.ObjectiveGateChanged += OnObjectiveGateChanged;
+    }
+
+    private void UnbindGate()
+    {
+        if (gateSource != null) gateSource.ObjectiveGateChanged -= OnObjectiveGateChanged;
+        gateSource = null;
     }
 
     private void UnbindExit()
@@ -304,6 +369,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         if (threatSource != null) threatSource.ThreatChanged -= OnThreatChanged;
         threatSource = null;
         threatPending = false;
+        alertPending = false;
     }
 
     // 연결 순간(또는 이벤트를 놓쳤을 때) 원본 단계에 맞춘다.
@@ -319,13 +385,29 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     {
         sectorPending = unlocked = false;
         threatPending = exitPending = patrolSeen = false;
+        alertPending = false;
         lastExitUnlocked = ExitUnlockedNow();
+        densityShown = DensityNow();
         SetState(BandState.Hidden);
         bandAlpha = 0f;
         fadeStart = -1f;
         if (markers != null) markers.Clear();
         if (unlockBurst != null) unlockBurst.Stop();
+        if (threatRise != null) threatRise.Stop();
         Apply();
+    }
+
+    // 7차 V5: 레버 대기 시작 → 'PULL LEVER'. 끝(false)은 같은 프레임의 RoomCleared(ROOM CLEAR) 또는 원본 단계 폴링(대기를 버림 → None → 걷힘)에 맡긴다.
+    private void OnObjectiveGateChanged(int room, bool awaiting)
+    {
+        if (awaiting && SourceAlive() && !source.IsHalted) EnterObjective();
+    }
+
+    private void EnterObjective()
+    {
+        shownRemaining = 0;
+        killPulseStart = -100f;
+        SetState(BandState.Objective);
     }
 
     private void OnRoomHostile()
@@ -388,8 +470,8 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
 
     private void OnFloorEnded()
     {
-        // 싸우는 중에 던전이 끝나면(초기화 등) 바로 걷는다. 클리어 표시는 정해진 시간만큼 마저 보인다.
-        if (state == BandState.Hostile || state == BandState.Patrol) BeginFade();
+        // 싸우는 중(또는 레버 대기 중)에 던전이 끝나면(초기화 등) 바로 걷는다. 클리어 표시는 정해진 시간만큼 마저 보인다.
+        if (state == BandState.Hostile || state == BandState.Patrol || state == BandState.Objective) BeginFade();
         threatPending = exitPending = false;
         if (!unlocked) { unlocked = true; unlockAt = clock; }
     }
@@ -411,15 +493,20 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         // 4차 검토: 원본이 난이도를 쓰는 훈련(HasThreat)일 때만 단계 상승 띠를 띄운다(목표 패널·단말기와 같은 기준 — 손 배치 던전만 있는 훈련에는 없다).
         if (next > previous && ThreatShownAllowed())
         {
+            // 알림의 '이전 단계'(와 7차 이전 배율)는 아직 보이지 않은 상승의 처음 값이다(대기 중에 두 번 오르면 입문 → 중급).
+            if (!threatPending && !alertPending) { alertFrom = previous; alertFromDensity = densityShown; }
             threatPending = true;
             threatShown = next;
             TryFlushPending();
         }
         else
         {
-            // 재도전(처음 단계로)·내려감은 알리지 않는다.
+            // 재도전(처음 단계로)·내려감은 알리지 않는다(7차: 재생 중인 계기도 바로 끈다).
             threatPending = false;
+            alertPending = false;
             threatShown = next;
+            densityShown = DensityNow();
+            if (next < previous && threatRise != null) threatRise.Stop();
         }
     }
 
@@ -433,6 +520,31 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
 
     private bool ExitUnlockedNow() => exitSource != null && !(exitSource is UnityEngine.Object o && o == null) && exitSource.HasExit && exitSource.ExitUnlocked;
 
+    // 단계 상승 알림을 띄울 곳이 있는지(검증용 대체 → 7차 난이도 상승 계기 — 부품 있음 && 규칙 켬·훈련 기록 중).
+    private bool ThreatAlertAvailable() => ThreatAlertOverride != null || (threatRise != null && (ThreatRiseAvailableOverride ?? DungeonThreatAlert.Available));
+
+    // 지금 단계의 적 수 배율(난이도 원본이 없거나 사라졌으면 1).
+    private float DensityNow()
+    {
+        if (threatSource == null || (threatSource is UnityEngine.Object o && o == null)) return 1f;
+        return threatSource.DensityMultiplier;
+    }
+
+    // 기다리는 단계 상승 알림을 띄운다(던전 컷씬 중이면 다음 프레임에 다시 본다). 띄우지 못했으면(부품이 그 사이 사라짐 등) 버린다.
+    private void FlushThreatAlert()
+    {
+        if (!alertPending || (CutsceneOverride ?? DungeonCutsceneDirector.AnyPlaying)) return;
+        alertPending = false;
+        if (!ThreatShownAllowed()) return;
+        float density = DensityNow();
+        bool shown;
+        try { shown = ThreatAlertOverride != null ? ThreatAlertOverride(alertFrom, alertTo, alertFromDensity, density) : threatRise != null && threatRise.Play(alertFrom, alertTo, alertFromDensity, density); }
+        catch (Exception e) { Debug.LogException(e, this); shown = false; }
+        if (shown) ThreatAlertsShown++;
+        alertFrom = alertTo;
+        densityShown = density;
+    }
+
     private void EnterHostile(int remaining, int total)
     {
         shownRemaining = Mathf.Max(0, remaining);
@@ -440,6 +552,8 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         killPulseStart = -100f;
         sectorPending = unlocked = false;
         SetState(BandState.Hostile);
+        // 7차 V8: 다음 전투 방이 시작되면 난이도 상승 계기를 접는다(전투 시선 우선 — 0.3초).
+        if (threatRise != null) threatRise.Fold();
     }
 
     // 순찰 띠: 같은 방문에서 한 번만, 남은 적이 있고 다른 띠가 보이지 않을 때만(클리어 연쇄를 끊지 않는다).
@@ -476,8 +590,19 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
             // 대기 중에 원본이 바뀌었거나 HasThreat가 꺼졌으면 건너뛴다.
             if (ThreatShownAllowed())
             {
-                SetState(BandState.Threat);
-                return true;
+                // 7차 V8: 미니맵 아래 난이도 상승 계기로 띄운다(띠의 THREAT 단계는 건너뛰고 대기열의 다음 띠로). 띄울 수 없으면 4차 띠로 대신한다.
+                if (ThreatAlertAvailable())
+                {
+                    alertPending = true;
+                    alertTo = threatShown;
+                    FlushThreatAlert();
+                }
+                else
+                {
+                    densityShown = DensityNow();
+                    SetState(BandState.Threat);
+                    return true;
+                }
             }
         }
         if (exitPending)
@@ -524,6 +649,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
                 case BandState.RoomClear: shown = Spaced(roomClearLabel); break;
                 case BandState.SectorClear: shown = Spaced(sectorClearLabel); break;
                 case BandState.ExitUnlocked: shown = Spaced(exitLabel); break;
+                case BandState.Objective: shown = Spaced(objectiveLabel); break;
                 case BandState.Patrol:
                     // 'HOSTILES n · BYPASS' — 가운뎃점은 정적 글꼴에 없어 마침표를 올려 쓴다(DungeonUiText.MidDot).
                     shown = Spaced(patrolLabel) + DungeonUiText.SpaceTag + shownRemaining + DungeonUiText.SpaceTag + DungeonUiText.MidDot + DungeonUiText.SpaceTag + Spaced(bypassLabel);
@@ -556,6 +682,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
                 BandState.SectorClear => DungeonStatusPlateGraphic.Tone.Sector,
                 BandState.Patrol => DungeonStatusPlateGraphic.Tone.Patrol,
                 BandState.ExitUnlocked => DungeonStatusPlateGraphic.Tone.Exit,
+                BandState.Objective => DungeonStatusPlateGraphic.Tone.Exit,
                 BandState.Threat => DungeonStatusPlateGraphic.Tone.Threat,
                 _ => DungeonStatusPlateGraphic.Tone.Hostile,
             };
@@ -585,8 +712,10 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
             var phase = source.Phase;
             if (phase == DungeonRoomPhase.Hostile && (state == BandState.Hidden || state == BandState.Patrol || fadeStart >= 0f) && source.HostilesRemaining > 0 && !source.IsHalted)
                 EnterHostile(source.HostilesRemaining, source.HostilesTotal);
-            else if (phase == DungeonRoomPhase.Cleared && state == BandState.Hostile) OnRoomCleared(-1);
-            else if (phase == DungeonRoomPhase.None && state == BandState.Hostile) BeginFade();
+            else if (phase == DungeonRoomPhase.Cleared && (state == BandState.Hostile || state == BandState.Objective)) OnRoomCleared(-1);
+            else if (phase == DungeonRoomPhase.None && (state == BandState.Hostile || state == BandState.Objective)) BeginFade();
+            // 7차 V5: 레버 대기(이벤트를 놓쳤을 때 — 마지막 처치 뒤 'HOSTILES 0'이 남지 않게).
+            else if (phase == DungeonRoomPhase.Objective && (state == BandState.Hostile || state == BandState.Hidden) && !source.IsHalted) EnterObjective();
             // 4차 순찰: 방문마다 한 번(단계가 Patrol에서 벗어나면 다음 방문에 다시)
             if (phase == DungeonRoomPhase.Patrol) TryEnterPatrol();
             else
@@ -595,6 +724,8 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
                 if (state == BandState.Patrol) BeginFade();
             }
             TryFlushPending();
+            // 6차: 컷씬 때문에 기다리던 단계 상승 알림.
+            FlushThreatAlert();
         }
         else if (state != BandState.Hidden) BeginFade();
 
@@ -666,6 +797,17 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
             unlockBurst.Advance(deltaTime, burstShow, shiftNow);
         }
 
+        // 7차 V8 난이도 상승 계기: 던전 HUD 판정 && 패배 정지 아님(던전 성공 SECTOR CLEAR가 이어지는 중에는 마저). 패배면 바로 끈다.
+        // 컷씬·HUD 숨김·일시정지(현장 단말기 포함)면 시간표를 멈췄다가 다시 보이면 이어서 진행한다.
+        if (threatRise != null)
+        {
+            bool hud = DungeonHudGate.ShouldShowDungeonUi(HudGroupOverride);
+            bool success = sectorPending || state == BandState.SectorClear;
+            if (halted && !success && threatRise.IsPlaying) threatRise.Stop();
+            bool paused = !hud || (CutsceneOverride ?? DungeonCutsceneDirector.AnyPlaying) || (PauseOverride ?? GamePaused());
+            threatRise.Advance(deltaTime, hud && (!halted || success), paused);
+        }
+
         Apply();
     }
 
@@ -678,7 +820,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
         bool opening = state == BandState.Hostile || state == BandState.Patrol;
         float intro = opening ? TrainingBoardMotion.Seg(t, 0f, introTime) : 1f;
         float kill = state == BandState.Hostile ? 1f - TrainingBoardMotion.Seg(clock - killPulseStart, 0f, killPulseTime) : 0f;
-        bool clearing = state == BandState.RoomClear || state == BandState.SectorClear || state == BandState.ExitUnlocked || state == BandState.Threat;
+        bool clearing = state == BandState.RoomClear || state == BandState.SectorClear || state == BandState.ExitUnlocked || state == BandState.Threat || state == BandState.Objective;
         float clearFlash = clearing ? TrainingBoardMotion.Seg(t, 0f, .04f) * (1f - TrainingBoardMotion.Seg(t, .06f, clearFlashTime)) : 0f;
 
         if (band != null)
@@ -701,6 +843,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
             BandState.SectorClear => sectorColor,
             BandState.Patrol => patrolColor,
             BandState.ExitUnlocked => exitColor,
+            BandState.Objective => exitColor,
             BandState.Threat => DungeonThreatText.Color(threatShown),
             _ => hostileColor,
         };
@@ -732,6 +875,13 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
             countText.color = c;
             countText.rectTransform.localScale = Vector3.one * (1f + .45f * kill);
         }
+    }
+
+    // 일시정지(일시정지 메뉴·현장 단말기 — GameTimeController.IsPaused, 읽기만).
+    private static bool GamePaused()
+    {
+        var timeController = GameTimeController.Instance;
+        return timeController != null && timeController.IsPaused;
     }
 
     private bool BossBarVisible()

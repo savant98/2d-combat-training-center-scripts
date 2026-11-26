@@ -8,10 +8,14 @@ using UnityEngine;
 /// 팔 길이는 배치마다 바꿀 수 있으며, 길이에 맞춰 팔 몸체와 톱날 위치, 회전 속도를 맞춘다.
 /// 시작 각도(sawStartAngle, 위상)도 배치마다 바꿀 수 있다. 기본 0이면 지금과 같고, 0이 아니면 팔과 맞물린 구동 기어를
 /// WaveMachineMotion과 같은 식(기준 자세 × 회전)에 그 각도를 더해 다시 놓는다. 묶음으로 둔 톱날을 엇갈려 돌게(파도) 할 때 쓴다.
+/// 6차 T9(던전 방 클리어 정지, IDungeonRoomHazard): 정지 신호를 받은 호출에서 피해 판정을 끄고, 정전 물결 차례가 오면 불꽃·회전음을 거두며
+/// 팔을 감속해 설치면과 평행한 자세(팔 회전 0·180도 — 공격 원이 덜 읽힘)에 세운 뒤 톱날의 빨강(Damage 재질 Renderer)을 끈다.
+/// 감속은 WaveMachineMotion의 시간을 직접 정해(Seek) 팔·구동 기어·톱날 원판이 같은 식으로 함께 선다. 조립 등장이 끝나기 전에 온 신호는
+/// 기억했다가 등장 완료 때 바로 정지 자세로 들어간다. 신호가 없으면(던전 밖 일반 Wave) 늘 작동한다.
 /// </summary>
 [DisallowMultipleComponent]
 [DefaultExecutionOrder(100)] // 캐릭터가 이번 틱의 이동을 마친 뒤에 판정한다.
-public sealed class WaveRotatingSaw : WaveEnvironmentDevice
+public sealed class WaveRotatingSaw : WaveEnvironmentDevice, IDungeonRoomHazard
 {
     [Header("톱날")]
     [Tooltip("팔 끝의 톱날 중심들.")]
@@ -74,6 +78,24 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
         "도", 0f, 360f, 1f, 0f);
     public override WaveDeviceParameter[] Parameters => new[] { LengthParameter, SpinParameter, StartAngleParameter, WaveTrapDamage.DamageParameter(damage), WaveTrapDamage.ReturnParameter };
     public override bool SettingsChangeShape => true;
+
+    /// <summary>방 클리어 정지 신호를 받아 판정이 꺼져 있다(6차 T9, 검사용).</summary>
+    public bool IsHalted => halt.Halted;
+    /// <summary>정지 자세(팔 평행·빨강 끔·기어 정지)에 다 들어갔다(검사용).</summary>
+    public bool InHaltedPose => halt.Halted && haltSettled;
+    /// <summary>톱날의 빨강이 켜져 있는지(검사용).</summary>
+    public bool DangerLit => red == null || red.IsOn;
+    /// <summary>지금 팔 회전각(도, 기준 자세 기준·시작 각도 포함). 0·180이면 설치면과 평행하다(검사용).</summary>
+    public float ArmAngle => machine != null && machine.gearSpeeds != null && rotorGear >= 0 && rotorGear < machine.gearSpeeds.Length
+        ? Mathf.Repeat(machine.MotionTime * machine.gearSpeeds[rotorGear] + currentStartAngle, 360f) : 0f;
+
+    // 6차 T9 정지 감속: 정지 판단값. 감속 시간은 남은 각도에 따라 HaltMinTime~HaltMaxTime(초).
+    private const float HaltMinTime = .3f, HaltMaxTime = .7f;
+    private readonly HazardHalt halt = new HazardHalt();
+    private HazardRendererSwitch red;
+    private WaveMachineMotion machine;
+    private bool haltSettled, decelerating;
+    private float decelFrom, decelDistance, decelTime, decelElapsed;
 
     /// <summary>이 개체에 적용된 시작 각도(도).</summary>
     public float StartAngle => currentStartAngle;
@@ -212,6 +234,8 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
     protected override void Awake()
     {
         base.Awake();
+        machine = GetComponent<WaveMachineMotion>();
+        red = HazardRendererSwitch.ByMaterial(lifecycle != null && lifecycle.visualRoot != null ? lifecycle.visualRoot : transform, "Damage");
         CachePhase();
         ApplySettings(WaveDeviceSettings.None);
         if (targetMask.value == 0) targetMask = LayerMask.GetMask("Player");
@@ -224,6 +248,11 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
     {
         spinning = false;
         StopSparks();
+        // 풀 재사용·꺼짐: 정지 신호를 잊고(던전 밖 = 작동) 빨강·기어를 처음 상태로 둔다.
+        halt.Reset();
+        haltSettled = decelerating = false;
+        red?.Restore();
+        if (machine != null) machine.Frozen = false;
     }
 
     protected override void OnDeviceReady()
@@ -231,9 +260,103 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
         // 등장 완료 때 기준 자세(기본 길이)로 되돌아간 팔을 이 배치의 길이와 시작 각도로 다시 맞춘다.
         ApplyShape();
         PosePhase();
+        // 조립 등장 중에 받은 정지 신호(방이 이미 클리어됨): 등장이 끝나는 지금 바로 정지 자세로(돌기 시작하지 않는다).
+        if (halt.Halted) { EnterHaltedPose(); return; }
         spinning = true;
         foreach (var system in sparks)
             if (system != null) system.Play(true);
+    }
+
+    // ── 6차 T9: 방 클리어 정지 ─────────────────────────────
+
+    public void SetHazardHalted(bool halted, bool instant)
+    {
+        bool changed = halt.Signal(halted, instant);
+        if (halted)
+        {
+            trapDamage.Cancel();   // 판정은 이 호출에서 바로 끈다(FixedUpdate가 묻지 않는다)
+            if (instant && IsOperating) EnterHaltedPose();
+            return;
+        }
+        if (!changed) return;
+        // 다시 작동(재도전 등): 빨강·기어·불꽃·회전음을 되돌린다.
+        haltSettled = decelerating = false;
+        red?.Restore();
+        if (machine != null) machine.Frozen = false;
+        if (!IsOperating) return;
+        spinning = true;
+        foreach (var system in sparks)
+            if (system != null) system.Play(true);
+    }
+
+    // 바로 정지 자세: 가장 가까운 평행 자세로 기어 시간을 옮기고 세운다. 불꽃·회전음·빨강을 끈다.
+    private void EnterHaltedPose()
+    {
+        spinning = false;
+        decelerating = false;
+        StopSparks();
+        if (machine != null)
+        {
+            machine.Frozen = true;
+            if (TryParallelTarget(out float distance)) machine.Seek(machine.MotionTime + distance);
+        }
+        PosePhase();
+        red?.Set(false);
+        haltSettled = true;
+    }
+
+    // 팔 회전각이 설치면과 평행(0·180도)이 되는 가장 가까운 기어 시간까지의 차이(MotionTime 단위, 음수면 조금 되돌아감).
+    private bool TryParallelTarget(out float distance)
+    {
+        distance = 0f;
+        if (machine == null || machine.gearSpeeds == null || rotorGear < 0 || rotorGear >= machine.gearSpeeds.Length) return false;
+        float speed = machine.gearSpeeds[rotorGear];
+        if (Mathf.Abs(speed) < .01f) return false;
+        float angle = machine.MotionTime * speed + currentStartAngle;
+        // 도는 방향 앞쪽 평행 자세까지의 각도(0~180). 반 바퀴의 2/3보다 멀면 뒤쪽(조금 되돌아감)이 가깝다.
+        float ahead = speed > 0f ? 180f - Mathf.Repeat(angle, 180f) : Mathf.Repeat(angle, 180f);
+        if (ahead >= 180f - .001f) ahead = 0f;
+        float degrees = ahead <= 120f ? ahead : ahead - 180f;
+        distance = degrees / Mathf.Abs(speed);
+        return true;
+    }
+
+    // 정전 물결 차례: 불꽃·회전음을 거두고 기어를 지금 빠르기에서 평행 자세까지 감속한다(Hermite — 처음 빠르기 = 지금, 끝 빠르기 = 0).
+    private void BeginDecel()
+    {
+        spinning = false;
+        foreach (var system in sparks)
+            if (system != null) system.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+        if (machine == null || !TryParallelTarget(out float distance))
+        {
+            if (machine != null) machine.Frozen = true;
+            red?.Set(false);
+            haltSettled = true;
+            return;
+        }
+        machine.Frozen = true;
+        decelerating = true;
+        decelFrom = machine.MotionTime;
+        decelDistance = distance;
+        decelTime = Mathf.Clamp(1.5f * Mathf.Abs(distance) + .15f, HaltMinTime, HaltMaxTime);
+        decelElapsed = 0f;
+    }
+
+    private void UpdateHalt(float delta)
+    {
+        if (haltSettled || !IsOperating) return;
+        halt.Step(delta, decelTime > 0f ? decelTime : HaltMinTime, out _, out _);
+        if (!halt.VisualHalting) return;   // 정전 물결 차례 전: 외형은 그대로 돈다(판정은 이미 꺼짐)
+        if (!decelerating) { BeginDecel(); if (haltSettled) return; }
+        decelElapsed += delta;
+        float s = Mathf.Clamp01(decelElapsed / decelTime);
+        float h10 = s * s * s - 2f * s * s + s, h01 = -2f * s * s * s + 3f * s * s;
+        machine.Seek(decelFrom + h10 * decelTime + h01 * decelDistance);
+        PosePhase();
+        if (s < 1f) return;
+        decelerating = false;
+        red?.Set(false);
+        haltSettled = true;
     }
 
     protected override void OnDeviceLeaving()
@@ -259,13 +382,14 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
 
     private void StopSparks()
     {
+        // (정지 감속 BeginDecel은 남은 불꽃이 자연히 사라지게 StopEmitting을 따로 쓴다.)
         foreach (var system in sparks)
             if (system != null) system.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
     }
 
     private void FixedUpdate()
     {
-        if (!IsOperating || (trapDamage.Damage <= 0f && !trapDamage.ReturnToStart)) return;
+        if (!IsOperating || halt.Halted || (trapDamage.Damage <= 0f && !trapDamage.ReturnToStart)) return;
         damagedPlayers.Clear();
         float radius = bladeRadius * Mathf.Abs(transform.lossyScale.x);
         var info = new WeaponBaseSO.DamageInfo { damage = damage, damageType = DamageType.Normal };
@@ -290,6 +414,7 @@ public sealed class WaveRotatingSaw : WaveEnvironmentDevice
 
     private void Update()
     {
+        if (halt.Halted) UpdateHalt(Time.deltaTime);
         // WaveMachineMotion이 이번 프레임에 놓은 팔에 시작 각도를 더한다(0이면 아무것도 하지 않는다).
         if (phaseApplied || currentStartAngle != 0f) PosePhase();
         // 목록의 첫 장치가 공유 반복음을 대표로 갱신한다.

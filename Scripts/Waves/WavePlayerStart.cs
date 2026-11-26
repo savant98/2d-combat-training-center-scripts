@@ -113,7 +113,15 @@ public sealed class WavePlayerStart : MonoBehaviour
     private void Update()
     {
         if (!IsHoldingPlayer || hideContainment || player == null || Time.time - confinedAt < ShowDelay) return;
+        // 6차(던전 문 컷씬): 같은 Player를 상자 없는 구속(HoldForPassage)으로도 잡고 있으면 상자를 그리지 않는다
+        // (닫힌 문 안에 숨은 Player를 크레인 없이 다음 Wave 지형 준비가 다시 잡아도 문 둘레에 상자가 뜨지 않게).
+        if (HiddenHoldOn(player)) return;
         ShowContainment(player);
+    }
+    private static bool HiddenHoldOn(PlayerController target)
+    {
+        foreach (var holder in holders) if (holder != null && holder.player == target && holder.hideContainment) return true;
+        return false;
     }
     // 구속 상자 표시를 켠다(이미 켜져 있으면 그대로 둔다).
     private static void ShowContainment(PlayerController target)

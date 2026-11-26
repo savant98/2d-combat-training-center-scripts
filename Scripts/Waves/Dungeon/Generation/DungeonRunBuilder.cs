@@ -12,6 +12,8 @@ using Object = UnityEngine.Object;
 /// v4(DESIGN_V4 §4): 출구 자리 표식(DungeonExitSlot)은 room.exit로, 적 생성 구역 표식(DungeonSpawnZone)은 room.spawnZones로 옮기고 Prop으로 세우지 않는다.
 /// 싸우는 방 여부는 room.HasFight로 명시한다(동적 구성 던전의 전투 방은 room.encounter가 비어 있어도 true). 동적 구성 던전은 규칙 SO의 종류별 최대 수를
 /// 예열 힌트(DungeonRun.HintPrewarm)로 남긴다.
+/// 6차(DESIGN_V6 T11): 도착 문 자리 표식(DungeonArrivalSlot)도 Prop에서 빼고 room.arrival로 옮긴다. 다음 Wave를 문에서 시작할지(크레인 생략)는
+/// 실행 중 DungeonCutsceneDirector가 정한다 — 여기서 쓰는 teleportAtStart = true는 재도전(Regenerate)마다 원래대로 되돌리는 기준값이다.
 /// </summary>
 public static class DungeonRunBuilder
 {
@@ -277,6 +279,17 @@ public static class DungeonRunBuilder
                         room.exit.isRequiredToClear = false;
                     }
                     else Debug.LogWarning($"[DungeonRunBuilder] 템플릿 '{template.name}'에 출구 자리 표식이 둘 이상 있어 첫 표식만 씁니다.", template);
+                    continue;
+                }
+                // 6차 T11: 도착 문 자리 표식도 세우지 않고 위치만 room.arrival로 옮긴다(던전 시작 방이면 출구 문을 도착 모드로 그 자리에 세운다). 첫 표식만 쓴다.
+                if (info.prefab.GetComponent<DungeonArrivalSlot>() != null)
+                {
+                    if (room.arrival == null)
+                    {
+                        room.arrival = CopySpawn(info);
+                        room.arrival.isRequiredToClear = false;
+                    }
+                    else Debug.LogWarning($"[DungeonRunBuilder] 템플릿 '{template.name}'에 도착 문 자리 표식이 둘 이상 있어 첫 표식만 씁니다.", template);
                     continue;
                 }
                 // 4차: 적 생성 구역 표식은 세우지 않는다(동적 구성의 후보 지점 편향 — 배치 설정 그대로).

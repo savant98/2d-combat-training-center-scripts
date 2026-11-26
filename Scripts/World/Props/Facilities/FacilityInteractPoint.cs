@@ -15,6 +15,9 @@ public interface IFacilityInteractTarget
 /// 트리거마다 이 컴포넌트를 두고, 처리는 부모의 IFacilityInteractTarget에 넘긴다.
 /// - 키 안내는 RoomTrigger의 표시 사본(CanvasGroup + ButtonImage, WorldInteractionBindingHint로 현재 키)을 쓰고,
 ///   FieldElevatorTrigger처럼 쓸 수 있을 때만 0.3초 동안 나타난다. 거리는 물리 질의 없이 트리거 상자와 Player 발의 거리로 잰다.
+/// - 6차 T2(한 번의 ↑ = 한 대상): 키 안내는 FacilityInteractArbiter.Preferred(키 안내를 띄울 수 있는 지점 중 가장 가까운 것)에만 뜬다.
+///   Interact가 Preferred가 아닌 지점으로 들어오면(InteractAbility의 겹침 질의가 다른 Collider를 돌려줌) Preferred가 대신 처리한다.
+///   처리가 끝나면 FacilityInteractArbiter.MarkHandled로 알린다(받아들임/거절음 — 같은 ↑의 크레인 붙기를 버리게). 붙기에 양보한 거절은 알리지 않는다.
 /// - Interact 안에서 반드시 InteractAbility.Interrupt를 불러 Player가 Interact 상태로 굳지 않게 한다(예외가 나도 finally).
 /// </summary>
 [DisallowMultipleComponent]
@@ -29,10 +32,19 @@ public sealed class FacilityInteractPoint : MonoBehaviour, IInteractable
     private BoxCollider2D area;
     private bool hintVisible;
 
+    private int rank = -1;
+
     public int Slot => slot;
     public bool HintVisible => hintVisible;
+    /// <summary>안내를 띄우는 거리(Player 발 ~ 트리거 상자, 칸).</summary>
+    public float HintRange => hintRange;
+    /// <summary>처리를 넘기는 시설(부모의 IFacilityInteractTarget, 없으면 null).</summary>
+    public IFacilityInteractTarget Target => target;
+    /// <summary>6차 T2: 거리가 같을 때의 종류 순위(FacilityInteractArbiter.RankOf — 출구 0 · 레버 1 · 수리대 2 · 텔레포트 3).</summary>
+    public int Rank => rank >= 0 ? rank : rank = FacilityInteractArbiter.RankOf(target);
     /// <summary>
-    /// 상호작용 범위 안 표시(키 안내)가 켜지거나(true) 꺼질(false) 때 올린다(3차 계약). FacilityHighlight가 구독해 테두리를 꾸준히 밝힌다(4차: 쉐브론 없음). FacilityZip은 HintVisible이 켜진 지점이 있으면 붙기 입력을 양보한다.
+    /// 상호작용 범위 안 표시(키 안내)가 켜지거나(true) 꺼질(false) 때 올린다(3차 계약). FacilityHighlight가 구독해 테두리를 꾸준히 밝힌다(4차: 쉐브론 없음).
+    /// 6차: FacilityZip은 HintVisible이 아니라 FacilityInteractArbiter.Preferred(같은 조건을 그 프레임에 바로 묻는다)로 붙기 입력을 양보한다.
     /// 값이 실제로 바뀔 때만 올린다.
     /// </summary>
     public event System.Action<bool> HighlightChanged;
@@ -44,6 +56,8 @@ public sealed class FacilityInteractPoint : MonoBehaviour, IInteractable
     public int Rejections { get; private set; }
     /// <summary>키 안내가 숨은 채 거절할 뻔한 입력을 붙기에 양보한 횟수(검사용, fix4zip — 거절음·Rejections 없음).</summary>
     public int ZipYields { get; private set; }
+    /// <summary>6차 T2: 이 지점으로 들어온 입력을 Preferred 지점에 넘긴 횟수(검사용).</summary>
+    public int Redirects { get; private set; }
 
     // 지금 Interact 안에서 처리 중인 Player(Reject가 이번 상호작용 입력의 거절인지 알기 위해). Interact 밖이면 null.
     private PlayerController interacting;
@@ -59,6 +73,7 @@ public sealed class FacilityInteractPoint : MonoBehaviour, IInteractable
     {
         area = GetComponent<BoxCollider2D>();
         target = GetComponentInParent<IFacilityInteractTarget>(true);
+        rank = -1;
         WorldInteractionBindingHint.Bind(interactUI);
         if (interactUI != null) interactUI.alpha = 0f;
     }
@@ -100,10 +115,15 @@ public sealed class FacilityInteractPoint : MonoBehaviour, IInteractable
         return FacilityAccess.DistanceToRect(player.transform.position, Area) <= hintRange;
     }
 
+    /// <summary>6차 T2: 이 지점이 키 안내를 띄울 조건인지(켜짐·거리 안·시설이 지금 쓸 수 있다고 답함). 중재자가 Preferred를 고를 때 묻는다.</summary>
+    public bool WantsHint(PlayerController player)
+        => target != null && player != null && isActiveAndEnabled && InRange(player) && target.ShowFacilityHint(player, this);
+
     private void Update()
     {
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
-        bool show = target != null && player != null && InRange(player) && target.ShowFacilityHint(player, this);
+        // 6차 T2: 키 안내는 이번 ↑를 받을 지점(중재자의 Preferred) 하나에만 — 겹친 지점이 함께 뜨지 않는다.
+        bool show = target != null && player != null && ReferenceEquals(FacilityInteractArbiter.Preferred(player), this);
         SetHint(show);
     }
 
@@ -121,9 +141,24 @@ public sealed class FacilityInteractPoint : MonoBehaviour, IInteractable
 
     public void Interact(PlayerController player)
     {
+        // 6차 T2: 키 안내가 뜬 지점(Preferred)이 따로 있으면 그 지점이 처리한다(InteractAbility의 겹침 질의가 엉뚱한 Collider를 줘도 안내와 처리가 같다).
+        var preferred = FacilityInteractArbiter.Preferred(player);
+        if (preferred != null && !ReferenceEquals(preferred, this) && preferred.CanInteract(player))
+        {
+            Redirects++;
+            preferred.Handle(player);
+            return;
+        }
+        Handle(player);
+    }
+
+    // 실제 처리: 부모 시설에 넘기고, 끝나면 중재자에 처리 결과를 알린 뒤 Interact 상태를 끝낸다.
+    private void Handle(PlayerController player)
+    {
         Interactions++;
         var previous = interacting;
         interacting = player;
+        int yields0 = ZipYields, rejects0 = Rejections;
         try
         {
             if (target != null) target.FacilityInteract(player, this);
@@ -131,8 +166,16 @@ public sealed class FacilityInteractPoint : MonoBehaviour, IInteractable
         finally
         {
             interacting = previous;
-            // 처리 결과와 관계없이 이번 상호작용을 끝낸다(다음 입력을 받을 수 있게, Interact 상태 고착 방지).
-            FacilityAccess.EndInteract(player);
+            try
+            {
+                // 붙기에 양보한 거절은 이 ↑를 쓰지 않았다 — 알리지 않는다. 거절음으로 끝났으면 같은 ↑의 붙기만 막고(작동 잠금 없음), 받아들였으면 작동 잠금도 건다.
+                if (ZipYields == yields0) FacilityInteractArbiter.MarkHandled(this, Rejections == rejects0);
+            }
+            finally
+            {
+                // 처리 결과와 관계없이 이번 상호작용을 끝낸다(다음 입력을 받을 수 있게, Interact 상태 고착 방지).
+                FacilityAccess.EndInteract(player);
+            }
         }
     }
 

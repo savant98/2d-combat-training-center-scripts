@@ -4,7 +4,7 @@ using UnityEngine;
 
 // 던전 방에 놓는 Prop(장식·발판·파괴형·함정)의 공통 수명.
 // - 루트 하나에 DungeonProp + WaveEnvironmentTool(격자 편집기 표식)을 두고, 기능은 같은 루트의 부품 컴포넌트
-//   (DestructibleProp·PropExplosive·PropHazard·DungeonPropMotion)가 맡는다. 부품은 IDungeonPropPart로 생성·반환 순간을 받는다.
+//   (DestructibleProp·PropHazard·PropShredder 등 함정·DungeonPropMotion)가 맡는다. 부품은 IDungeonPropPart로 생성·반환 순간을 받는다.
 // - 풀에서 꺼내는 순간 바로 준비 상태다(환경 장치와 달리 조립 등장이 없다 — 방 교체가 화면을 가린 동안 즉시 일어나므로).
 //   표시 묶음(visualRoot)을 켜고, 모든 자식 Collider2D를 Prefab에 저장된 켜짐 상태로 되돌리고, 부서짐 상태를 지운다.
 // - 배치별 설정(IWaveDeviceSettings)은 이 컴포넌트 하나만 구현한다(WaveDeviceSettings.Apply가 루트에서 처음 찾은 구현 하나만 부르므로).
@@ -21,7 +21,7 @@ public enum DungeonPropKind
     Platform = 1,
     /// <summary>파괴형. DestructibleProp(EnemyHealth 파생)과 Enemy 레이어 hurtbox.</summary>
     Destructible = 2,
-    /// <summary>함정. PropHazard(주기 피해) 또는 PropExplosive(부서지면 폭발).</summary>
+    /// <summary>함정. PropHazard(증기)·PropShredder·PropRockfall(7차 낙석 구조물)·PropSparkJunction·PropLaserWelder 등 피해 부품. 6차부터 방 클리어 때 멈춘다(IDungeonRoomHazard).</summary>
     Hazard = 3,
 }
 
@@ -210,11 +210,18 @@ public static class DungeonPropFeedback
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetCopies() => copies.Clear();
 
-    public static float DistanceGain(Vector2 position)
+    public static float DistanceGain(Vector2 position) => DistanceGain(position, NearDistance, FarDistance);
+
+    /// <summary>
+    /// 7차(DESIGN_V7 V3): 가까운·먼 거리(칸)를 따로 받는 거리 감쇠(텔레포트 반복음을 받침 근처 4~14칸으로 줄이는 등). 규칙은 기본값(7~24칸)과 같다 —
+    /// near 안은 1, far 밖은 0, 사이는 smoothstep. far ≤ near면 near에서 끊는다.
+    /// </summary>
+    public static float DistanceGain(Vector2 position, float near, float far)
     {
         var listener = Camera.main;
         if (listener == null) return 1f;
-        float t = Mathf.InverseLerp(NearDistance, FarDistance, Vector2.Distance(listener.transform.position, position));
+        if (far <= near) far = near + .01f;
+        float t = Mathf.InverseLerp(near, far, Vector2.Distance(listener.transform.position, position));
         return 1f - t * t * (3f - 2f * t);
     }
 

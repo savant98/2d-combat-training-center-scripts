@@ -11,7 +11,8 @@ using UnityEngine;
 ///   서로 반대로 도는 고리 두 개 + 아치 꼭대기 표시등. Player는 받침대 윗면(루트 y − StandOffsetY = −1)에 선다. 서는 높이는 StandOffsetY 하나로 모은다
 ///   (DungeonManager·편집기 검사·템플릿 도구는 이 상수를 읽는다).
 /// - 상태 표시: Dormant(짝 없음) = 발광 거의 꺼짐·정지 / Locked(짝 있음·미클리어) = 흐린 파랑·정지·안테나 느린 점멸 /
-///   Ready = 고리 두 개가 반대로 돌고, 안테나 점멸, 바닥 문양 빛이 가운데로 흐르고, 코일 빛이 아래에서 위로 차오르고, 입자가 오르고, 웅웅거림(거리 감쇠 루프 — 임시 LobbyCctvHum) /
+///   Ready = 고리 두 개가 반대로 돌고, 안테나 점멸, 바닥 문양 빛이 가운데로 흐르고, 코일 빛이 아래에서 위로 차오르고, 입자가 오르고, 웅웅거림(거리 감쇠 루프 — 임시 LobbyCctvHum. 7차 V3: 받침 근처 humNear 4 ~ humFar 14칸만 들림,
+///   음량 0.06·같은 Clip 겹침 배율 0.6 — Prefab 값) /
 ///   Busy = 출발(PlayIntake): 고리 가속·빛 기둥·충전 입자·포털 열림 소리, 도착(PlayEject): 빛 기둥 번쩍임·파란 입자 폭발·도착 소리 후 원래 상태로.
 /// - 상호작용(자식 'Interact' Layer 8 트리거의 FacilityInteractPoint): 받침 위에서 키를 누르면 DungeonFacilityHost.Current.TryBeginTeleport(this).
 ///   던전 밖이거나 거절되면 짧은 거절음. 이동 연출 자체는 TeleportPassageEffectSO가 한다(DungeonRulesSO.teleportPassage).
@@ -59,6 +60,8 @@ public class DungeonTeleporter : WorldEntityBase, IDungeonPassagePoint, IDungeon
 
     [Header("소리(임시: 기존 효과음)")]
     [SerializeField] private SoundOptions humLoop;
+    [SerializeField, Min(0f), Tooltip("7차 V3: 웅웅거림이 원음으로 들리는 카메라 거리(칸). 이보다 멀면 humFar까지 부드럽게 줄어든다.")] private float humNear = 4f;
+    [SerializeField, Min(.1f), Tooltip("7차 V3: 웅웅거림이 꺼지는 카메라 거리(칸 — 받침 근처에서만 들리게, 예전 공통 규칙은 7~24칸).")] private float humFar = 14f;
     [SerializeField] private SoundOptions intakeSound;
     [SerializeField] private SoundOptions ejectSound;
     [SerializeField] private SoundOptions powerOnSound;
@@ -85,6 +88,11 @@ public class DungeonTeleporter : WorldEntityBase, IDungeonPassagePoint, IDungeon
     public bool FacilityReady => live && State == PadState.Ready;
     /// <summary>TryBeginTeleport를 요청한 횟수(검사용, 대여마다 0).</summary>
     public int TeleportRequests { get; private set; }
+    /// <summary>7차 V3: 웅웅거림 거리 감쇠 범위(칸)·지금 울리는지·지금 음량(검사용).</summary>
+    public float HumNear => humNear;
+    public float HumFar => humFar;
+    public bool HumPlaying => hum.IsPlaying;
+    public float HumVolume => hum.CurrentVolume;
     /// <summary>도착 연출을 낸 횟수(검사용).</summary>
     public int Ejects { get; private set; }
 
@@ -251,7 +259,7 @@ public class DungeonTeleporter : WorldEntityBase, IDungeonPassagePoint, IDungeon
         }
         if (powerOnTime >= 0f) { powerOnTime += dt; if (powerOnTime >= powerOnDuration) powerOnTime = -1f; }
         Apply(dt);
-        hum.Update(humLoop, transform.position, State == PadState.Ready || State == PadState.Busy, State == PadState.Busy ? 1f : .75f);
+        hum.Update(humLoop, transform.position, State == PadState.Ready || State == PadState.Busy, State == PadState.Busy ? 1f : .75f, humNear, humFar);
         FacilityFeedback.Emit(idleMotes, State == PadState.Ready);
     }
 

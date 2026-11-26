@@ -5,7 +5,8 @@ using UnityEngine;
 // 던전 목표 레버(IDungeonObjectivePoint, DESIGN_V4 §2.5 R10). footprint 4×6, 뒤 벽에 볼트로 고정한 대형 배전반(DungeonProp 루트 + 이 부품, 충돌 없음).
 // - 템플릿에는 자리 표식(DungeonObjectiveSlot 4×6)만 두고, 목표가 배정된 슬롯에만 목표 SO(LeverObjectiveSO.PrefabFor)가 이 Prefab을 세운다.
 //   세운 쪽(DungeonRoomStage)이 RoomId·Slot·Index를 채우고, 그 방의 completedObjectives로 SetCompleted(true, true)를 즉시 적용한다.
-// - 방을 클리어한 뒤에만 당긴다(FacilityAccess.CanUse — 잠긴 방은 싸워야 한다). 완료는 IDungeonObjectiveHost.TryCompleteObjective로 요청하고
+// - 적을 모두 처치한 뒤에만 당긴다(FacilityAccess.CanUseObjective — 싸우는 동안은 잠겨 있다). 7차(DESIGN_V7 V5): 레버가 남은 방은 적 전멸 뒤에도 문이 잠긴 '레버 대기'이고
+//   (호스트 IDungeonObjectiveGate.CanCompleteObjectives), 레버를 당겨야 방 클리어된다. 완료는 IDungeonObjectiveHost.TryCompleteObjective로 요청하고
 //   받아들여지면 그때 SetCompleted(true, false)로 당기는 연출을 한다. 던전 밖(목표 호스트 없음)에서는 꺼진 채 서 있다.
 // - 상태: Locked(방 미클리어 — 흐린 앰버·붉은 표시등) → Ready(앰버 강조·빛기둥·경고등 회전) → Pulling(0.6초: 손잡이가 내려가며 지속 흔들림이 오르고 불꽃)
 //   → 빗장이 걸리는 순간 강한 임펄스(마지막 레버는 1.3배) → Done(전력 서지 0.5초: 표시등 → 배선 → 경고등 순으로 켜진 뒤 녹색 표시등·빛기둥 꺼짐).
@@ -14,7 +15,7 @@ using UnityEngine;
 //   게임패드 진동은 프로젝트에 없어 넣지 않는다(DESIGN_V4 §1.2).
 // - 물리 질의 없음(거리 판정은 FacilityInteractPoint.InRange). 크기 늘이기 없음(회전·이동·밝기만 — 기계형 규칙). 소리는 기존 효과음 재사용.
 [DisallowMultipleComponent]
-public sealed class PropObjectiveLever : MonoBehaviour, IDungeonPropPart, IDungeonRoomPowered, IFacilityInteractTarget, IDungeonObjectivePoint, IFacilityHighlightSource
+public sealed class PropObjectiveLever : MonoBehaviour, IDungeonPropPart, IDungeonRoomPowered, IFacilityInteractTarget, IDungeonObjectivePoint, IFacilityHighlightSource, IFacilityBusy
 {
     public enum State { Locked, Ready, Pulling, Done }
 
@@ -120,6 +121,15 @@ public sealed class PropObjectiveLever : MonoBehaviour, IDungeonPropPart, IDunge
     public float FinalShakeScale => finalShakeScale;
     public bool FacilityReady => isLive && state == State.Ready && HostReady;
     private static bool HostReady => DungeonFacilityHost.Current is IDungeonObjectiveHost;
+    /// <summary>
+    /// 6차 T2: 손잡이를 당기는 동안 남은 시간(초), 아니면 0(검사·표시용 — 크레인 잠금은 IFacilityBusy.FacilityBusy가 맡는다).
+    /// 레버 컷씬(DungeonCutsceneDirector)이 켜져 있으면 컷씬이 입력을 막으므로 이 잠금은 컷씬을 끈 경우에만 실제로 쓰인다.
+    /// </summary>
+    public float FacilityBusySeconds => state == State.Pulling ? Mathf.Max(0f, pullDuration - pullTime) : 0f;
+    /// <summary>손잡이를 당기는 중인지(6차 T2).</summary>
+    public bool IsOperating => state == State.Pulling;
+    /// <summary>6차 T2(IFacilityBusy): 당기는 동안 크레인 직선·붙기를 막는다(레버 컷씬이 켜져 있으면 입력 차단과 겹쳐 무해 — 컷씬을 끈 경우에 쓰인다).</summary>
+    public bool FacilityBusy => isLive && IsOperating;
 
     private void Awake() => Cache();
 
@@ -271,7 +281,7 @@ public sealed class PropObjectiveLever : MonoBehaviour, IDungeonPropPart, IDunge
     // ── 상호작용 ─────────────────────────────
 
     public bool ShowFacilityHint(PlayerController player, FacilityInteractPoint point)
-        => isLive && state == State.Ready && powered && HostReady && FacilityAccess.CanUse(player) && player.IsGrounded;
+        => isLive && state == State.Ready && powered && HostReady && FacilityAccess.CanUseObjective(player) && player.IsGrounded;
 
     public void FacilityInteract(PlayerController player, FacilityInteractPoint point)
     {
@@ -283,7 +293,7 @@ public sealed class PropObjectiveLever : MonoBehaviour, IDungeonPropPart, IDunge
     {
         Cache();
         if (!isLive || state != State.Ready || !powered || !isActiveAndEnabled) return false;
-        if (!FacilityAccess.CanUse(player)) return false;
+        if (!FacilityAccess.CanUseObjective(player)) return false;
         if (!(DungeonFacilityHost.Current is IDungeonObjectiveHost host)) return false;
         Requests++;
         if (!host.TryCompleteObjective(this)) return false;

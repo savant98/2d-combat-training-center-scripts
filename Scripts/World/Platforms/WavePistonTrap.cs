@@ -5,10 +5,13 @@ using UnityEngine;
 /// <summary>
 /// 받침에서 가시 큐브를 세게 밀어냈다가 천천히 되돌리기를 반복하는 함정이다.
 /// 큐브는 움직이는 고체가 아니라 피해 영역이며, 뻗는 동안 맞은 플레이어를 진행 방향으로 밀어낸다.
+/// 6차 T9(던전 방 클리어 정지, IDungeonRoomHazard): 정지 신호를 받은 호출에서 피해 판정을 끄고, 정전 물결 차례가 오면 기어·배선 흐름을 세우고
+/// 큐브를 수납 속도(stowSpeed)로 완전히 넣은 뒤 머리 가시의 빨강(Damage 재질 Renderer)을 끈다. 조립 등장이 끝나기 전에 온 신호는 기억했다가
+/// 등장 완료 때 바로 정지 자세로 들어간다. 신호가 없으면(던전 밖 일반 Wave) 늘 작동한다.
 /// </summary>
 [DisallowMultipleComponent]
 [DefaultExecutionOrder(100)] // 캐릭터가 이번 틱의 이동을 마친 뒤에 판정한다.
-public sealed class WavePistonTrap : WaveEnvironmentDevice
+public sealed class WavePistonTrap : WaveEnvironmentDevice, IDungeonRoomHazard
 {
     public enum Phase { Rest, Windup, Strike, Rebound, Hold, Retract }
 
@@ -64,10 +67,22 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
     /// <summary>수납 위치에서 큐브가 나온 거리(칸). 예비 동작 중에는 음수다.</summary>
     public float Extension { get; private set; }
     public int StrikeCount { get; private set; }
+    /// <summary>방 클리어 정지 신호를 받아 판정이 꺼져 있다(6차 T9, 검사용).</summary>
+    public bool IsHalted => halt.Halted;
+    /// <summary>정지 자세(큐브 수납·빨강 끔·기어 정지)에 다 들어갔다(검사용).</summary>
+    public bool InHaltedPose => halt.Halted && haltSettled;
+    /// <summary>머리 가시의 빨강이 켜져 있는지(검사용).</summary>
+    public bool DangerLit => red == null || red.IsOn;
+
+    private readonly HazardHalt halt = new HazardHalt();
+    private HazardRendererSwitch red;
+    private WaveMachineMotion machine;
+    private bool haltSettled;
 
     private Collider2D[] hits = new Collider2D[8];
     private readonly HashSet<PlayerHealth> damagedPlayers = new();
     private Vector3 headRest;
+    private bool restCaptured;   // Awake에서 수납 자세(headRest)를 기록했다(실행 중 개체)
     private Vector3[] slideRest = Array.Empty<Vector3>();
     private Vector3[] stretchRest = Array.Empty<Vector3>();
     private float phaseTime;
@@ -112,7 +127,9 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         // 큐브는 네 면에 가시가 있어 앞면까지의 거리(impactOffset)가 곧 반폭이다.
         float reach = WaveDeviceSettings.Value(overrides, StrokeParameter);
         float half = Mathf.Abs(impactOffset.y);
-        float rest = head != null ? head.localPosition.y : 0f;
+        // 범위는 수납 자세 기준(장치 원점 기준의 고정 범위)이다. 실행 중 개체는 큐브(head)가 뻗고 들어가며 움직이므로 Awake에서 기록한
+        // 수납 자세를 쓴다(던전 방 생성 차단 DungeonRoomStage.CollectSpawnBlockers가 실행 중 개체로 묻는다). Prefab·편집기 미리보기는 Awake 전이라 head가 수납 자세다.
+        float rest = head == null ? 0f : restCaptured ? headRest.y : head.localPosition.y;
         float low = rest - half, high = rest + reach + half;
         range = new WaveDeviceRange(WaveEnvironmentTool.RangeShape.Box, new Vector2(0f, (low + high) * .5f),
             new Vector2(half * 2f, high - low), new Color(1f, .22f, .16f, .9f));
@@ -125,7 +142,7 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         ApplySettings(WaveDeviceSettings.None);
         if (targetMask.value == 0) targetMask = LayerMask.GetMask("Player");
         // Prefab에 저장된 수납 자세를 기준으로 삼는다.
-        if (head != null) headRest = head.localPosition;
+        if (head != null) { headRest = head.localPosition; restCaptured = true; }
         slideRest = new Vector3[slides.Length];
         for (int i = 0; i < slides.Length; i++) if (slides[i] != null) slideRest[i] = slides[i].localPosition;
         stretchRest = new Vector3[stretches.Length];
@@ -133,6 +150,8 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         FixedMotionBody.Attach(head);
         foreach (var part in slides) FixedMotionBody.Attach(part);
         foreach (var part in stretches) FixedMotionBody.Attach(part);
+        machine = GetComponent<WaveMachineMotion>();
+        red = HazardRendererSwitch.ByMaterial(lifecycle != null && lifecycle.visualRoot != null ? lifecycle.visualRoot : transform, "Damage");
     }
 
     protected override void ResetDevice()
@@ -144,6 +163,11 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         StrikeCount = 0;
         stowing = false;
         firstRest = true;
+        // 풀 재사용·꺼짐: 정지 신호를 잊고(던전 밖 = 작동) 빨강·기어를 처음 상태로 둔다.
+        halt.Reset();
+        haltSettled = false;
+        red?.Restore();
+        if (machine != null) machine.Frozen = false;
     }
 
     protected override void OnDeviceReady()
@@ -152,6 +176,44 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
         // 첫 대기는 공격 대기와 관계없이 startDelay만큼만 쉰다. 설정을 등장 완료 뒤에 적용해도 첫 타격 시각이 같다.
         phaseTime = 0f;
         firstRest = true;
+        // 조립 등장 중에 받은 정지 신호(방이 이미 클리어됨): 등장이 끝나는 지금 바로 정지 자세로.
+        if (halt.Halted) EnterHaltedPose();
+    }
+
+    // ── 6차 T9: 방 클리어 정지 ─────────────────────────────
+
+    public void SetHazardHalted(bool halted, bool instant)
+    {
+        bool changed = halt.Signal(halted, instant);
+        if (halted)
+        {
+            trapDamage.Cancel();   // 판정은 이 호출에서 바로 끈다(FixedUpdate가 묻지 않는다)
+            if (instant && IsOperating) EnterHaltedPose();
+            return;
+        }
+        if (!changed) return;
+        // 다시 작동(재도전 등): 빨강·기어를 되돌리고 첫 대기부터 다시 친다.
+        haltSettled = false;
+        red?.Restore();
+        if (machine != null) machine.Frozen = false;
+        CurrentPhase = Phase.Rest;
+        phaseTime = 0f;
+        firstRest = true;
+    }
+
+    // 바로 정지 자세: 큐브 완전 수납·빨강 끔·기어와 배선 흐름 정지.
+    private void EnterHaltedPose()
+    {
+        if (head != null)
+        {
+            Extension = 0f;
+            ApplyExtension(0f);
+        }
+        CurrentPhase = Phase.Rest;
+        phaseTime = 0f;
+        if (machine != null) machine.Frozen = true;
+        red?.Set(false);
+        haltSettled = true;
     }
 
     protected override void OnDeviceLeaving() => trapDamage.Cancel();
@@ -178,12 +240,40 @@ public sealed class WavePistonTrap : WaveEnvironmentDevice
             return;
         }
         if (!IsOperating) return;
+        if (halt.Halted)
+        {
+            HaltStep(Time.fixedDeltaTime);
+            return;
+        }
 
         float previous = Extension;
         Advance(Time.fixedDeltaTime);
         Extension = Evaluate(CurrentPhase, Progress());
         ApplyExtension(Extension);
         DamageSwept(previous, Extension);
+    }
+
+    // 정지 중: 정전 물결 차례 전에는 외형만 그대로 돌고(판정 없음), 차례가 오면 기어를 세우고 큐브를 넣은 뒤 빨강을 끈다.
+    private void HaltStep(float delta)
+    {
+        if (haltSettled) return;
+        halt.Step(delta, .3f, out bool started, out _);
+        if (!halt.VisualHalting)
+        {
+            Advance(delta);
+            Extension = Evaluate(CurrentPhase, Progress());
+            ApplyExtension(Extension);
+            return;
+        }
+        if (started && machine != null) machine.Frozen = true;
+        Extension = Mathf.MoveTowards(Extension, 0f, stowSpeed * delta);
+        ApplyExtension(Extension);
+        if (Mathf.Abs(Extension) > 0f) return;
+        CurrentPhase = Phase.Rest;
+        phaseTime = 0f;
+        if (machine != null) machine.Frozen = true;
+        red?.Set(false);
+        haltSettled = true;
     }
 
     private void Advance(float delta)
