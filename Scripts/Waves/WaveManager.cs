@@ -246,6 +246,8 @@ public class WaveManager : MonoBehaviour
         ReleasePlayer();
         preparedCourses.Clear();
     }
+    private readonly List<WaveSpawnInfo> pendingApproaches = new List<WaveSpawnInfo>();
+
     private void SpawnWave(Wave wave)
     {
         currentWave = wave;
@@ -254,6 +256,14 @@ public class WaveManager : MonoBehaviour
         isWaveActive = true;
         isSpawnActive = true;
         activeEnemies.Clear();
+        pendingApproaches.Clear();
+        if (wave.clearType == WaveClearType.DefeatAllTargets)
+        {
+            foreach (var info in wave.spawnObjects ?? Array.Empty<WaveSpawnInfo>())
+                if (info != null && info.isRequiredToClear && info.playerApproachDistance > 0f && info.prefab != null && info.prefab.GetComponent<EnemyController>() != null)
+                    pendingApproaches.Add(info);
+            if (pendingApproaches.Count > 0) StartCoroutine(TrackPlayerApproaches());
+        }
         foreach (var prepared in preparedCourses) InitializeSpawn(prepared.Value.gameObject, prepared.Key);
         BeginTutorialStoragePractice(wave);
         var tutorial = wave.tutorial;
@@ -305,6 +315,16 @@ public class WaveManager : MonoBehaviour
                 // Enemy인 경우
                 if (info.prefab.TryGetComponent(out EnemyController enemyPrefab))
                 {
+                    if (wave.clearType == WaveClearType.DefeatAllTargets && info.isRequiredToClear)
+                    {
+                        while ((info.waitForPreviousTargets && activeEnemies.Count > 0)
+                            || (wave.maxActiveRequiredEnemies > 0 && activeEnemies.Count >= wave.maxActiveRequiredEnemies)
+                            || (info.playerApproachDistance > 0f && pendingApproaches.Contains(info)))
+                        {
+                            ReleaseAfterSpawn(heldPreparation);
+                            yield return null;
+                        }
+                    }
                     EnemyController enemyInstance = EnemyPool.Instance.Spawn(enemyPrefab, spawnPos, info.isBossEnemy);
                     if (!info.keepAfterWave) currentWaveEnemies.Add(enemyInstance);
                     else currentWaveEnemies.Remove(enemyInstance);
@@ -391,6 +411,26 @@ public class WaveManager : MonoBehaviour
                 CompleteWave();
         }
         finally { ReleaseAfterSpawn(heldPreparation); }
+    }
+
+    // 앞 무리와 전투하거나 크레인을 타고 지나간 구간도 방문으로 기록한다. 다음 적을 위해 같은 길을 역주행하지 않아도 된다.
+    private IEnumerator TrackPlayerApproaches()
+    {
+        while (pendingApproaches.Count > 0)
+        {
+            var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
+            if (player != null)
+            {
+                Vector2 local = player.transform.position - spawnRoot.position;
+                for (int i = pendingApproaches.Count - 1; i >= 0; i--)
+                {
+                    var info = pendingApproaches[i];
+                    if ((local - info.spawnPosition).sqrMagnitude <= info.playerApproachDistance * info.playerApproachDistance)
+                        pendingApproaches.RemoveAt(i);
+                }
+            }
+            yield return null;
+        }
     }
 
     private void InitializeSpawn(GameObject item, WaveSpawnInfo info)

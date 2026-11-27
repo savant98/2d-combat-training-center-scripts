@@ -5,7 +5,7 @@ using UnityEngine;
 /// <summary>
 /// 훈련 목록의 원본(2026-11-19 훈련 개편). 목록의 순서가 곧 진행 순서다.
 /// - 훈련 메뉴는 여기서 listed 항목을 순서대로 읽고, 아직 열리지 않은 훈련은 목록에 내지 않는다.
-/// - 진행 사슬: alwaysAvailable(테스트 훈련)을 뺀 항목들의 순서. 사슬의 첫 항목은 처음부터 열려 있고, 그 뒤는 바로 앞 항목을 수료하면 열린다.
+/// - 진행 사슬: alwaysAvailable(테스트 훈련)을 뺀 항목들의 순서. 사슬의 첫 항목은 처음부터 열려 있고, 그 뒤는 앞선 과정을 모두 수료하면 열린다.
 ///   훈련 메뉴에 나오지 않는 항목(listed 꺼짐, 각개 전투)도 사슬에는 들어간다.
 /// - 훈련 필증: grantsCertificate 항목을 처음 수료하면 1개. 지급과 기록은 DataManager가 하고, 여기서는 대상인지와 표시 이름·아이콘만 정한다.
 /// Resources/Training/TrainingCatalog 에 한 벌만 둔다(WaveRoomRules와 같은 방식). 읽기 전용 데이터이며 실행 중에 바꾸지 않는다.
@@ -40,6 +40,9 @@ public sealed class TrainingCatalogSO : ScriptableObject
 
     [Tooltip("진행 순서대로 적는다")]
     public Entry[] entries = Array.Empty<Entry>();
+
+    [Tooltip("테스트를 위해 등록한 모든 과정을 바로 선택합니다. 수료 기록·과정 번호·필증은 실제 진행 기준을 따릅니다.")]
+    public bool openAllForTesting;
 
     [Header("재화(훈련 필증) 표시")]
     public string certificateName = DefaultCertificateName;
@@ -121,17 +124,14 @@ public sealed class TrainingCatalogSO : ScriptableObject
     }
 
     /// <summary>
-    /// 지금 입장할 수 있는가: 항상 열린 항목이거나, 진행 사슬에서 바로 앞 항목을 수료했을 때(사슬의 첫 항목은 처음부터).
+    /// 테스트 전체 개방 또는 상시 항목이면 바로 입장하고, 일반 진행은 앞선 과정을 모두 수료하면 입장한다.
     /// data가 null이면 기록이 없는 것으로 본다.
     /// </summary>
     public bool IsUnlocked(int index, DataManager data)
     {
         var entry = GetEntry(index);
         if (!IsValid(entry)) return false;
-        if (entry.alwaysAvailable) return true;
-        for (int i = index - 1; i >= 0; i--)
-            if (InChain(entries[i])) return IsCleared(entries[i], data);
-        return true;
+        return openAllForTesting || entry.alwaysAvailable || AllProgressionCleared(entry.TrainingId, data);
     }
 
     public bool IsUnlocked(Entry entry, DataManager data) => IsUnlocked(IndexOf(entry), data);

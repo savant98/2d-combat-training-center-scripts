@@ -8,9 +8,7 @@ using UnityEngine;
 // - 던전 안 AfterClear는 DungeonFacilityHost.Current(DungeonManager)가 '지금 방 클리어·관 통과 아님·던전 진행 중·패배 아님'을 판단한다.
 //   던전 안 Anytime은 호스트가 IDungeonFacilityRoute를 구현하면 CanUseFacilitiesInCombat(방 클리어 불문)으로, 구현하지 않은 호스트면 AfterClear 규칙으로 본다.
 // - Wave 없는 장면(Lobby 등)이면 Current가 null이므로 늘 쓸 수 있다(두 사용 시점 모두).
-// - 기본 진행 Wave(던전 아님)에서는 쓰지 않는다: '방 클리어' 신호가 없어 전투 중에 탈 수 있고, 탑승 구속(WavePlayerStart)이
-//   피해·잡기를 막아 오르내리기만 반복해도 무적이 되기 때문이다(판단값 — 기본 진행 Wave에 놓으면 꺼진 받침처럼 안내가 뜨지 않는다).
-//   Anytime도 던전 밖에서는 이 규칙을 그대로 따른다(던전 밖 규칙 유지 — DESIGN_V3 §3).
+// - 일반 Wave에서는 전투 중 사용 시설(크레인 두 종류)만 활성 Wave 동안 이용할 수 있다.
 // - Wave 진행 중이면 Wave 준비(구속 상자·크레인 운반) 동안과 Wave 사이에는 쓰지 않는다(두 사용 시점 모두).
 // - 7차(DESIGN_V7 V5): 목표 레버는 CanUseObjective로 묻는다. 호스트가 IDungeonObjectiveGate를 구현하면 CanCompleteObjectives(방 클리어 뒤 또는 '레버 대기' — 적 전멸 뒤
 //   문이 잠긴 동안), 아니면 기존 HostAllows다. 텔레포트·수리대·출구 문은 그대로 CanUse(레버 대기 중에는 거절)다.
@@ -90,7 +88,7 @@ public static class FacilityAccess
     /// <summary>
     /// 전투 중 시설(FacilityUse.Anytime)을 던전·Wave 진행이 허락하는지(Player 상태는 보지 않는다).
     /// 던전 호스트가 IDungeonFacilityRoute를 구현하면 CanUseFacilitiesInCombat(방 클리어 불문), 구현하지 않으면 기존 CanUseFacilities,
-    /// 던전 밖이면 기존 규칙(Wave 진행 장치가 없을 때만). 어느 쪽이든 Wave 준비 중·Wave 사이에는 false.
+    /// 일반 Wave에서는 전투가 시작된 뒤부터 끝날 때까지 허용한다.
     /// </summary>
     public static bool CombatAllows
     {
@@ -99,7 +97,7 @@ public static class FacilityAccess
             var host = DungeonFacilityHost.Current;
             if (host is IDungeonFacilityRoute route) return route.CanUseFacilitiesInCombat && WaveAllows;
             if (host != null) return host.CanUseFacilities && WaveAllows;
-            return HostAllows && WaveAllows;
+            return WaveAllows;
         }
     }
 

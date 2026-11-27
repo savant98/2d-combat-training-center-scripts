@@ -70,6 +70,7 @@ public sealed class WaveRoomFloorShade : MonoBehaviour
         public override string ToString() => $"[{xMin},{xMax})x[{yMin},{yMax}) {bottomLeft}{topLeft}{topRight}{bottomRight}";
     }
 
+    private static readonly int TintId = Shader.PropertyToID("_Color");
     private static readonly int MainTexId = Shader.PropertyToID("_MainTex");
     private static readonly Vector2Int[] Directions = { Vector2Int.down, Vector2Int.up, Vector2Int.left, Vector2Int.right };
     // 계산용 버퍼(주 스레드에서만 쓴다). 넓은 범위가 처음 나올 때만 늘린다.
@@ -109,6 +110,16 @@ public sealed class WaveRoomFloorShade : MonoBehaviour
     /// <summary>Mesh를 실제로 다시 만든 횟수(같은 결과면 늘지 않는다 — 회귀 검사용).</summary>
     public int BuildCount { get; private set; }
     public MeshRenderer Renderer => meshRenderer;
+
+    // 공유 머티리얼과 그라데이션 텍스처를 유지하고 이 방의 음영만 페이드한다.
+    public void SetOpacity(float opacity)
+    {
+        if (meshRenderer == null || meshRenderer.sharedMaterial == null) return;
+        var tint = meshRenderer.sharedMaterial.GetColor(TintId);
+        tint.a *= Mathf.Clamp01(opacity);
+        properties.SetColor(TintId, tint);
+        meshRenderer.SetPropertyBlock(properties);
+    }
     public bool IsVisible => meshRenderer != null && meshRenderer.enabled && spans.Count > 0;
 
     /// <summary>방 좌표 칸 cell의 음영(구간에 없으면 None).</summary>

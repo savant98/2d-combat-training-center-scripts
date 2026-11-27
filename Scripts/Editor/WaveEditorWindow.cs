@@ -1045,6 +1045,8 @@ public partial class WaveEditorWindow : EditorWindow
             var clearType = wave.FindPropertyRelative("clearType");
             clearType.enumValueIndex = EditorGUILayout.Popup("클리어 조건", clearType.enumValueIndex, new[] { "필수 목표 모두 처치", "일정 시간 생존", "커스텀 트리거", "목표지점 도달" });
             if (clearType.enumValueIndex == (int)WaveClearType.ReachGoal) EditorGUILayout.HelpBox("목표지점 팔레트의 WaveGoal을 이 Wave에 배치하세요. 생성된 목표 중 한 곳에 도달하면 클리어됩니다. 키 설정은 필요하지 않습니다.", MessageType.Info);
+            if (Current.flowMode == WaveFlowMode.Sequential && clearType.enumValueIndex == (int)WaveClearType.DefeatAllTargets)
+                Property(wave, "maxActiveRequiredEnemies", "필수 적 동시 생존 상한 (0 = 제한 없음)");
             if (Current.clearType == WaveClearType.SurviveForTime) Property(wave, "surviveTime", "생존 시간 (초)");
             if (Current.clearType == WaveClearType.CustomTrigger) Property(wave, "customTriggerKey", "목표 도달 / 완료 키");
             GUILayout.Space(8);
@@ -1364,8 +1366,8 @@ public partial class WaveEditorWindow : EditorWindow
         var catalogEntry = DungeonPropCatalogSO.Lookup(info.prefab);
         GUILayout.Label($"#{selected + 1} {(info.prefab != null ? info.prefab.name : "참조 없음")}" + (catalogEntry != null && !string.IsNullOrWhiteSpace(catalogEntry.displayName) ? $" · {catalogEntry.displayName}" : ""), EditorStyles.boldLabel);
         // 6차(T17): 일반 WaveData의 던전 전용 항목은 경고만 한다(실행 중에 작동하지 않음 — DUNGEON_WAVES.md).
-        if (!(data is DungeonRoomTemplateSO) && info.prefab != null && (WavePrefabVisuals.IsDungeonDoor(info.prefab) || WavePrefabVisuals.IsDungeonSlot(info.prefab) || WavePrefabVisuals.IsDungeonSpawnZone(info.prefab) || WavePrefabVisuals.IsDungeonFacility(info.prefab)))
-            EditorGUILayout.HelpBox("던전 전용 항목입니다. 일반 진행 Wave에서는 출입구·자리 표식·생성 구역은 생기지 않고, 크레인·수리대·텔레포트 같은 시설은 작동하지 않습니다(던전 방 템플릿에서 쓰세요).", MessageType.Warning);
+        if (!(data is DungeonRoomTemplateSO) && info.prefab != null && (WavePrefabVisuals.IsDungeonDoor(info.prefab) || WavePrefabVisuals.IsDungeonSlot(info.prefab) || WavePrefabVisuals.IsDungeonSpawnZone(info.prefab) || (WavePrefabVisuals.IsDungeonFacility(info.prefab) && !DungeonCranePaths.IsCrane(info.prefab))))
+            EditorGUILayout.HelpBox("던전 전용 항목입니다. 일반 진행 Wave에서는 출입구·자리 표식·생성 구역은 생기지 않고, 수리대·텔레포트 같은 던전 시설은 작동하지 않습니다(던전 방 템플릿에서 쓰세요).", MessageType.Warning);
         var spawn = wave.FindPropertyRelative("spawnObjects").GetArrayElementAtIndex(selected);
         bool device = WavePrefabVisuals.IsEnvironmentTool(info.prefab);
         WaveDeviceSetting[] nextSettings = null;
@@ -1388,6 +1390,12 @@ public partial class WaveEditorWindow : EditorWindow
         if (preparation) EditorGUILayout.HelpBox("코스 열림은 Wave 시작 전 지형 준비 이벤트입니다. 개별 시작점 이동은 Wave 상세의 시작 좌표·텔레포트 설정을 사용합니다. 아래 대기 시간은 준비가 끝난 뒤 나머지 생성 타임라인에 적용합니다.", MessageType.None);
         else if (timing) nextTime = EditorGUILayout.FloatField("실제 생성 시각 (초)", originalTime);
         if (timing) Property(spawn, "spawnDelay", "이 항목 생성 후 대기 (초)");
+        if (timing && !(data is DungeonRoomTemplateSO) && Current.flowMode == WaveFlowMode.Sequential
+            && Current.clearType == WaveClearType.DefeatAllTargets && info.isRequiredToClear && info.prefab != null && info.prefab.GetComponent<EnemyController>() != null)
+        {
+            Property(spawn, "playerApproachDistance", "플레이어 접근 거리 (0 = 즉시)");
+            Property(spawn, "waitForPreviousTargets", "이전 필수 적 처치 후 생성");
+        }
         if (device && WavePrefabVisuals.OccupiesCells(info.prefab))
         {
             int other = Conflict(Occupied(info), originalTime, info.lifetime, selected);

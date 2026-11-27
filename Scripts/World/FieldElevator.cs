@@ -39,7 +39,7 @@ public sealed class FieldElevator : MonoBehaviour
     [Header("목적지")]
     [SerializeField, Tooltip("각개 전투를 불러올 방(TrainingRoom)")] private Room targetRoom;
     [SerializeField, Tooltip("훈련 목록에서 WaveData를 찾는 키")] private string destinationTrainingId = "FieldCombat";
-    [SerializeField, Tooltip("훈련 목록이 없거나 항목이 비었을 때 쓰는 WaveData")] private WaveDataSO fallbackWaveData;
+    [SerializeField, Tooltip("훈련 목록 자체를 불러올 수 없을 때 쓰는 WaveData")] private WaveDataSO fallbackWaveData;
     [SerializeField] private RoomTransitionEffectSO rideTransition;
 
     [Header("치수(칸)")]
@@ -131,7 +131,7 @@ public sealed class FieldElevator : MonoBehaviour
     /// <summary>등장한 상태(케이지가 내려와 문이 닫혀 있음)와 숨긴 상태(해치 닫힘·케이지 없음)를 연출 없이 세운다. 꺼져 있으면 켜질 때 적용한다.</summary>
     public void ApplyRevealed(bool value)
     {
-        revealed = value;
+        revealed = value && ResolveDestination() != null;
         // 케이지가 아직 이동 장치에 있으면(교장에서 떠나는 도중에 돌아옴) 먼저 정박 자리로 돌려 둔다. 꺼지는 중에는 계층을 바꾸지 않는다.
         if (gameObject.activeInHierarchy && ride != null && ride.HoldsCar && !ride.IsRiding) ride.ForceReturnCar();
         if (isActiveAndEnabled) ApplyVisualState();
@@ -318,12 +318,11 @@ public sealed class FieldElevator : MonoBehaviour
 
     // ===================== 탑승 =====================
 
-    /// <summary>훈련 목록에서 각개 전투 WaveData를 찾는다. 목록이 없거나 항목이 비었으면 fallbackWaveData.</summary>
+    /// <summary>훈련 목록에서 각개 전투 WaveData를 찾는다. 목록이 있으면 등록된 목적지만 사용한다.</summary>
     public WaveDataSO ResolveDestination()
     {
         var catalog = TrainingCatalogSO.Load();
-        var entry = catalog != null ? catalog.Find(destinationTrainingId) : null;
-        return entry != null && entry.waveData != null ? entry.waveData : fallbackWaveData;
+        return catalog != null ? catalog.Find(destinationTrainingId)?.waveData : fallbackWaveData;
     }
 
     /// <summary>탑승해 각개 전투 교장으로 출발한다(방 전환을 요청). 출발하지 못하면 false.</summary>

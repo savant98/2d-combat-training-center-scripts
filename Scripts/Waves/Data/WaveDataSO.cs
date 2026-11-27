@@ -117,6 +117,8 @@ public class Wave
     public DungeonWaveSettings dungeon = new DungeonWaveSettings();
     [Header("Wave Settings")]
     public WaveClearType clearType = WaveClearType.DefeatAllTargets;
+    [Min(0), Tooltip("필수 적이 이 수만큼 살아 있으면 다음 필수 적의 생성을 기다립니다. 처치 Wave에서만 쓰며 0이면 시간표대로 생성합니다.")]
+    public int maxActiveRequiredEnemies;
     public float surviveTime = 0f;
     public string customTriggerKey = "";
     [Tooltip("이 웨이브를 클리어한 뒤 다음 웨이브 안내를 시작하기 전까지 기다리는 시간(초)입니다. 발판이 사라지고 지형이 돌아오는 시간을 둘 때 씁니다.")]
@@ -129,6 +131,10 @@ public class WaveSpawnInfo
 {
     public GameObject prefab;
     public bool isRequiredToClear = true;
+    [Min(0f), Tooltip("생성 좌표에서 이 거리 안으로 플레이어가 접근하면 적을 생성합니다. 0은 즉시 생성입니다.")]
+    public float playerApproachDistance;
+    [Tooltip("앞서 생성한 필수 적이 모두 처치된 뒤 이 적부터 다음 무리를 생성합니다.")]
+    public bool waitForPreviousTargets;
     public bool keepAfterWave = false;
     public bool isBossEnemy = false;
     public float spawnDelay;

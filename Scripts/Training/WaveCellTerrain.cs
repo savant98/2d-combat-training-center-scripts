@@ -175,6 +175,9 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private float cameraLensSize;
     private CinemachineCamera roomCameraLens;
     private WaveRoomFloorShade floorShade;
+    private const float ShadeFadeSeconds = .32f;
+    private bool deferFloorShade;
+    private float shadeOpacity = 1f;
     /// <summary>
     /// 지금 카메라 범위(Confiner)가 덮는 방 좌표 사각형. 시야보다 작으면 늘린 값이다.
     /// 일반 Wave: 연결 공간 + 좌우 1칸·아래 3칸. 던전 Wave: 연결 공간 + 사방 3칸을 셀 외접으로 자른 것(CameraFrameCells).
@@ -540,6 +543,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         UpdateCameraSettlement();
         WatchCameraView();
+        UpdateFloorShadeTransition();
         if (!carrying && !IsCameraSettling && !IsTransitioning) transitBackdrop?.Hide();
         UpdatePanels();
         TrackGroupMotion();
@@ -964,6 +968,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
         CancelCameraSettlement(true);
         transitBackdrop?.Hide();
         roomSpaceReset = true;
+        ResetFloorShadeTransition();
         shownRoomPoint = null;
         StopAllCoroutines(); ClearPanels(); ClearGround(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); eventAdded.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
         ApplyBackground(0);
@@ -1005,6 +1010,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     public void ShowRoom(WaveMapCell[] cells, Vector2 roomPoint)
     {
         if (!IsPreloaded || cells == null) return;
+        ResetFloorShadeTransition();
         CancelCameraSettlement(true);
         transitBackdrop?.Hide();
         StopAllCoroutines(); ClearPanels(); ClearGround(); visualAnimations.Clear(); ClearCustom(); temporary.Clear(); eventAdded.Clear(); persistent.Clear(); outlineGroups.Clear(); animationPivots.Clear(); nextOutlineGroup = 0; expiry.Clear(); generations.Clear(); removing.Clear(); IsTransitioning = false;
@@ -1052,9 +1058,11 @@ public sealed class WaveCellTerrain : MonoBehaviour
         roomSpaceReset = false;
         shownRoomPoint = null;
         ApplyBackground(index);
+        var next = InitialFor(WaveCellState.Initial(data, index));
+        if (index > 0 && (!initial.SetEquals(next.cells) || temporary.Count > 0 || eventAdded.Count > 0))
+            BeginFloorShadeTransition(index);
         // EndEvents가 외곽선·충돌·연결 공간까지 다시 맞춘다.
         EndEvents();
-        var next = InitialFor(WaveCellState.Initial(data, index));
         initial = next.cells; ApplyInitialPivots(next);
         // 새 초기맵이 소유한 셀에는 이전 임시 생성의 수명을 넘기지 않는다.
         var initialKeys = next.keys;
@@ -1091,6 +1099,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     {
         CancelCameraSettlement(true);
         carrying = true; carryFrom = from; carryTo = to; carryLift = Mathf.Max(0f, lift);
+        BeginFloorShadeTransition(waves.currentWaveIndex);
         PrepareTransitBackdrop(from, to);
         if (carryFollow == null && roomConfiner != null && roomConfiner.TryGetComponent(out carryFollow))
         {
@@ -1533,12 +1542,41 @@ public sealed class WaveCellTerrain : MonoBehaviour
         SetCameraBounds(cameraSpace.Value, true, cameraFrameDungeon, cameraCells);
         RefreshFloorShade();
     }
+    private void BeginFloorShadeTransition(int index)
+    {
+        if (cameraFrameDungeon || BorderFrameAt(index)) deferFloorShade = true;
+    }
+
+    private void ResetFloorShadeTransition()
+    {
+        deferFloorShade = false;
+        shadeOpacity = 1f;
+        floorShade?.SetOpacity(1f);
+    }
+
+    private void UpdateFloorShadeTransition()
+    {
+        if (!deferFloorShade && shadeOpacity >= 1f) return;
+        // 패널이 움직이는 동안에는 직전 실내의 음영만 서서히 지운다. 열린 외벽이나 이동 중인 카메라 범위로 그리지 않는다.
+        float next = Mathf.MoveTowards(shadeOpacity, deferFloorShade ? 0f : 1f, Mathf.Min(Time.deltaTime, .05f) / ShadeFadeSeconds);
+        if (next != shadeOpacity)
+        {
+            shadeOpacity = next;
+            floorShade?.SetOpacity(next);
+        }
+        if (!deferFloorShade || shadeOpacity > 0f || IsTransitioning || carrying || IsCameraSettling) return;
+        deferFloorShade = false;
+        RefreshFloorShade();
+        floorShade?.SetOpacity(0f);
+    }
+
     // 카메라 범위가 던전 공식(cameraFrameDungeon)일 때만 가장자리·덩어리 음영을 지금 연결 공간·카메라 범위·테두리로 다시 계산한다. 다른 범위는 지운다(기존 Wave 화면 불변).
     // Wave 번호를 다시 판정하지 않고 범위를 정할 때 고른 공식을 그대로 따르므로, 범위와 음영이 서로 다른 판정을 쓰는 일이 없다
     // (화면 비율이 바뀌어 같은 공식으로 범위만 다시 맞출 때, 마지막 Wave를 마친 뒤 등).
     // 연결 공간을 다시 구했을 때(또는 화면 비율이 바뀌었을 때)만 불린다. 결과가 같으면 음영 쪽이 Mesh를 다시 만들지 않는다.
     private void RefreshFloorShade()
     {
+        if (deferFloorShade) return;
         if (!cameraFrameDungeon || !CameraRoomBounds.HasValue || roomSolids == null || roomRegion.Count == 0)
         {
             floorShade?.Clear();
