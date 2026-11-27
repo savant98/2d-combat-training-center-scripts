@@ -148,6 +148,8 @@ public sealed class PropCraneAnchor : ZipCraneBase
     {
         lockTime = 0f;
         LocksLit = 0;
+        // 고정 크레인 매달릴 때도 이동 크레인 방향전환·끝 도달과 동일한 덜컹 연출(소리·회전 흔들림·스파크·임펄스) 재생
+        PlayMechanismClunk(LastKickSign, 1.35f, .28f, 8);
     }
 
     protected override bool HeadLeansItself => false;

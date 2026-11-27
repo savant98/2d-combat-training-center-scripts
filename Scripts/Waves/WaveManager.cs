@@ -53,6 +53,9 @@ public class WaveManager : MonoBehaviour
     // 웨이브를 처음부터 시작하거나 강제로 정리할 때 알린다. 훈련 구간은 이때 바뀐 지형·카메라를 원래대로 되돌린다.
     public event Action WavesReset;
     public bool SuppressTrainingRecording { get; set; }
+    public bool IsHalted { get; private set; }
+    public bool IsWaveActive => isWaveActive;
+    public int TotalWaveCount => waveData != null && waveData.waves != null ? waveData.waves.Length : 0;
     public int currentWaveIndex = 0;
     public int aliveTargets = 0;
 
@@ -72,6 +75,7 @@ public class WaveManager : MonoBehaviour
 
     public void BeginWaves(bool showWaveIntro = true)
     {
+        IsHalted = false;
         ReleasePlayer();
         preparedCourses.Clear();
         if (waveData.cellMap.enabled && GetComponentInParent<WaveCellTerrain>(true) == null)
@@ -104,6 +108,7 @@ public class WaveManager : MonoBehaviour
     }
     public void ForceClear()
     {
+        IsHalted = false;
         ReleasePlayer();
         preparedCourses.Clear();
         WavesReset?.Invoke();
@@ -232,6 +237,7 @@ public class WaveManager : MonoBehaviour
     // 다음 Wave 준비도 진행되지 않는다. 적과 지형은 그대로 두고, 재도전·로비 복귀의 ForceClear·BeginWaves가 정리한다.
     public void HaltForPlayerDefeat()
     {
+        IsHalted = true;
         StopTutorialPractice();
         StopAllCoroutines();
         // 보스 등장 카메라(보스를 따라가며 확대)가 도는 중이었으면 그 코루틴도 함께 끊기므로 카메라를 플레이어로 돌려 둔다.
@@ -596,5 +602,4 @@ public class WaveManager : MonoBehaviour
         return enemyInstance;
     }
     // Wave가 진행 중인지(시작 뒤 클리어·패배·초기화 전). 던전 진행이 방 이동·적 생성 가능 여부를 읽는다.
-    public bool IsWaveActive => isWaveActive;
 }

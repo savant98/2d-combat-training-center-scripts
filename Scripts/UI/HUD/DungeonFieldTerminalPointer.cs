@@ -22,6 +22,11 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
         ZoomIn = 1,
         ZoomOut = 2,
         Recenter = 3,
+        Restart = 4,
+        GiveUp = 5,
+        MapButton = 6,
+        ConfirmYes = 7,
+        ConfirmNo = 8,
     }
 
     [SerializeField] private DungeonFieldTerminal terminal;
@@ -54,32 +59,55 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
 
     public void OnPointerClick(PointerEventData eventData)
     {
-        if (eventData == null || eventData.button != PointerEventData.InputButton.Left || role == Role.Map || !Alive) return;
-        // 끌기 끝에 따라오는 클릭은 버튼에만 의미가 있다(지도 끌기는 클릭으로 치지 않는다).
+        if (eventData == null || eventData.button != PointerEventData.InputButton.Left || !Alive) return;
+        if (role == Role.ConfirmYes) { terminal.PressConfirmYes(); return; }
+        if (role == Role.ConfirmNo) { terminal.PressConfirmNo(); return; }
+        if (terminal.State == DungeonFieldTerminal.TerminalState.ConfirmPopup) return;
+        if (role == Role.Map)
+        {
+            if (!eventData.dragging) terminal.PressMapButton();
+            return;
+        }
+        if (role == Role.MapButton) { terminal.PressMapButton(); return; }
+        if (role == Role.Restart) { terminal.PressRestart(); return; }
+        if (role == Role.GiveUp) { terminal.PressGiveUp(); return; }
         terminal.PressControl(ControlIndex);
     }
 
     public void OnPointerEnter(PointerEventData eventData)
     {
-        if (role == Role.Map || terminal == null) return;
+        if (terminal == null) return;
+        if (role == Role.Map || role == Role.MapButton) { terminal.SetMapButtonHover(true); return; }
+        if (role == Role.Restart) { terminal.SetRestartHover(true); return; }
+        if (role == Role.GiveUp) { terminal.SetGiveUpHover(true); return; }
+        if (role == Role.ConfirmYes) { terminal.SetConfirmHover(true, true); return; }
+        if (role == Role.ConfirmNo) { terminal.SetConfirmHover(false, true); return; }
         terminal.SetControlHover(ControlIndex, true);
     }
 
     public void OnPointerExit(PointerEventData eventData)
     {
-        if (role == Role.Map || terminal == null) return;
+        if (terminal == null) return;
+        if (role == Role.Map || role == Role.MapButton) { terminal.SetMapButtonHover(false); return; }
+        if (role == Role.Restart) { terminal.SetRestartHover(false); return; }
+        if (role == Role.GiveUp) { terminal.SetGiveUpHover(false); return; }
+        if (role == Role.ConfirmYes) { terminal.SetConfirmHover(true, false); return; }
+        if (role == Role.ConfirmNo) { terminal.SetConfirmHover(false, false); return; }
         terminal.SetControlHover(ControlIndex, false);
     }
 
     public void OnScroll(PointerEventData eventData)
     {
         if (eventData == null || !Alive) return;
+        if (role == Role.Restart || role == Role.GiveUp || role == Role.MapButton || role == Role.ConfirmYes || role == Role.ConfirmNo) return;
+        if (terminal.State == DungeonFieldTerminal.TerminalState.ConfirmPopup) return;
         terminal.PointerScroll(eventData.scrollDelta.y);
     }
 
     public void OnBeginDrag(PointerEventData eventData)
     {
         if (eventData == null || eventData.button != PointerEventData.InputButton.Left || role != Role.Map || !Alive) return;
+        if (terminal.State == DungeonFieldTerminal.TerminalState.ConfirmPopup) return;
         // fix7b: OnBeginDrag는 끌기 문턱(EventSystem.pixelDragThreshold)을 넘은 뒤에 온다. 누른 점(pressPosition)에서 시작해
         //        지금 점까지 바로 옮겨야 지도가 문턱만큼 커서보다 뒤처지지 않는다(V4·V7 '포인터를 따라 이동').
         if (!ToLocal(eventData, eventData.pressPosition, out var press)) return;
@@ -103,7 +131,12 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
     private void OnDisable()
     {
         if (terminal == null) return;
-        if (role == Role.Map) terminal.EndPointerDrag();
+        if (role == Role.Map) { terminal.EndPointerDrag(); terminal.SetMapButtonHover(false); }
+        else if (role == Role.MapButton) terminal.SetMapButtonHover(false);
+        else if (role == Role.Restart) terminal.SetRestartHover(false);
+        else if (role == Role.GiveUp) terminal.SetGiveUpHover(false);
+        else if (role == Role.ConfirmYes) terminal.SetConfirmHover(true, false);
+        else if (role == Role.ConfirmNo) terminal.SetConfirmHover(false, false);
         else terminal.SetControlHover(ControlIndex, false);
     }
 

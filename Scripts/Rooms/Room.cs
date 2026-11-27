@@ -55,6 +55,7 @@ public class Room : MonoBehaviour
     {
         if (waveCompleteRoutine != null) StopCoroutine(waveCompleteRoutine);
         waveCompleteRoutine = null;
+        if (clearPortalPrefab != null) clearPortalPrefab.gameObject.SetActive(false);
     }
     // 완료 연출 도중 플레이어가 패배(사망·훈련 성적 미흡)했으면 패배 연출만 진행한다.
     private static bool IsPlayerDefeated()

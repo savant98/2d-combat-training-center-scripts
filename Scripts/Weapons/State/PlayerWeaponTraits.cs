@@ -20,6 +20,8 @@ public sealed class PlayerWeaponTraits
     public const float CoolingRate = 1f / 3f;
     /// <summary>레일건 충전(Gear 1) 지속 시간(초).</summary>
     public const float ChargeDuration = 10f;   // 5차 사용자 지시: 5 → 10초
+    /// <summary>레일건 충전(Gear 1) 발동 시 증가하는 과열 게이지 비율(30%).</summary>
+    public const float ChargeHeatGain = 0.3f;
     /// <summary>방어막이 가득 차는 평타 환산 횟수(2026-11-21 5차 사용자 지시: 평타 10번, 회전 망치 3틱 = 평타 1번, 지면 평탄화 적중 = 평타 5번, 반격 성공 = 즉시).</summary>
     public const int BarrierHitsToFull = 10;
     // 2026-11-21 사용자 지시 3차: 탄창을 다 쓰거나, 마지막 라이플 탄 뒤 이 시간 동안 쏘지 않으면 장전한다(무기 교체는 장전 조건이 아니다).
@@ -242,17 +244,16 @@ public sealed class PlayerWeaponTraits
     }
 
     /// <summary>
-    /// 레일건 충전(Gear 1): 총열 열을 바로 0%로 식히고(2026-11-21 4차 사용자 지시) ChargeDuration 동안 레일건 계열 공격을 강화한다.
-    /// 과열 잠금 중에는 이 기술을 쓸 수 없다(PlayerWeaponAbility.IsWeaponTraitReady) — 잠금 해제는 하지 않는다.
+    /// 레일건 충전(Gear 1): 과열 게이지를 30%(ChargeHeatGain) 올리고 ChargeDuration 동안 레일건 계열 공격을 강화한다.
+    /// 증가 결과 과열 임계(100%)에 도달하면 기존 과열 잠금 규칙을 그대로 따른다.
+    /// 과열 잠금 중에는 이 기술을 쓸 수 없다(PlayerWeaponAbility.IsWeaponTraitReady).
     /// </summary>
     public void ChargeRail()
     {
         if (OverheatRemaining > 0f) return;
-        heat = 0f;
-        venting = false;
         chargeEnd = Time.time + ChargeDuration;
-        PlayRail(WeaponTraitCue.RailCharge);
-        Changed?.Invoke();
+        AddRailHeat(ChargeHeatGain, false);
+        if (OverheatRemaining <= 0f) PlayRail(WeaponTraitCue.RailCharge);
     }
 
     public void Tick()

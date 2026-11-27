@@ -29,6 +29,9 @@ public abstract class ProjectileBase : MovingEntityBase
 
     protected virtual bool UsesPathHitDetection => true;
 
+    /// <summary>Hammer 반격으로 소멸·반사할 수 있는 적 투사체인지.</summary>
+    public virtual bool CanBeCounterReflected => ownerFaction == Faction.Enemy && !isReturning && gameObject.activeInHierarchy;
+
     protected override void Awake()
     {
         base.Awake();
@@ -172,7 +175,15 @@ public abstract class ProjectileBase : MovingEntityBase
         else if (!(ownerFaction == Faction.Enemy && health is PlayerHealth))
             return;
 
-        HitTarget(health, hitPoint ?? collision.ClosestPoint(transform.position));
+        PlayerCounterState.PushImpactProjectile(this);
+        try
+        {
+            HitTarget(health, hitPoint ?? collision.ClosestPoint(transform.position));
+        }
+        finally
+        {
+            PlayerCounterState.PopImpactProjectile(this);
+        }
     }
 
     protected virtual void HitTarget(HealthBase health, Vector2 hitPoint)
@@ -202,7 +213,7 @@ public abstract class ProjectileBase : MovingEntityBase
         else if (health is PlayerHealth player)
             player.TakeDamage(damageInfo, hitPoint);
 
-        if (hitFeedbackData != null)
+        if (!isReturning && hitFeedbackData != null)
             FeedbackPlayer.Instance.Play(hitFeedbackData, hitPoint);
     }
 }

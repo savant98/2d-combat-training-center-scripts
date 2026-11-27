@@ -21,7 +21,7 @@ public enum DungeonPropKind
     Platform = 1,
     /// <summary>파괴형. DestructibleProp(EnemyHealth 파생)과 Enemy 레이어 hurtbox.</summary>
     Destructible = 2,
-    /// <summary>함정. PropHazard(증기)·PropShredder·PropRockfall(7차 낙석 구조물)·PropSparkJunction·PropLaserWelder 등 피해 부품. 6차부터 방 클리어 때 멈춘다(IDungeonRoomHazard).</summary>
+    /// <summary>함정. PropHazard(증기)·PropShredder·PropRockfall(7차 낙석 구조물)·PropLaserWelder 등 피해 부품. 6차부터 방 클리어 때 멈춘다(IDungeonRoomHazard).</summary>
     Hazard = 3,
 }
 

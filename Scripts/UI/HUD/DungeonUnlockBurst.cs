@@ -3,34 +3,39 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// 방 클리어 '잠금 해제' 연출(2026-11-25 던전형 Wave 5차, DESIGN_V5 §1 S8). DungeonRoomStatus Prefab 안 부품(UnlockBurst)이고,
+/// 방 클리어 '잠금 해제' 연출(던전형 Wave 방 클리어 피드백 개편). DungeonRoomStatus Prefab 안 부품(UnlockBurst)이고,
 /// 이벤트 구독은 부모 <see cref="DungeonRoomStatus"/>가 맡는다(OnRoomCleared → <see cref="Play"/>, OnRoomUnlocked → <see cref="Beat"/>, LateUpdate → <see cref="Advance"/>).
 /// 띠 상태 기계(BandState·대기열)에 들어가지 않는 평행 연출이라 띠 순서(ROOM CLEAR → THREAT → EXIT → SECTOR)는 그대로다.
-/// - 녹색 가장자리 빛(ClearVignette): 위험 빛(DangerVignetteUI)과 같은 방식 — 9-slice TrainingVignette(가운데 비움) + 가산 TrainingBoardGlow(공유 재질, 수정 없음),
-///   자기 Canvas(overrideSorting)로 UI Canvas 바로 아래(root − 1)에 그려 HUD 체력 칸·보스 바·글자를 물들이지 않는다. 화면 전체 Flash·후처리 Volume Vignette는 쓰지 않는다.
-///   시간표(실제 시간): 0.08초에 최고 알파 0.45 → 0.25초 유지 → 1.1초 동안 OutCubic으로 사라짐. 문 열림(RoomUnlocked, 보통 +0.6초) 때 +0.2 맥동(0.45초).
-/// - 문구(Banner): 상태 띠 바로 아래(anchor·pivot (0.5,1), (0,-50), 360×56) 판(DungeonStatusPlateGraphic Clear) + 녹색 빛줄 + '잠금 해제!'(esamanru, 공백 = 여백 태그).
+/// - 파란 격자 스윕(ClearVignette): 화면 전체를 덮는 전용 UI 셰이더(UI/DungeonClearGridSweep, 일반 알파 혼합 + 제한된 발광 강도 ≤ 1.05)로
+///   파란색 격자가 왼쪽에서 오른쪽으로 빠르게 지나가며, 자기 Canvas(overrideSorting)로 UI Canvas 바로 아래(root − 1)에 그려 HUD를 물들이지 않는다.
+///   시간표(실제 시간): 0.06초에 최고 알파 0.55 → 0.42초 유지(그 사이 0.58초에 걸쳐 왼→오 격자 스윕) → 0.95초 동안 OutCubic으로 사라짐.
+///   문 열림(RoomUnlocked, 보통 +0.6초) 때 +0.2 맥동(0.45초).
+/// - 문구(Banner): 상태 띠 바로 아래(anchor·pivot (0.5,1), (0,-50), 360×56) 판(DungeonStatusPlateGraphic Clear) + 파란 빛줄 + '잠금 해제!'(esamanru, 공백 = 여백 태그).
 ///   0.22초 가로로 열림(OutBack, 세로 불변) → 1.3초까지 유지 → 0.35초 사라짐(전체 약 1.65초). 빛줄은 0.45초 한 번 쓸고, 문 열림 순간 글자가 흰빛 쪽으로 30% 번쩍인다.
 ///   띠가 보스 바 쪽으로 옮겨 간 동안에는 같은 x만큼 따라간다(DungeonRoomStatus가 넘긴다).
 /// - 언제: RoomCleared(잠금이 있던 방 — 보스 방 포함)일 때만. 순찰 전멸·적 없는 동적 방·출구 입장 클리어는 DungeonManager가 RoomCleared를 올리지 않으므로 뜨지 않는다.
 /// - 보임: 던전 HUD 판정(DungeonHudGate)·패배 정지 아님(던전 성공 SECTOR CLEAR 중에는 마저 보임)을 부모가 계산해 넘긴다. 숨겨도 시간표는 계속 흐른다.
-/// - 소리는 기존 클리어음·해제음(DungeonManager의 roomClearFeedback·doorUnlockFeedback) 그대로다(새 음원 없음).
-/// 매 프레임 Image·CanvasGroup 알파와 RectTransform 자리·가로 배율만 바꾼다(할당 없음). Prefab 부품은 tools/Unity/DungeonRoomStatusSetup.cs가 만든다.
+/// - 소리: DungeonManager.roomClearFeedback(기계문 철컥 열림 음원 DungeonDoorClearClack)과 doorUnlockFeedback이 함께 재생된다.
+/// 매 프레임 Image·CanvasGroup 알파, 전용 런타임 머티리얼 Float, RectTransform 자리·가로 배율만 바꾼다(할당 없음). Prefab 부품은 tools/Unity/DungeonRoomStatusSetup.cs가 만든다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class DungeonUnlockBurst : MonoBehaviour
 {
+    private static readonly int SweepProgressId = Shader.PropertyToID("_SweepProgress");
+    private static readonly int BeatPulseId = Shader.PropertyToID("_BeatPulse");
+    private static readonly int IntensityId = Shader.PropertyToID("_Intensity");
+
     [Header("Parts")]
     [Tooltip("부품 루트 CanvasGroup(ignoreParentGroups — 띠 페이드와 독립)")]
     [SerializeField] private CanvasGroup group;
-    [Tooltip("녹색 가장자리 빛의 중첩 Canvas(World Space로 저장, 실행 때 UI Canvas 바로 아래 순서)")]
+    [Tooltip("화면 전체 파란 격자 스윕의 중첩 Canvas(World Space로 저장, 실행 때 UI Canvas 바로 아래 순서)")]
     [SerializeField] private Canvas vignetteCanvas;
-    [Tooltip("TrainingVignette(9-slice, 가운데 비움) + TrainingBoardGlow")]
+    [Tooltip("화면 전체 파란 격자 스윕 Image(UI/DungeonClearGridSweep)")]
     [SerializeField] private Image vignette;
     [SerializeField] private RectTransform banner;
     [SerializeField] private CanvasGroup bannerGroup;
     [SerializeField] private DungeonStatusPlateGraphic plate;
-    [Tooltip("녹색 빛줄(TrainingBeam + TrainingBoardGlow)")]
+    [Tooltip("파란 빛줄(TrainingBeam + TrainingBoardGlow)")]
     [SerializeField] private Image sweep;
     [SerializeField] private TMP_Text label;
 
@@ -38,14 +43,18 @@ public sealed class DungeonUnlockBurst : MonoBehaviour
     [SerializeField] private string unlockLabel = "잠금 해제!";
 
     [Header("Color")]
-    [Tooltip("클리어 녹색(#33F259, 띠 ROOM CLEAR·미니맵 클리어와 같은 색)")]
-    [SerializeField] private Color color = new Color32(0x33, 0xf2, 0x59, 0xff);
+    [Tooltip("클리어 파란색(#38B6FF, 파란 격자 스윕·띠 ROOM CLEAR와 통일)")]
+    [SerializeField] private Color color = new Color32(0x38, 0xb6, 0xff, 0xff);
 
-    [Header("가장자리 빛 시간표(실제 시간, 초)")]
-    [SerializeField, Min(.01f)] private float vignetteRise = .08f;
-    [SerializeField, Range(0f, 1f)] private float vignettePeak = .45f;
-    [SerializeField, Min(0f)] private float vignetteHold = .25f;
-    [SerializeField, Min(.01f)] private float vignetteDecay = 1.1f;
+    [Header("파란 격자 스윕 시간표(실제 시간, 초)")]
+    [SerializeField, Min(.01f)] private float vignetteRise = .06f;
+    [SerializeField, Range(0f, 1f)] private float vignettePeak = .55f;
+    [SerializeField, Min(0f)] private float vignetteHold = .42f;
+    [SerializeField, Min(.01f)] private float vignetteDecay = .95f;
+    [Tooltip("파란 격자가 화면 왼쪽에서 오른쪽 끝까지 지나가는 시간(초)")]
+    [SerializeField, Min(.1f)] private float gridSweepTime = .58f;
+    [Tooltip("격자 스윕 발광 강도 상한(과도한 Bloom 방지 위해 1.05 이하 유지)")]
+    [SerializeField, Range(.2f, 1.05f)] private float gridIntensity = .95f;
     [Tooltip("문 열림(RoomUnlocked) 맥동 세기(알파 더하기)")]
     [SerializeField, Range(0f, 1f)] private float beatAlpha = .2f;
     [SerializeField, Min(.05f)] private float beatTime = .45f;
@@ -69,11 +78,18 @@ public sealed class DungeonUnlockBurst : MonoBehaviour
     private float shift;
     private Vector2 bannerBase;
     private string shownLabel;
+    private Material runtimeGridMaterial;
 
     // ===== 검증·디버그가 읽는 값 =====
     public bool IsPlaying => playing;
     /// <summary>재생 시작 뒤 흐른 실제 시간(초).</summary>
     public float PlayTime => time;
+    /// <summary>파란 격자 왼쪽→오른쪽 스윕 진행률(0~1).</summary>
+    public float SweepProgress { get; private set; }
+    /// <summary>파란 격자 스윕 길이(초).</summary>
+    public float GridSweepTime => gridSweepTime;
+    /// <summary>격자 발광 강도(과도한 발광 억제 상한 확인용).</summary>
+    public float GridIntensity => gridIntensity;
     /// <summary>문 열림 맥동이 들어왔는지(이번 재생에서).</summary>
     public bool HasBeat => beatAt >= 0f;
     public float Visibility => visibility;
@@ -124,7 +140,26 @@ public sealed class DungeonUnlockBurst : MonoBehaviour
         if (banner != null) bannerBase = banner.anchoredPosition;
         shownLabel = DungeonUiText.Static(unlockLabel);
         if (plate != null) plate.CurrentTone = DungeonStatusPlateGraphic.Tone.Clear;
+        // 원본 머티리얼 에셋을 오염시키지 않고 0-할당으로 _SweepProgress를 갱신할 런타임 인스턴스를 한 번만 만든다.
+        if (vignette != null && vignette.material != null && vignette.material.HasProperty(SweepProgressId))
+        {
+            runtimeGridMaterial = new Material(vignette.material) { hideFlags = HideFlags.DontSave };
+            runtimeGridMaterial.SetFloat(SweepProgressId, 0f);
+            runtimeGridMaterial.SetFloat(BeatPulseId, 0f);
+            runtimeGridMaterial.SetFloat(IntensityId, gridIntensity);
+            vignette.material = runtimeGridMaterial;
+        }
         Draw();
+    }
+
+    private void OnDestroy()
+    {
+        if (runtimeGridMaterial != null)
+        {
+            if (Application.isPlaying) Destroy(runtimeGridMaterial);
+            else DestroyImmediate(runtimeGridMaterial);
+            runtimeGridMaterial = null;
+        }
     }
 
     /// <summary>UI Canvas 바로 아래 순서로 그린다(같은 Sorting Layer, 순서 −1 — DangerVignetteUI.ApplySorting과 같다).</summary>
@@ -209,6 +244,7 @@ public sealed class DungeonUnlockBurst : MonoBehaviour
     {
         float t = time;
         float beat = playing ? BeatWeight() : 0f;
+        SweepProgress = playing ? TrainingBoardMotion.OutCubic(Mathf.Clamp01(t / Mathf.Max(.05f, gridSweepTime))) : 0f;
         if (vignette != null)
         {
             float a = playing ? Mathf.Clamp01(VignetteBaseAlpha(t) + beatAlpha * beat) * visibility : 0f;
@@ -219,6 +255,12 @@ public sealed class DungeonUnlockBurst : MonoBehaviour
                 Color c = color;
                 c.a = a;
                 vignette.color = c;
+                if (runtimeGridMaterial != null)
+                {
+                    runtimeGridMaterial.SetFloat(SweepProgressId, SweepProgress);
+                    runtimeGridMaterial.SetFloat(BeatPulseId, beat);
+                    runtimeGridMaterial.SetFloat(IntensityId, gridIntensity);
+                }
             }
         }
 

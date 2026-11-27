@@ -97,6 +97,7 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
     public const float IntroLength = 2.0f;
     // ===== 상시 연출 주기(초) =====
     public const float GlowPeriod = 1.6f, LadderPeriod = 1.2f, SweepPeriod = 2.6f, SweepTime = .6f, DangerPeriod = .8f, ExitPulsePeriod = 1.1f, ExitSparkPeriod = 2f;
+    public const float ScanPeriod = 4.2f, ScanTime = 2.4f;
     /// <summary>위험 문턱(코너판과 같은 값): 남은 피격 5 이하·남은 시간 60초 이하이면 숫자 경고색 + 깜박임.</summary>
     public const int DangerHits = 5;
     public const float DangerSeconds = 60f;
@@ -156,6 +157,8 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
     [SerializeField] private DungeonTerminalGaugeGraphic roomFlash;
 
     [Header("⑥⑦ 목표·출구")]
+    [SerializeField] private GameObject dividerObject;
+    [SerializeField] private GameObject objectiveHeaderObject;
     [SerializeField] private TMP_Text objectiveTitle;
     [SerializeField] private TMP_Text objectiveCount;
     [SerializeField] private CanvasGroup objectiveGroup;
@@ -168,6 +171,20 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
     [SerializeField] private RectTransform spark;
     [SerializeField] private Image sparkImage;
 
+    [Header("Sci-Fi 아이콘·애니메이션")]
+    [SerializeField] private DungeonTerminalGaugeGraphic scifiFrame;
+    [SerializeField] private DungeonTerminalGaugeGraphic gradeReticle;
+    [SerializeField] private DungeonTerminalGaugeGraphic threatIcon;
+    [SerializeField] private DungeonTerminalGaugeGraphic hitIcon;
+    [SerializeField] private DungeonTerminalGaugeGraphic timeIcon;
+    [SerializeField] private RectTransform clockHand;
+    [SerializeField] private DungeonTerminalGaugeGraphic roomIcon;
+    [SerializeField] private DungeonTerminalGaugeGraphic objectiveIcon;
+    [SerializeField] private RectTransform[] telemetryBars = new RectTransform[0];
+    [SerializeField] private RectTransform scanBar;
+    [SerializeField] private Image scanBarImage;
+    [SerializeField] private Vector2 scanRangeY = new Vector2(-42f, -490f);
+
     private static readonly Color Dim = new Color32(120, 160, 172, 255);
     private static readonly Color Warning = new Color32(255, 90, 60, 255);
     private static readonly Color32 LostRed = new Color32(255, 42, 31, 235);
@@ -178,7 +195,7 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
     // 보이는 값 한 벌(정수·실수만 — 복사해도 할당 없음)
     private struct View
     {
-        public bool valid, training, threat, objective, exit, exitOpen;
+        public bool valid, hasMap, training, threat, objective, exit, exitOpen;
         public int floorKey;
         public Grade grade;
         public int hits, hitLimit, hitsLeft, markHitA, markHitB;
@@ -287,6 +304,17 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
     public TMP_Text[] LeverLabels => leverLabels;
     public TMP_Text ExitText => exitText;
     public RectTransform Spark => spark;
+    public DungeonTerminalGaugeGraphic SciFiFrame => scifiFrame;
+    public DungeonTerminalGaugeGraphic GradeReticle => gradeReticle;
+    public DungeonTerminalGaugeGraphic ThreatIcon => threatIcon;
+    public DungeonTerminalGaugeGraphic HitIcon => hitIcon;
+    public DungeonTerminalGaugeGraphic TimeIcon => timeIcon;
+    public RectTransform ClockHand => clockHand;
+    public DungeonTerminalGaugeGraphic RoomIcon => roomIcon;
+    public DungeonTerminalGaugeGraphic ObjectiveIcon => objectiveIcon;
+    public RectTransform[] TelemetryBars => telemetryBars;
+    public RectTransform ScanBar => scanBar;
+    public Image ScanBarImage => scanBarImage;
 
     /// <summary>검증용: 가짜 훈련 상태를 넣는다(다음 Refresh부터 추적기 대신 쓴다).</summary>
     public void ApplyTraining(in DungeonTerminalTrainingState state)
@@ -359,7 +387,8 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
     private void Gather(IDungeonMapSource map, IDungeonObjectiveSource objectives, IDungeonThreatSource threat, IDungeonExitSource exit)
     {
         var v = new View();
-        v.floorKey = map != null && map.HasFloor ? Mathf.Max(1, map.FloorNumber) : 0;
+        v.hasMap = map != null && map.HasFloor;
+        v.floorKey = v.hasMap ? Mathf.Max(1, map.FloorNumber) : 0;
 
         // 훈련(코너 간략판과 같은 의미: 남은 양)
         training = overrideActive ? overrideState : DungeonTerminalTrainingState.FromTracker(TrainingRunTracker.Instance);
@@ -501,36 +530,43 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
             gradeName.text = cur.training ? TrainingBoardStyle.GradeLabel(cur.grade) : "-";
             gradeName.color = cur.training ? TrainingBoardStyle.GradeColor(cur.grade) : Dim;
         }
-        if (gradeNote != null && gradeNote.enabled == cur.training) gradeNote.enabled = !cur.training;
+        if (gradeNote != null)
+        {
+            if (gradeNote.enabled == cur.training) gradeNote.enabled = !cur.training;
+            if (!cur.training) gradeNote.text = DungeonUiText.Static("기록 없음");
+        }
 
-        // ② 난이도
+        // ② 난이도(아이콘이 '난이도'를 대체하고 간결한 배율·NEXT/MAX만 표시)
         if (cur.threat)
         {
             if (threatName != null)
             {
                 builder.Clear();
-                builder.AppendColorTag(Dim).AppendStatic("난이도").Append("</color>").Append(DungeonUiText.SpaceTag)
-                       .AppendColorTag(DungeonThreatText.Color(cur.level)).AppendStatic(DungeonThreatText.Label(cur.level)).Append("</color>");
+                builder.AppendColorTag(DungeonThreatText.Color(cur.level)).AppendStatic(DungeonThreatText.Label(cur.level)).Append("</color>");
                 threatName.text = builder.ToString();
             }
             if (threatDensity != null)
             {
                 builder.Clear();
-                builder.AppendStatic("적 출현 ").AppendMultiplier(cur.density);
+                builder.AppendMultiplier(cur.density);
                 threatDensity.text = builder.ToString();
             }
-            if (threatNext != null) threatNext.text = DungeonUiText.Static(cur.nextAt < 0 ? "최고 단계" : "다음 단계까지");
+            if (threatNext != null) threatNext.text = cur.nextAt < 0 ? "MAX" : "NEXT";
         }
 
-        // ③ 남은 피격
-        if (hitLabel != null) hitLabel.text = DungeonUiText.Static("남은 피격");
+        // ③ 남은 피격(방패 아이콘이 '남은 피격' 문구 대체)
+        if (hitLabel != null)
+        {
+            if (hitIcon != null) { if (hitLabel.enabled) hitLabel.enabled = false; hitLabel.text = ""; }
+            else hitLabel.text = DungeonUiText.Static("남은 피격");
+        }
         if (hitValue != null)
         {
             builder.Clear();
             if (!cur.training) builder.Append('-');
             else if (cur.hitLimit < 0) builder.AppendStatic("제한 없음");
             else builder.Append("<mspace=0.6em>").Append(cur.hitsLeft).Append("</mspace>").Append(DungeonUiText.SpaceTag).Append('/').Append(DungeonUiText.SpaceTag)
-                        .Append(cur.hitLimit).AppendStatic("회");
+                        .Append(cur.hitLimit);
             hitValue.text = builder.ToString();
             hitValue.color = cur.training && cur.hitLimit >= 0 && cur.hitsLeft <= DangerHits ? Warning : Color.white;
         }
@@ -540,11 +576,11 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
             Color keepColor = TrainingBoardStyle.GradeColor(cur.grade);
             if (cur.training)
             {
-                if (!training.RuleFor(cur.grade, out int maxHits, out _)) { builder.AppendStatic("등급 유지 없음"); keepColor = Warning; }
+                if (!training.RuleFor(cur.grade, out int maxHits, out _)) { builder.Append("--"); keepColor = Warning; }
                 else if (maxHits >= 0)
                 {
                     int keep = Mathf.Max(0, maxHits - cur.hits);
-                    builder.AppendStatic(TrainingBoardStyle.GradeLabel(cur.grade)).AppendStatic(" 유지 ").Append(keep).AppendStatic("회");
+                    builder.AppendStatic(TrainingBoardStyle.GradeLabel(cur.grade)).Append(DungeonUiText.SpaceTag).Append('+').Append(keep);
                     if (keep <= DangerHits && cur.grade == Grade.Pass) keepColor = Warning;
                 }
             }
@@ -553,8 +589,12 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
         }
         PlaceMarkLabels(hitMarkLabels, hitBar, cur.training && cur.hitLimit > 0, true);
 
-        // ④ 남은 시간
-        if (timeLabel != null) timeLabel.text = DungeonUiText.Static(cur.timeLimit > 0f || !cur.training ? "남은 시간" : "경과 시간");
+        // ④ 남은 시간(크로노미터 아이콘이 '남은 시간' 문구 대체)
+        if (timeLabel != null)
+        {
+            if (timeIcon != null) { if (timeLabel.enabled) timeLabel.enabled = false; timeLabel.text = ""; }
+            else timeLabel.text = DungeonUiText.Static(cur.timeLimit > 0f || !cur.training ? "남은 시간" : "경과 시간");
+        }
         if (timeValue != null)
         {
             builder.Clear();
@@ -570,37 +610,55 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
         {
             builder.Clear();
             if (cur.training && training.RuleFor(cur.grade, out _, out float maxTime) && maxTime >= 0f)
-                builder.AppendStatic(TrainingBoardStyle.GradeLabel(cur.grade)).AppendStatic(" 유지 ").AppendClock(maxTime - cur.elapsed);
+                builder.AppendStatic(TrainingBoardStyle.GradeLabel(cur.grade)).Append(DungeonUiText.SpaceTag).AppendClock(maxTime - cur.elapsed);
             timeKeep.text = builder.ToString();
             timeKeep.color = TrainingBoardStyle.GradeColor(cur.grade);
         }
         PlaceMarkLabels(timeMarkLabels, timeTrack, cur.training && cur.timeLimit > 0f, false);
 
-        // ⑤ 구역
+        // ⑤ 구역(3x3 섹터 아이콘 + 간결 숫자 n/m)
+        if (roomIcon != null && roomIcon.enabled != cur.hasMap) roomIcon.enabled = cur.hasMap;
         if (roomLabel != null)
         {
-            builder.Clear();
-            builder.AppendStatic("구역 클리어 ").Append(cur.roomsCleared).Append('/').Append(cur.roomsTotal);
-            roomLabel.text = builder.ToString();
+            if (roomLabel.enabled != cur.hasMap) roomLabel.enabled = cur.hasMap;
+            if (cur.hasMap)
+            {
+                builder.Clear();
+                if (roomIcon == null) builder.AppendStatic("구역 클리어 ");
+                builder.Append(cur.roomsCleared).Append('/').Append(cur.roomsTotal);
+                roomLabel.text = builder.ToString();
+            }
+            else roomLabel.text = "";
         }
 
-        // ⑥⑦ 목표·출구
+        // ⑥⑦ 목표·출구(마름모 아이콘이 '목표' 머리말 대체, 레버 상태는 OK/!/? 기호로 간결화)
+        bool showObjectiveSection = cur.hasMap || cur.objective;
+        if (dividerObject != null && dividerObject.activeSelf != showObjectiveSection) dividerObject.SetActive(showObjectiveSection);
+        if (objectiveHeaderObject != null && objectiveHeaderObject.activeSelf != (showObjectiveSection && objectiveIcon == null))
+            objectiveHeaderObject.SetActive(showObjectiveSection && objectiveIcon == null);
+        if (objectiveIcon != null && objectiveIcon.enabled != showObjectiveSection) objectiveIcon.enabled = showObjectiveSection;
         if (objectiveTitle != null)
         {
-            builder.Clear();
-            if (!cur.objective) builder.AppendColorTag(Dim).AppendStatic("추가 목표 없음").Append("</color>");
+            if (objectiveTitle.enabled != showObjectiveSection) objectiveTitle.enabled = showObjectiveSection;
+            if (!showObjectiveSection) objectiveTitle.text = "";
             else
             {
-                string title = objectivesTitle;
-                builder.AppendStatic(string.IsNullOrEmpty(title) ? "목표" : title);
+                builder.Clear();
+                if (!cur.objective) builder.AppendColorTag(Dim).AppendStatic("목표 없음").Append("</color>");
+                else
+                {
+                    string title = objectivesTitle;
+                    builder.AppendStatic(string.IsNullOrEmpty(title) ? "목표" : title);
+                }
+                objectiveTitle.text = builder.ToString();
+                objectiveTitle.color = cur.objective ? (Color)objectiveColor : Dim;
             }
-            objectiveTitle.text = builder.ToString();
-            objectiveTitle.color = cur.objective ? (Color)objectiveColor : Dim;
         }
         if (objectiveCount != null)
         {
+            if (objectiveCount.enabled != showObjectiveSection) objectiveCount.enabled = showObjectiveSection;
             builder.Clear();
-            if (cur.objective) builder.Append(cur.done).Append('/').Append(cur.total);
+            if (showObjectiveSection && cur.objective) builder.Append(cur.done).Append('/').Append(cur.total);
             objectiveCount.text = builder.ToString();
         }
         if (leverLabels != null)
@@ -614,7 +672,7 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
                 if (label.enabled != show) label.enabled = show;
                 if (!show) continue;
                 bool isDone = (cur.leverDone & (1 << i)) != 0, known = (cur.leverKnown & (1 << i)) != 0;
-                label.text = isDone ? "완료" : known ? "발견" : DungeonUiText.Static("미확인");
+                label.text = isDone ? "OK" : known ? "!" : "?";
                 label.color = isDone ? (Color)objectiveColor : known ? Color.white : Dim;
                 if (leverRow != null)
                 {
@@ -632,7 +690,7 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
             {
                 builder.AppendStatic("출구").Append(DungeonUiText.SpaceTag);
                 if (cur.exitOpen) builder.AppendColorTag(objectiveColor).AppendStatic("개방").Append("</color>").AppendSeparator().AppendStatic("시작 방");
-                else builder.AppendColorTag(Dim).AppendStatic("잠김").Append("</color>").AppendSeparator().AppendStatic("레버 ").Append(cur.done).Append('/').Append(cur.total);
+                else builder.AppendColorTag(Dim).AppendStatic("잠김").Append(DungeonUiText.SpaceTag).Append(cur.done).Append('/').Append(cur.total).Append("</color>");
             }
             exitText.text = builder.ToString();
         }
@@ -716,6 +774,15 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
         if (roomStrip != null) roomStrip.SetRooms(roomCodes, cur.roomCount, roomStrip.RoomVisible, cur.overflowTotal, cur.overflowCleared);
         // ⑥⑦ 목표
         if (objectiveGroup != null) objectiveGroup.alpha = cur.objective ? 1f : 0f;
+        // Sci-Fi 아이콘 색 갱신(값이 같으면 Mesh를 다시 만들지 않음)
+        if (gradeReticle != null) gradeReticle.SetIconColor(cur.training ? (Color32)TrainingBoardStyle.GradeColor(cur.grade) : (Color32)Dim);
+        if (threatIcon != null) threatIcon.SetIconColor(cur.threat ? (Color32)DungeonThreatText.Color(cur.level) : (Color32)Dim);
+        bool hitDanger = cur.training && cur.hitLimit >= 0 && cur.hitsLeft <= DangerHits;
+        bool timeDanger = cur.training && cur.timeLimit > 0f && cur.remaining <= DangerSeconds;
+        if (hitIcon != null) hitIcon.SetIconColor(hitDanger ? (Color32)Warning : DungeonTerminalGaugeGraphic.Line);
+        if (timeIcon != null) timeIcon.SetIconColor(timeDanger ? (Color32)Warning : DungeonTerminalGaugeGraphic.Line);
+        if (roomIcon != null) roomIcon.SetIconColor(cur.hasMap ? DungeonTerminalGaugeGraphic.Line : (Color32)Dim);
+        if (objectiveIcon != null) objectiveIcon.SetIconColor(cur.objective ? objectiveColor : (Color32)Dim);
     }
 
     // ===== '지난번 열람 뒤' 강조(PlayIntro 때만 — Flash 목록을 한 번 만든다) =====
@@ -955,11 +1022,54 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
         // ② 지금 단계 맥동(사다리 전체 알파 — Mesh 그대로)
         if (threatLadder != null)
             threatLadder.canvasRenderer.SetAlpha(t >= IntroLength * .5f ? .84f + .16f * (.5f + .5f * Mathf.Cos(clock * Mathf.PI * 2f / LadderPeriod)) : 1f);
-        // ③④ 위험 깜박임(숫자 알파)
-        if (hitValue != null)
-            hitValue.canvasRenderer.SetAlpha(cur.training && cur.hitLimit >= 0 && cur.hitsLeft <= DangerHits ? Blink(DangerPeriod) : 1f);
-        if (timeValue != null)
-            timeValue.canvasRenderer.SetAlpha(cur.training && cur.timeLimit > 0f && cur.remaining <= DangerSeconds ? Blink(DangerPeriod) : 1f);
+        // ③④ 위험 깜박임(숫자 + 아이콘 알파)
+        bool hitDanger = cur.training && cur.hitLimit >= 0 && cur.hitsLeft <= DangerHits;
+        bool timeDanger = cur.training && cur.timeLimit > 0f && cur.remaining <= DangerSeconds;
+        float hitAlpha = hitDanger ? Blink(DangerPeriod) : 1f;
+        float timeAlpha = timeDanger ? Blink(DangerPeriod) : 1f;
+        if (hitValue != null) hitValue.canvasRenderer.SetAlpha(hitAlpha);
+        if (hitIcon != null) hitIcon.canvasRenderer.SetAlpha(hitAlpha);
+        if (timeValue != null) timeValue.canvasRenderer.SetAlpha(timeAlpha);
+        if (timeIcon != null) timeIcon.canvasRenderer.SetAlpha(timeAlpha);
+        // Sci-Fi 등급 홀로그램 조준 고리 회전 + 숨쉬기
+        if (gradeReticle != null)
+        {
+            gradeReticle.rectTransform.localRotation = Quaternion.Euler(0f, 0f, -clock * 24f);
+            float ra = cur.training ? .44f + .24f * (.5f + .5f * Mathf.Sin(clock * 2.4f)) : .18f;
+            gradeReticle.canvasRenderer.SetAlpha(ra);
+        }
+        // Sci-Fi 시계 바늘 회전(위험 구간에서 가속)
+        if (clockHand != null)
+        {
+            float speed = timeDanger ? 140f : 42f;
+            clockHand.localRotation = Quaternion.Euler(0f, 0f, -clock * speed);
+        }
+        // Sci-Fi 상단 텔레메트리 파형 막대(할당 없음)
+        if (telemetryBars != null)
+        {
+            for (int i = 0; i < telemetryBars.Length; i++)
+            {
+                var bar = telemetryBars[i];
+                if (bar == null) continue;
+                float sy = .25f + .75f * (.5f + .5f * Mathf.Sin(clock * (3.2f + i * .7f) + i * 1.15f));
+                bar.localScale = new Vector3(1f, sy, 1f);
+            }
+        }
+        // Sci-Fi 세로 홀로그램 스캔 바(판 전체를 부드럽게 위→아래 훑음)
+        if (scanBar != null && scanBarImage != null)
+        {
+            float phase = Mathf.Repeat(clock, ScanPeriod);
+            float scanAlpha = 0f;
+            if (phase < ScanTime)
+            {
+                float u = phase / ScanTime;
+                float y = Mathf.Lerp(scanRangeY.x, scanRangeY.y, u);
+                var pos = scanBar.anchoredPosition;
+                if (Mathf.Abs(pos.y - y) > 1e-3f) scanBar.anchoredPosition = new Vector2(pos.x, y);
+                scanAlpha = .16f * TrainingBoardMotion.Pulse(phase, 0f, ScanTime);
+            }
+            scanBarImage.canvasRenderer.SetAlpha(scanAlpha);
+        }
         // 점검 빛: 2.6초마다 바 위를 한 번 훑는다(열림 연출이 끝난 뒤)
         if (sweep != null && sweepImage != null)
         {
@@ -976,10 +1086,12 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
             }
             sweepImage.canvasRenderer.SetAlpha(alpha);
         }
-        // ⑦ 출구 개방 맥동 + 전류
+        // ⑦ 출구 개방 맥동 + 목표 아이콘 맥동 + 전류
         bool open = exitBadge != null && exitBadge.ExitOpen;
         if (exitBadge != null)
             exitBadge.canvasRenderer.SetAlpha(open && t >= IntroLength ? .7f + .3f * (.5f + .5f * Mathf.Cos(clock * Mathf.PI * 2f / ExitPulsePeriod)) : 1f);
+        if (objectiveIcon != null)
+            objectiveIcon.canvasRenderer.SetAlpha(open && t >= IntroLength ? .65f + .35f * (.5f + .5f * Mathf.Cos(clock * Mathf.PI * 2f / ExitPulsePeriod)) : 1f);
         UpdateSpark(t, open);
     }
 

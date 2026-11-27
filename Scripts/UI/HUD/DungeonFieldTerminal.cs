@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using TMPro;
@@ -37,11 +38,35 @@ using UnityEngine.InputSystem;
 /// Prefab(Assets/Resources/UI/DungeonFieldTerminal.prefab)은 tools/Unity/DungeonFieldTerminalSetup.cs가 만든다.
 /// </summary>
 [DisallowMultipleComponent]
-public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDungeonDetailView, IDungeonObjectiveView, IDungeonThreatView, IUIInputReceiver
+public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDungeonDetailView, IDungeonObjectiveView, IDungeonThreatView, IWaveTerminalView, IUIInputReceiver
 {
     public const string ResourcePath = "UI/DungeonFieldTerminal";
     public const float OpenDuration = .38f;
     public const float CloseDuration = .24f;
+
+    /// <summary>단말기 상호작용 깊이 상태(메뉴 선택 → 상세 맵 탐색 / 재시작·포기 확인 팝업).</summary>
+    public enum TerminalState
+    {
+        Menu = 0,
+        MapDetail = 1,
+        ConfirmPopup = 2,
+    }
+
+    /// <summary>하단 동작 버튼 키보드 선택 항목(던전: 상세 맵·재시작·포기, 일반 Wave: 재시작·포기).</summary>
+    public enum ActionChoice
+    {
+        Map = 0,
+        Restart = 1,
+        GiveUp = 2,
+    }
+
+    /// <summary>확인 팝업 대상 동작.</summary>
+    public enum ConfirmTarget
+    {
+        None = 0,
+        Restart = 1,
+        GiveUp = 2,
+    }
 
     [Header("Presentation (InventoryTerminal 외형 사본)")]
     [Tooltip("열려 있는 동안만 켜는 표시 루트(배경 막 + 단말기)")]
@@ -90,6 +115,39 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     [Header("7차 계기판형 정보 판(비어 있으면 3~4차 글자 판)")]
     [SerializeField] private DungeonTerminalStatusPanel statusPanel;
 
+    [Header("상세 맵 · 재시작 · 포기 · 확인 팝업")]
+    [SerializeField] private RectTransform mapPanelRoot;
+    [SerializeField] private RectTransform infoPanelRoot;
+    [SerializeField] private DungeonTerminalGaugeGraphic mapActiveFrame;
+    [SerializeField] private RectTransform mapButtonRoot;
+    [SerializeField] private DungeonTerminalGaugeGraphic mapButtonGraphic;
+    [SerializeField] private TMP_Text mapButtonLabel;
+    [SerializeField] private RectTransform restartButtonRoot;
+    [SerializeField] private DungeonTerminalGaugeGraphic restartButtonGraphic;
+    [SerializeField] private TMP_Text restartButtonLabel;
+    [SerializeField] private RectTransform giveUpButtonRoot;
+    [SerializeField] private DungeonTerminalGaugeGraphic giveUpButtonGraphic;
+    [SerializeField] private TMP_Text giveUpButtonLabel;
+    [SerializeField] private GameObject confirmPopupRoot;
+    [SerializeField] private DungeonTerminalGaugeGraphic confirmFrameGraphic;
+    [SerializeField] private TMP_Text confirmTitleText;
+    [SerializeField] private TMP_Text confirmBodyText;
+    [SerializeField] private DungeonTerminalGaugeGraphic confirmYesGraphic;
+    [SerializeField] private TMP_Text confirmYesLabel;
+    [SerializeField] private DungeonTerminalGaugeGraphic confirmNoGraphic;
+    [SerializeField] private TMP_Text confirmNoLabel;
+    [SerializeField] private string waveContext = "전투 훈련";
+    [SerializeField] private string menuFooter = "[TAB/ESC] 닫기  [방향키] 메뉴 선택  [Z] 확인";
+    [SerializeField] private string waveFooter = "[TAB/ESC] 닫기  [방향키] 메뉴 선택  [Z] 확인";
+    [SerializeField] private string confirmFooter = "[방향키] 선택  [Z] 확인  [ESC] 취소";
+    [SerializeField] private string mapLabel = "상세 맵";
+    [SerializeField] private string restartLabel = "WAVE 재시작";
+    [SerializeField] private string giveUpLabel = "훈련 포기";
+    [SerializeField] private string confirmYesText = "예";
+    [SerializeField] private string confirmNoText = "아니오";
+    [SerializeField] private string restartConfirmBody = "처음부터 다시 시작할까요?";
+    [SerializeField] private string giveUpConfirmBody = "훈련을 포기하고 로비로 돌아갈까요?";
+
     [Header("Text (정적 글꼴 esamanru — 공백은 여백 태그)")]
     [SerializeField] private TMP_Text titleText;
     [SerializeField] private TMP_Text contextText;
@@ -103,7 +161,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     [Header("Labels")]
     [SerializeField] private string title = "현장 단말기";
     [SerializeField] private string context = "전투 구역 지도";
-    [SerializeField] private string footer = "[TAB] 닫기  [방향키/드래그] 이동  [휠] 확대/축소  [Z] 현재 방";
+    [SerializeField] private string footer = "[TAB] 닫기  [ESC] 메뉴  [방향키/드래그] 이동  [Q/E/휠] 확대/축소  [Z] 현재 방";
     [Header("4차 글자(정적 글꼴 — DungeonUiText.Glyphs 안)")]
     [SerializeField] private string threatRowLabel = "난이도";
     [SerializeField] private string exitRowLabel = "출구";
@@ -112,8 +170,22 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     [SerializeField] private string exitWhereLabel = "시작 방";
     [SerializeField] private string leverLabel = "레버";
 
+    [Header("UI 사운드(기존 Menu 공용 Feedback)")]
+    [SerializeField] private FeedbackDataSO openFeedback;
+    [SerializeField] private FeedbackDataSO moveFeedback;
+    [SerializeField] private FeedbackDataSO confirmFeedback;
+    [SerializeField] private FeedbackDataSO cancelFeedback;
+
     private static readonly Color Dim = new Color32(120, 160, 172, 255);
     private static readonly Color Bright = new Color32(143, 244, 255, 255);
+    private static readonly Color FocusWhite = new Color32(255, 255, 255, 255);
+    private static readonly Color MapCyan = new Color32(43, 200, 226, 255);
+    private static readonly Color RestartMuted = new Color32(172, 130, 62, 255);
+    private static readonly Color RestartAmber = new Color32(255, 176, 33, 255);
+    private static readonly Color RestartBright = new Color32(255, 231, 179, 255);
+    private static readonly Color GiveUpMuted = new Color32(176, 84, 72, 255);
+    private static readonly Color GiveUpRed = new Color32(255, 90, 60, 255);
+    private static readonly Color GiveUpBright = new Color32(255, 198, 186, 255);
 
     private IDungeonMapSource source;
     private IDungeonDetailSource detailSource;
@@ -121,6 +193,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private IDungeonThreatSource threatSource;
     private IDungeonExitSource exitSource;
     private IDungeonPlayerHeadingSource headingSource;
+    private IWaveTerminalSource waveSource;
     private int facing = 1;
     private bool currentLabelVisible;
     private InputAction toggleAction;
@@ -128,7 +201,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private bool initialized;
     private bool isOpen, isClosing, transitioning, live;
     private float progress, transitionFrom, transitionTo, transitionTime, transitionDuration;
-    private Vector2 terminalHome, wristHome;
+    private Vector2 terminalHome, wristHome, infoHome;
     private Quaternion terminalRotation = Quaternion.identity, wristRotation = Quaternion.identity;
     private Vector2 lastFitSize;
     private GameTimeController pauseOwner;
@@ -148,7 +221,22 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private bool dragging;
     private Vector2 dragLast;
     private int controlHover = -1;
+    private bool mapButtonHover;
+    private bool restartHover;
+    private bool giveUpHover;
+    private bool confirmYesHover;
+    private bool confirmNoHover;
+    private TerminalState state = TerminalState.Menu;
+    private ActionChoice selectedAction = ActionChoice.Map;
+    private ConfirmTarget confirmTarget = ConfirmTarget.None;
+    private bool confirmYes;
     private float lastWheel = -999f;
+    private FeedbackDataSO lastUiFeedback;
+
+    /// <summary>검증용 재시작 가로채기 훅. 설정하면 실제 GameManager 대신 이 콜백을 호출한다.</summary>
+    public Action RestartHandler;
+    /// <summary>검증용 포기 가로채기 훅. 설정하면 실제 GameManager 대신 이 콜백을 호출한다.</summary>
+    public Action GiveUpHandler;
 
     // ===== 검증이 읽는 값 =====
     public IDungeonMapSource Source => source;
@@ -206,6 +294,41 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     public int ControlHover => controlHover;
     public DungeonFieldTerminalMapGraphic ControlsGraphic => controlsGraphic;
     public DungeonTerminalStatusPanel StatusPanel => statusPanel;
+    public IWaveTerminalSource WaveSource => waveSource;
+    public bool IsWaveMode => !FloorActive() && WaveActive();
+    public TerminalState State => state;
+    public ActionChoice SelectedAction => selectedAction;
+    public ConfirmTarget PendingConfirm => confirmTarget;
+    public bool ConfirmSelectedYes => confirmYes;
+    public bool IsConfirmOpen => state == TerminalState.ConfirmPopup;
+    public bool MapButtonHover => mapButtonHover;
+    public bool RestartHover => restartHover;
+    public bool GiveUpHover => giveUpHover;
+    public bool CanRestart => isOpen && !isClosing && (FloorActive() || WaveActive())
+        && (GameManager.Instance == null || !GameManager.Instance.IsRetrying);
+    public bool CanGiveUp => isOpen && !isClosing && (FloorActive() || WaveActive())
+        && (GameManager.Instance == null || !GameManager.Instance.IsRetrying)
+        && (RoomTransitionManager.Instance == null || !RoomTransitionManager.Instance.IsTransitioning);
+    public DungeonTerminalGaugeGraphic MapActiveFrame => mapActiveFrame;
+    public DungeonTerminalGaugeGraphic MapButtonGraphic => mapButtonGraphic;
+    public TMP_Text MapButtonLabel => mapButtonLabel;
+    public DungeonTerminalGaugeGraphic RestartButtonGraphic => restartButtonGraphic;
+    public TMP_Text RestartButtonLabel => restartButtonLabel;
+    public DungeonTerminalGaugeGraphic GiveUpButtonGraphic => giveUpButtonGraphic;
+    public TMP_Text GiveUpButtonLabel => giveUpButtonLabel;
+    public GameObject ConfirmPopupRoot => confirmPopupRoot;
+    public DungeonTerminalGaugeGraphic ConfirmFrameGraphic => confirmFrameGraphic;
+    public TMP_Text ConfirmTitleText => confirmTitleText;
+    public TMP_Text ConfirmBodyText => confirmBodyText;
+    public DungeonTerminalGaugeGraphic ConfirmYesGraphic => confirmYesGraphic;
+    public TMP_Text ConfirmYesLabel => confirmYesLabel;
+    public DungeonTerminalGaugeGraphic ConfirmNoGraphic => confirmNoGraphic;
+    public TMP_Text ConfirmNoLabel => confirmNoLabel;
+    public FeedbackDataSO OpenFeedback => openFeedback;
+    public FeedbackDataSO MoveFeedback => moveFeedback;
+    public FeedbackDataSO ConfirmFeedback => confirmFeedback;
+    public FeedbackDataSO CancelFeedback => cancelFeedback;
+    public FeedbackDataSO LastUiFeedback => lastUiFeedback;
 
     private void Awake() => EnsureInit();
 
@@ -223,10 +346,23 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
             wristHome = wristRoot.anchoredPosition;
             wristRotation = wristRoot.localRotation;
         }
+        if (mapPanelRoot == null && mapGraphic != null) mapPanelRoot = mapGraphic.transform.parent as RectTransform;
+        if (infoPanelRoot == null && statusPanel != null) infoPanelRoot = statusPanel.transform as RectTransform;
+        if (infoPanelRoot != null) infoHome = infoPanelRoot.anchoredPosition;
+        if (mapButtonRoot == null && mapButtonGraphic != null) mapButtonRoot = mapButtonGraphic.rectTransform;
+        if (restartButtonRoot == null && restartButtonGraphic != null) restartButtonRoot = restartButtonGraphic.rectTransform;
+        if (giveUpButtonRoot == null && giveUpButtonGraphic != null) giveUpButtonRoot = giveUpButtonGraphic.rectTransform;
+        if (mapButtonLabel != null) mapButtonLabel.text = DungeonUiText.Static(mapLabel);
+        if (restartButtonLabel != null) restartButtonLabel.text = DungeonUiText.Static(restartLabel);
+        if (giveUpButtonLabel != null) giveUpButtonLabel.text = DungeonUiText.Static(giveUpLabel);
+        if (confirmYesLabel != null) confirmYesLabel.text = DungeonUiText.Static(confirmYesText);
+        if (confirmNoLabel != null) confirmNoLabel.text = DungeonUiText.Static(confirmNoText);
+        if (confirmPopupRoot != null) confirmPopupRoot.SetActive(false);
+        if (mapActiveFrame != null) mapActiveFrame.canvasRenderer.SetAlpha(0f);
         toggleAction = new InputAction("DungeonFieldTerminal", InputActionType.Button, InputBindingDisplay.InventoryPath);
         toggleAction.performed += HandleToggle;
         if (titleText != null) titleText.text = DungeonUiText.Static(title);
-        if (footerText != null) footerText.text = DungeonUiText.Static(footer);
+        if (footerText != null) footerText.text = DungeonUiText.Static(menuFooter);
         if (objectiveCells != null) objectiveCells.AlignRight = false;
         if (mapGraphic != null) mapGraphic.ClearFloor();
         if (currentGraphic != null) currentGraphic.SetCurrent(default, false);
@@ -336,7 +472,26 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         MarkDirty();
     }
 
-    /// <summary>모든 원본 연결을 끊는다(View 인터페이스 공통 — 4차 난이도·출구 포함). 열려 있으면 바로 닫는다.</summary>
+    /// <summary>일반 Wave 원본을 연결한다(던전이 아닌 훈련 방에서도 단말기 열기·재시작 지원).</summary>
+    public void BindWave(IWaveTerminalSource waves)
+    {
+        EnsureInit();
+        if (ReferenceEquals(waveSource, waves)) return;
+        if (waveSource != null) waveSource.WaveStateChanged -= MarkDirty;
+        waveSource = waves;
+        if (waveSource != null) waveSource.WaveStateChanged += MarkDirty;
+        MarkDirty();
+    }
+
+    public void UnbindWave()
+    {
+        if (initialized && isOpen && !FloorActive()) CloseImmediately(isActiveAndEnabled);
+        if (waveSource != null) waveSource.WaveStateChanged -= MarkDirty;
+        waveSource = null;
+        if (initialized && !FloorActive()) SetActionEnabled(false);
+    }
+
+    /// <summary>모든 원본 연결을 끊는다(View 인터페이스 공통 — 4차 난이도·출구·일반 Wave 포함). 열려 있으면 바로 닫는다.</summary>
     public void Unbind()
     {
         if (initialized && isOpen) CloseImmediately(isActiveAndEnabled);
@@ -345,12 +500,14 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (objectiveSource != null) objectiveSource.ObjectiveChanged -= MarkDirty;
         if (threatSource != null) threatSource.ThreatChanged -= OnThreatChanged;
         if (exitSource != null) exitSource.ExitChanged -= MarkDirty;
+        if (waveSource != null) waveSource.WaveStateChanged -= MarkDirty;
         source = null;
         detailSource = null;
         objectiveSource = null;
         threatSource = null;
         exitSource = null;
         headingSource = null;
+        waveSource = null;
         silhouettes.Clear();
         model = null;
         if (initialized)
@@ -392,7 +549,31 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (!isOpen || isClosing || dir.sqrMagnitude < .01f) return;
         var step = new Vector2(Mathf.Abs(dir.x) > .5f ? Mathf.Sign(dir.x) : 0f, Mathf.Abs(dir.y) > .5f ? Mathf.Sign(dir.y) : 0f);
         if (step == Vector2.zero) return;
-        // 7차 V4: 화면 px 기준 한 걸음(확대해도 한 번에 수백 px씩 튀지 않게)
+
+        if (state == TerminalState.ConfirmPopup)
+        {
+            if (step.x < 0f) SetConfirmSelection(true);
+            else if (step.x > 0f) SetConfirmSelection(false);
+            return;
+        }
+        if (state == TerminalState.Menu || IsWaveMode)
+        {
+            if (IsWaveMode)
+            {
+                if (step.x < 0f) SelectAction(ActionChoice.Restart);
+                else if (step.x > 0f) SelectAction(ActionChoice.GiveUp);
+                else if (step.y != 0f) SelectAction(selectedAction == ActionChoice.Restart ? ActionChoice.GiveUp : ActionChoice.Restart);
+            }
+            else
+            {
+                if (step.x < 0f) SelectAction((ActionChoice)Mathf.Max((int)ActionChoice.Map, (int)selectedAction - 1));
+                else if (step.x > 0f) SelectAction((ActionChoice)Mathf.Min((int)ActionChoice.GiveUp, (int)selectedAction + 1));
+                else if (step.y < 0f && selectedAction == ActionChoice.Map) SelectAction(ActionChoice.Restart);
+                else if (step.y > 0f && selectedAction != ActionChoice.Map) SelectAction(ActionChoice.Map);
+            }
+            return;
+        }
+        // 상세 맵 탐색 모드: 화면 px 기준 한 걸음(확대해도 한 번에 수백 px씩 튀지 않게)
         PanBy(step * (panStepPixels / Mathf.Max(1f, view.pitch)));
     }
 
@@ -403,7 +584,197 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         RefitView();
     }
 
-    public void OnConfirm() => Recenter();
+    public void OnConfirm()
+    {
+        if (!isOpen || isClosing) return;
+        if (state == TerminalState.ConfirmPopup)
+        {
+            if (confirmYes) ExecuteConfirmTarget();
+            else CancelConfirmPopup();
+            return;
+        }
+        if (state == TerminalState.Menu || IsWaveMode)
+        {
+            switch (selectedAction)
+            {
+                case ActionChoice.Map:
+                    if (!IsWaveMode) EnterMapDetail();
+                    break;
+                case ActionChoice.Restart:
+                    RequestRestartConfirm();
+                    break;
+                case ActionChoice.GiveUp:
+                    RequestGiveUpConfirm();
+                    break;
+            }
+            return;
+        }
+        Recenter();
+        PlayUiFeedback(confirmFeedback);
+    }
+
+    private void PlayUiFeedback(FeedbackDataSO feedback)
+    {
+        if (!live || feedback == null) return;
+        lastUiFeedback = feedback;
+        if (FeedbackPlayer.Instance != null)
+            FeedbackPlayer.Instance.PlayExact(feedback, Vector3.zero, Quaternion.identity);
+    }
+
+    /// <summary>상세 맵 탐색 깊이로 진입한다(던전 모드 전용).</summary>
+    public bool EnterMapDetail() => EnterMapDetail(true);
+
+    private bool EnterMapDetail(bool playFeedback)
+    {
+        if (!isOpen || isClosing || IsWaveMode || state == TerminalState.ConfirmPopup) return false;
+        if (state == TerminalState.MapDetail) return true;
+        state = TerminalState.MapDetail;
+        selectedAction = ActionChoice.Map;
+        UpdateActionButtons();
+        UpdateControls();
+        UpdateFooterText();
+        if (playFeedback) PlayUiFeedback(confirmFeedback);
+        return true;
+    }
+
+    /// <summary>상세 맵 탐색에서 취소해 3버튼 메뉴로 복귀한다(단말기는 닫지 않는다).</summary>
+    public bool ExitMapDetail()
+    {
+        if (!isOpen || isClosing || state != TerminalState.MapDetail) return false;
+        EndPointerDrag();
+        state = TerminalState.Menu;
+        selectedAction = ActionChoice.Map;
+        UpdateActionButtons();
+        UpdateControls();
+        UpdateFooterText();
+        PlayUiFeedback(cancelFeedback);
+        return true;
+    }
+
+    /// <summary>하단 동작 버튼 키보드 선택 항목을 바꾼다.</summary>
+    public void SelectAction(ActionChoice choice)
+    {
+        if (IsWaveMode && choice == ActionChoice.Map) choice = ActionChoice.Restart;
+        if (selectedAction == choice) return;
+        selectedAction = choice;
+        UpdateActionButtons();
+        PlayUiFeedback(moveFeedback);
+    }
+
+    /// <summary>확인 팝업에서 예(true) / 아니오(false)를 선택한다.</summary>
+    public void SetConfirmSelection(bool yes)
+    {
+        if (state != TerminalState.ConfirmPopup || confirmYes == yes) return;
+        confirmYes = yes;
+        UpdateConfirmPopup();
+        PlayUiFeedback(moveFeedback);
+    }
+
+    /// <summary>재시작 확인 팝업을 연다(기본 선택 = 아니오).</summary>
+    public bool RequestRestartConfirm()
+    {
+        if (!CanRestart) return false;
+        selectedAction = ActionChoice.Restart;
+        return OpenConfirmPopup(ConfirmTarget.Restart);
+    }
+
+    /// <summary>포기 확인 팝업을 연다(기본 선택 = 아니오).</summary>
+    public bool RequestGiveUpConfirm()
+    {
+        if (!CanGiveUp) return false;
+        selectedAction = ActionChoice.GiveUp;
+        return OpenConfirmPopup(ConfirmTarget.GiveUp);
+    }
+
+    private bool OpenConfirmPopup(ConfirmTarget target)
+    {
+        if (!isOpen || isClosing || target == ConfirmTarget.None) return false;
+        EndPointerDrag();
+        state = TerminalState.ConfirmPopup;
+        confirmTarget = target;
+        confirmYes = false;   // 실수 방지를 위해 최초 포커스는 항상 '아니오'
+        confirmYesHover = false;
+        confirmNoHover = false;
+        if (confirmPopupRoot != null && !confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(true);
+        UpdateConfirmPopup();
+        UpdateActionButtons();
+        UpdateControls();
+        UpdateFooterText();
+        PlayUiFeedback(confirmFeedback);
+        return true;
+    }
+
+    /// <summary>확인 팝업을 취소하고 메뉴 상태로 복귀한다.</summary>
+    public bool CancelConfirmPopup() => CancelConfirmPopup(true);
+
+    private bool CancelConfirmPopup(bool playFeedback)
+    {
+        if (state != TerminalState.ConfirmPopup) return false;
+        state = TerminalState.Menu;
+        confirmTarget = ConfirmTarget.None;
+        confirmYes = false;
+        confirmYesHover = false;
+        confirmNoHover = false;
+        if (confirmPopupRoot != null && confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(false);
+        UpdateActionButtons();
+        UpdateControls();
+        UpdateFooterText();
+        if (playFeedback) PlayUiFeedback(cancelFeedback);
+        return true;
+    }
+
+    /// <summary>확인 팝업에서 '예'를 확정해 재시작 또는 포기를 실행한다.</summary>
+    public bool PressConfirmYes()
+    {
+        if (!AcceptsPointer || state != TerminalState.ConfirmPopup) return false;
+        return ExecuteConfirmTarget();
+    }
+
+    /// <summary>확인 팝업에서 '아니오'를 눌러 메뉴로 돌아간다.</summary>
+    public bool PressConfirmNo()
+    {
+        if (!AcceptsPointer || state != TerminalState.ConfirmPopup) return false;
+        return CancelConfirmPopup();
+    }
+
+    private bool ExecuteConfirmTarget()
+    {
+        var target = confirmTarget;
+        if (target == ConfirmTarget.Restart)
+        {
+            if (!CanRestart) { CancelConfirmPopup(); return false; }
+            PlayUiFeedback(confirmFeedback);
+            CancelConfirmPopup(false);
+            if (RestartHandler != null) { RestartHandler(); return true; }
+            var gm = GameManager.Instance;
+            if (gm == null) return false;
+            CloseImmediately();
+            gm.RequestRetryFromTerminal();
+            return true;
+        }
+        if (target == ConfirmTarget.GiveUp)
+        {
+            if (!CanGiveUp) { CancelConfirmPopup(); return false; }
+            PlayUiFeedback(confirmFeedback);
+            CancelConfirmPopup(false);
+            if (GiveUpHandler != null) { GiveUpHandler(); return true; }
+            var gm = GameManager.Instance;
+            if (gm == null) return false;
+            CloseImmediately();
+            gm.RequestReturnToLobbyFromTerminal();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>키보드로 미니맵 배율을 조절한다(delta &gt; 0 확대, delta &lt; 0 축소 — 상세 맵 모드 [Q/E]·[-/+]).</summary>
+    public bool HandleZoomKey(int delta)
+    {
+        if (!isOpen || isClosing || IsWaveMode || state != TerminalState.MapDetail || delta == 0) return false;
+        bool changed = delta > 0 ? ZoomIn() : ZoomOut();
+        if (changed) PlayUiFeedback(moveFeedback);
+        return changed;
+    }
 
     /// <summary>7차: 지금 방 가운데로(배율은 그대로). Z 키·[현재 방] 버튼.</summary>
     public void Recenter()
@@ -480,16 +851,20 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     /// <summary>휠 한 칸 = 한 단계(위 = 확대). wheelCooldown 안의 다음 칸은 무시한다. 바뀌었으면 true.</summary>
     public bool PointerScroll(float delta)
     {
-        if (!AcceptsPointer || Mathf.Abs(delta) < 1e-3f) return false;
+        if (!AcceptsPointer || state == TerminalState.ConfirmPopup || IsWaveMode || Mathf.Abs(delta) < 1e-3f) return false;
+        if (state == TerminalState.Menu) EnterMapDetail(false);
         if (clock - lastWheel < wheelCooldown) return false;
         lastWheel = clock;
-        return delta > 0f ? SetZoom(zoomLevel + 1) : SetZoom(zoomLevel - 1);
+        bool changed = delta > 0f ? SetZoom(zoomLevel + 1) : SetZoom(zoomLevel - 1);
+        if (changed) PlayUiFeedback(moveFeedback);
+        return changed;
     }
 
     /// <summary>끌기 시작(지도 영역 로컬 점).</summary>
     public void BeginPointerDrag(Vector2 local)
     {
-        if (!AcceptsPointer) return;
+        if (!AcceptsPointer || state == TerminalState.ConfirmPopup || IsWaveMode) return;
+        if (state == TerminalState.Menu) EnterMapDetail(false);
         dragging = true;
         dragLast = local;
     }
@@ -498,7 +873,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     public void PointerDragTo(Vector2 local)
     {
         if (!dragging) return;
-        if (!AcceptsPointer)
+        if (!AcceptsPointer || state == TerminalState.ConfirmPopup)
         {
             EndPointerDrag();
             return;
@@ -514,28 +889,184 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     /// <summary>버튼 클릭(DungeonFieldTerminalMapGraphic.ControlZoomOut·ControlZoomIn·ControlRecenter). 받았으면 true.</summary>
     public bool PressControl(int index)
     {
-        if (!AcceptsPointer) return false;
+        if (!AcceptsPointer || state == TerminalState.ConfirmPopup || IsWaveMode) return false;
+        if (state == TerminalState.Menu) EnterMapDetail(false);
         switch (index)
         {
-            case DungeonFieldTerminalMapGraphic.ControlZoomOut: ZoomOut(); return true;
-            case DungeonFieldTerminalMapGraphic.ControlZoomIn: ZoomIn(); return true;
-            case DungeonFieldTerminalMapGraphic.ControlRecenter: Recenter(); return true;
+            case DungeonFieldTerminalMapGraphic.ControlZoomOut:
+                if (ZoomOut()) PlayUiFeedback(confirmFeedback);
+                return true;
+            case DungeonFieldTerminalMapGraphic.ControlZoomIn:
+                if (ZoomIn()) PlayUiFeedback(confirmFeedback);
+                return true;
+            case DungeonFieldTerminalMapGraphic.ControlRecenter:
+                Recenter();
+                PlayUiFeedback(confirmFeedback);
+                return true;
             default: return false;
         }
     }
 
-    /// <summary>버튼에 마우스가 올라감·나감(밝게 그리기만).</summary>
+    /// <summary>버튼에 마우스가 올라감·나감(밝게 그리기 + 이동 UI 사운드).</summary>
     public void SetControlHover(int index, bool on)
     {
+        bool entered = on && controlHover != index && AcceptsPointer && state != TerminalState.ConfirmPopup && !IsWaveMode;
         if (on) controlHover = index;
         else if (controlHover == index) controlHover = -1;
         UpdateControls();
+        if (entered) PlayUiFeedback(moveFeedback);
+    }
+
+    /// <summary>상세 맵 버튼에 마우스가 올라감·나감.</summary>
+    public void SetMapButtonHover(bool on)
+    {
+        if (mapButtonHover == on) return;
+        mapButtonHover = on;
+        UpdateActionButtons();
+        if (on && AcceptsPointer && state == TerminalState.Menu && !IsWaveMode) PlayUiFeedback(moveFeedback);
+    }
+
+    /// <summary>재시작 버튼에 마우스가 올라감·나감(밝게 그리기 + 이동 UI 사운드).</summary>
+    public void SetRestartHover(bool on)
+    {
+        if (restartHover == on) return;
+        restartHover = on;
+        UpdateActionButtons();
+        if (on && AcceptsPointer && CanRestart && state != TerminalState.ConfirmPopup) PlayUiFeedback(moveFeedback);
+    }
+
+    /// <summary>포기 버튼에 마우스가 올라감·나감(밝게 그리기 + 이동 UI 사운드).</summary>
+    public void SetGiveUpHover(bool on)
+    {
+        if (giveUpHover == on) return;
+        giveUpHover = on;
+        UpdateActionButtons();
+        if (on && AcceptsPointer && CanGiveUp && state != TerminalState.ConfirmPopup) PlayUiFeedback(moveFeedback);
+    }
+
+    /// <summary>확인 팝업 예/아니오 버튼 hover.</summary>
+    public void SetConfirmHover(bool yes, bool on)
+    {
+        if (yes)
+        {
+            if (confirmYesHover == on) return;
+            confirmYesHover = on;
+        }
+        else
+        {
+            if (confirmNoHover == on) return;
+            confirmNoHover = on;
+        }
+        UpdateConfirmPopup();
+        if (on && AcceptsPointer && state == TerminalState.ConfirmPopup) PlayUiFeedback(moveFeedback);
+    }
+
+    /// <summary>상세 맵 버튼 클릭.</summary>
+    public bool PressMapButton()
+    {
+        if (!AcceptsPointer || IsWaveMode || state == TerminalState.ConfirmPopup) return false;
+        return EnterMapDetail();
+    }
+
+    /// <summary>재시작 버튼 클릭 → 확인 팝업을 띄운다(실제 실행은 팝업에서 '예' 선택 시).</summary>
+    public bool PressRestart()
+    {
+        if (!AcceptsPointer || state == TerminalState.ConfirmPopup || !CanRestart) return false;
+        return RequestRestartConfirm();
+    }
+
+    /// <summary>포기 버튼 클릭 → 확인 팝업을 띄운다(실제 실행은 팝업에서 '예' 선택 시).</summary>
+    public bool PressGiveUp()
+    {
+        if (!AcceptsPointer || state == TerminalState.ConfirmPopup || !CanGiveUp) return false;
+        return RequestGiveUpConfirm();
+    }
+
+    private void UpdateActionButtons()
+    {
+        bool menuFocused = isOpen && !isClosing && state == TerminalState.Menu;
+
+        bool mapReady = isOpen && !isClosing && !IsWaveMode;
+        bool mapHovered = mapReady && mapButtonHover && state != TerminalState.ConfirmPopup;
+        bool mapSelected = mapReady && menuFocused && selectedAction == ActionChoice.Map;
+        bool mapDetail = mapReady && state == TerminalState.MapDetail;
+        bool mapFocused = mapSelected || mapDetail;
+        if (mapActiveFrame != null)
+        {
+            int frameMode = mapDetail
+                ? DungeonTerminalGaugeGraphic.MapFrameDetail
+                : (mapSelected || (menuFocused && mapHovered) ? DungeonTerminalGaugeGraphic.MapFrameSelected : DungeonTerminalGaugeGraphic.MapFrameHidden);
+            mapActiveFrame.SetMapFrameMode(frameMode);
+            if (frameMode == DungeonTerminalGaugeGraphic.MapFrameHidden)
+                mapActiveFrame.canvasRenderer.SetAlpha(0f);
+        }
+        if (mapButtonGraphic != null)
+            mapButtonGraphic.SetButtonStyle(mapReady, mapHovered, mapFocused, DungeonTerminalGaugeGraphic.ToneCyan, DungeonTerminalGaugeGraphic.IconMap);
+        if (mapButtonLabel != null)
+        {
+            string tag = mapDetail ? (mapLabel + " 이동") : (mapSelected || mapHovered ? (mapLabel + " [Z]") : mapLabel);
+            mapButtonLabel.text = DungeonUiText.Static(tag);
+            mapButtonLabel.color = mapReady ? (mapFocused ? FocusWhite : (mapHovered ? Bright : Dim)) : Dim;
+        }
+
+        bool restartReady = CanRestart;
+        bool restartHovered = restartReady && restartHover && state != TerminalState.ConfirmPopup;
+        bool restartFocused = restartReady && menuFocused && selectedAction == ActionChoice.Restart;
+        if (restartButtonGraphic != null)
+            restartButtonGraphic.SetButtonStyle(restartReady, restartHovered, restartFocused, DungeonTerminalGaugeGraphic.ToneAmber, DungeonTerminalGaugeGraphic.IconRestart);
+        if (restartButtonLabel != null)
+            restartButtonLabel.color = restartReady ? (restartFocused ? FocusWhite : (restartHovered ? RestartBright : RestartMuted)) : Dim;
+
+        bool giveUpReady = CanGiveUp;
+        bool giveUpHovered = giveUpReady && giveUpHover && state != TerminalState.ConfirmPopup;
+        bool giveUpFocused = giveUpReady && menuFocused && selectedAction == ActionChoice.GiveUp;
+        if (giveUpButtonGraphic != null)
+            giveUpButtonGraphic.SetButtonStyle(giveUpReady, giveUpHovered, giveUpFocused, DungeonTerminalGaugeGraphic.ToneDanger, DungeonTerminalGaugeGraphic.IconGiveUp);
+        if (giveUpButtonLabel != null)
+            giveUpButtonLabel.color = giveUpReady ? (giveUpFocused ? FocusWhite : (giveUpHovered ? GiveUpBright : GiveUpMuted)) : Dim;
+    }
+
+    private void UpdateConfirmPopup()
+    {
+        bool open = state == TerminalState.ConfirmPopup && isOpen && !isClosing;
+        bool danger = confirmTarget == ConfirmTarget.GiveUp;
+        if (confirmFrameGraphic != null) confirmFrameGraphic.SetPopupDanger(danger);
+        if (confirmTitleText != null)
+        {
+            confirmTitleText.text = DungeonUiText.Static(danger ? giveUpLabel : restartLabel);
+            confirmTitleText.color = danger ? GiveUpBright : RestartBright;
+        }
+        if (confirmBodyText != null)
+            confirmBodyText.text = DungeonUiText.Static(danger ? giveUpConfirmBody : restartConfirmBody);
+        int yesTone = danger ? DungeonTerminalGaugeGraphic.ToneDanger : DungeonTerminalGaugeGraphic.ToneAmber;
+        bool yesHot = open && (confirmYes || confirmYesHover);
+        bool noHot = open && (!confirmYes || confirmNoHover);
+        if (confirmYesGraphic != null)
+            confirmYesGraphic.SetButtonStyle(open, open && confirmYesHover, open && confirmYes, yesTone, DungeonTerminalGaugeGraphic.IconCheck);
+        if (confirmYesLabel != null)
+            confirmYesLabel.color = open && confirmYes ? FocusWhite : (danger ? (yesHot ? GiveUpBright : GiveUpMuted) : (yesHot ? RestartBright : RestartMuted));
+        if (confirmNoGraphic != null)
+            confirmNoGraphic.SetButtonStyle(open, open && confirmNoHover, open && !confirmYes, DungeonTerminalGaugeGraphic.ToneCyan, DungeonTerminalGaugeGraphic.IconCancel);
+        if (confirmNoLabel != null)
+            confirmNoLabel.color = open && !confirmYes ? FocusWhite : (noHot ? Bright : Dim);
+    }
+
+    private void UpdateFooterText()
+    {
+        if (footerText == null) return;
+        string raw = state switch
+        {
+            TerminalState.ConfirmPopup => confirmFooter,
+            TerminalState.MapDetail when !IsWaveMode => footer,
+            _ => IsWaveMode ? waveFooter : menuFooter,
+        };
+        footerText.text = DungeonUiText.Static(raw);
     }
 
     private void UpdateControls()
     {
         if (controlsGraphic == null) return;
-        bool ready = isOpen && !isClosing && model != null;
+        bool ready = isOpen && !isClosing && model != null && state != TerminalState.ConfirmPopup;
         controlsGraphic.SetControls(zoomLevel, zoomCount, ready ? controlHover : -1, ready && zoomLevel < zoomCount - 1, ready && zoomLevel > 0);
     }
 
@@ -549,7 +1080,10 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
 
     public void OnCancel()
     {
-        if (isOpen && !isClosing) Close();
+        if (!isOpen || isClosing) return;
+        if (state == TerminalState.ConfirmPopup) { CancelConfirmPopup(); return; }
+        if (state == TerminalState.MapDetail) { ExitMapDetail(); return; }
+        Close();
     }
 
     // ===== 열기·닫기 =====
@@ -559,9 +1093,12 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     {
         EnsureInit();
         reason = null;
+        bool floor = FloorActive();
+        bool wave = !floor && WaveActive();
         if (isOpen || transitioning) reason = "이미 열림";
-        else if (!FloorActive()) reason = "던전 진행 중이 아님";
-        else if (source is IDungeonCombatSource combat && combat.IsHalted) reason = "Wave 진행 정지";
+        else if (!floor && !wave) reason = waveSource != null && source == null ? "Wave 진행 중이 아님" : "던전 진행 중이 아님";
+        else if (floor && source is IDungeonCombatSource combat && combat.IsHalted) reason = "Wave 진행 정지";
+        else if (wave && waveSource.IsHalted) reason = "Wave 진행 정지";
         else if (DungeonHudGate.IsBlockingScreenOpen()) reason = "패배 화면·결과 보드";
         else if (!isActiveAndEnabled) reason = "비활성";
         else
@@ -574,6 +1111,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
             else if (time == null || time.IsPaused) reason = "일시정지 중";
             else if (player == null || !player.gameObject.activeInHierarchy || player.Health == null || player.Health.currentHP <= 0f) reason = "Player 없음·사망";
             else if (WavePlayerStart.IsHolding(player)) reason = "구속 중(관 통과·크레인)";
+            else if (GameManager.Instance != null && GameManager.Instance.IsRetrying) reason = "재시작 진행 중";
         }
         return reason == null;
     }
@@ -609,6 +1147,16 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         zoomLevel = Mathf.Clamp(defaultZoom, 0, Mathf.Clamp(zoomLevels, 1, 3) - 1);
         dragging = false;
         controlHover = -1;
+        mapButtonHover = false;
+        restartHover = false;
+        giveUpHover = false;
+        confirmYesHover = false;
+        confirmNoHover = false;
+        state = TerminalState.Menu;
+        selectedAction = IsWaveMode ? ActionChoice.Restart : ActionChoice.Map;   // 던전에서는 반드시 '상세 맵'이 최초 선택
+        confirmTarget = ConfirmTarget.None;
+        confirmYes = false;
+        if (confirmPopupRoot != null && confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(false);
         if (presentation != null) presentation.SetActive(true);
         RebuildAll();
         if (statusPanel != null) statusPanel.PlayIntro();
@@ -618,6 +1166,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
             pauseOwner = GameTimeController.Instance;
             pauseOwner.PushPause();
             ownsPause = true;
+            PlayUiFeedback(openFeedback);
         }
         BeginTransition(1f, OpenDuration);
     }
@@ -626,10 +1175,21 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     {
         if (!isOpen || isClosing) return;
         isClosing = true;
+        PlayUiFeedback(cancelFeedback);
         EndPointerDrag();
         controlHover = -1;
+        mapButtonHover = false;
+        restartHover = false;
+        giveUpHover = false;
+        confirmYesHover = false;
+        confirmNoHover = false;
+        state = TerminalState.Menu;
+        confirmTarget = ConfirmTarget.None;
+        confirmYes = false;
+        if (confirmPopupRoot != null && confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(false);
         BeginTransition(0f, CloseDuration);
         UpdateControls();
+        UpdateActionButtons();
     }
 
     /// <summary>연출 없이 바로 닫고 입력·일시정지를 돌려준다. hide가 false면 표시 루트의 활성 상태는 그대로 둔다(비활성·파괴 도중).</summary>
@@ -648,11 +1208,23 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         isClosing = false;
         live = false;
         playerVisible = false;
-        // 7차 V7: 닫히면 끌기·hover를 초기화하고 레이 판정을 끈다
+        // 7차 V7: 닫히면 끌기·hover·팝업을 초기화하고 레이 판정을 끈다
         dragging = false;
         controlHover = -1;
+        mapButtonHover = false;
+        restartHover = false;
+        giveUpHover = false;
+        confirmYesHover = false;
+        confirmNoHover = false;
+        state = TerminalState.Menu;
+        selectedAction = ActionChoice.Map;
+        confirmTarget = ConfirmTarget.None;
+        confirmYes = false;
+        if (hide && confirmPopupRoot != null && confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(false);
+        if (mapActiveFrame != null) mapActiveFrame.canvasRenderer.SetAlpha(0f);
         ApplyRaycast();
         UpdateControls();
+        UpdateActionButtons();
         if (wasLive && UIManager.Instance != null) UIManager.Instance.ClearInputTarget(this);
         if (ownsPause)
         {
@@ -698,23 +1270,41 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
 
     private void Update() => Tick(Time.unscaledDeltaTime);
 
-    /// <summary>한 프레임 진행: 던전 진행 중에만 Tab 입력을 켜고, 열린 채 조건이 깨지면 바로 닫은 뒤 연출을 진행한다(Update가 부른다. 검증은 직접 부른다).</summary>
+    /// <summary>한 프레임 진행: 던전·일반 Wave 진행 중에만 Tab 입력을 켜고, 열린 채 조건이 깨지면 바로 닫은 뒤 연출을 진행한다(Update가 부른다. 검증은 직접 부른다).</summary>
     public void Tick(float deltaTime)
     {
         EnsureInit();
-        bool floor = FloorActive();
-        SetActionEnabled(floor);
+        bool active = FloorActive() || WaveActive();
+        SetActionEnabled(active);
         if (isOpen && live)
         {
             var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
-            if (!floor || player == null || !player.gameObject.activeInHierarchy || player.Health == null || player.Health.currentHP <= 0f
+            if (!active || player == null || !player.gameObject.activeInHierarchy || player.Health == null || player.Health.currentHP <= 0f
                 || DungeonHudGate.IsBlockingScreenOpen())
             {
                 CloseImmediately();
                 return;
             }
         }
+        if (isOpen && !isClosing && IsTopInput)
+            PollKeyboardShortcuts();
         Advance(deltaTime);
+    }
+
+    // 마우스 없이 키보드만으로 상세 맵 배율 조절([Q/E]·[-/+])·확인([ENTER])을 처리한다.
+    private void PollKeyboardShortcuts()
+    {
+        var kb = Keyboard.current;
+        if (kb == null) return;
+        if (state == TerminalState.MapDetail && !IsWaveMode)
+        {
+            if (kb.qKey.wasPressedThisFrame || kb.minusKey.wasPressedThisFrame || kb.numpadMinusKey.wasPressedThisFrame)
+                HandleZoomKey(-1);
+            else if (kb.eKey.wasPressedThisFrame || kb.equalsKey.wasPressedThisFrame || kb.numpadPlusKey.wasPressedThisFrame)
+                HandleZoomKey(1);
+        }
+        if (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame)
+            OnConfirm();
     }
 
     /// <summary>실제 시간 dt만큼 열기·닫기 연출과 Player 점을 진행한다(Update가 부른다. 검증은 직접 부른다). 그림이 바뀌었을 때만 다시 만든다.</summary>
@@ -743,6 +1333,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     }
 
     private bool FloorActive() => SourceAlive() && source.HasFloor && source.Rooms != null && source.Rooms.Count > 0;
+    private bool WaveActive() => WaveSourceAlive() && waveSource.HasActiveWave;
 
     private int CurrentRoom => SourceAlive() ? source.CurrentRoom : -1;
 
@@ -751,6 +1342,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private void RebuildAll()
     {
         dirty = false;
+        ApplyModeLayout();
         if (SourceAlive() && source.HasFloor)
         {
             int key = Mathf.Max(1, source.FloorNumber);
@@ -763,6 +1355,44 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         }
         RebuildMap();
         RefreshTexts();
+        UpdateActionButtons();
+    }
+
+    private void ApplyModeLayout()
+    {
+        bool waveMode = IsWaveMode;
+        if (waveMode)
+        {
+            if (state == TerminalState.MapDetail) state = TerminalState.Menu;
+            if (selectedAction == ActionChoice.Map) selectedAction = ActionChoice.Restart;
+        }
+        if (mapPanelRoot != null && mapPanelRoot.gameObject.activeSelf == waveMode)
+            mapPanelRoot.gameObject.SetActive(!waveMode);
+        if (infoPanelRoot != null)
+        {
+            Vector2 targetPos = waveMode ? new Vector2(0f, infoHome.y) : infoHome;
+            if ((infoPanelRoot.anchoredPosition - targetPos).sqrMagnitude > 1e-4f)
+                infoPanelRoot.anchoredPosition = targetPos;
+        }
+        if (mapButtonRoot != null && mapButtonRoot.gameObject.activeSelf == waveMode)
+            mapButtonRoot.gameObject.SetActive(!waveMode);
+        if (restartButtonRoot != null)
+        {
+            const float rx = 20f, rw = 230f;
+            if (Mathf.Abs(restartButtonRoot.anchoredPosition.x - rx) > .01f)
+                restartButtonRoot.anchoredPosition = new Vector2(rx, restartButtonRoot.anchoredPosition.y);
+            if (Mathf.Abs(restartButtonRoot.sizeDelta.x - rw) > .01f)
+                restartButtonRoot.sizeDelta = new Vector2(rw, restartButtonRoot.sizeDelta.y);
+        }
+        if (giveUpButtonRoot != null)
+        {
+            const float gx = 262f, gw = 230f;
+            if (Mathf.Abs(giveUpButtonRoot.anchoredPosition.x - gx) > .01f)
+                giveUpButtonRoot.anchoredPosition = new Vector2(gx, giveUpButtonRoot.anchoredPosition.y);
+            if (Mathf.Abs(giveUpButtonRoot.sizeDelta.x - gw) > .01f)
+                giveUpButtonRoot.sizeDelta = new Vector2(gw, giveUpButtonRoot.sizeDelta.y);
+        }
+        UpdateFooterText();
     }
 
     // 7차 V4: 모델 재생성(원본이 바뀔 때만 — BuildFloorModel은 할당한다)과 화면 맞춤(이동·배율·끌기 — 할당 없음)을 나눈다.
@@ -880,6 +1510,18 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
             float wave = .5f - .5f * Mathf.Cos(clock * Mathf.PI * 2f / currentPulsePeriod);
             currentGraphic.canvasRenderer.SetAlpha(currentGraphic.HasCurrent ? Mathf.Lerp(currentPulseMin, 1f, wave) : 0f);
         }
+        // 구역 지도 대형 버튼 선택 하이라이트 및 상세 맵 탐색 활성 테두리 맥동
+        if (mapActiveFrame != null)
+        {
+            bool alive = !IsWaveMode && isOpen && !isClosing;
+            int mode = mapActiveFrame.MapFrameMode;
+            float activeAlpha = 0f;
+            if (alive && mode == DungeonTerminalGaugeGraphic.MapFrameSelected)
+                activeAlpha = .84f + .16f * (.5f + .5f * Mathf.Cos(clock * Mathf.PI * 2f / 1.15f));
+            else if (alive && mode == DungeonTerminalGaugeGraphic.MapFrameDetail)
+                activeAlpha = .72f + .28f * (.5f + .5f * Mathf.Cos(clock * Mathf.PI * 2f / 1.4f));
+            mapActiveFrame.canvasRenderer.SetAlpha(activeAlpha);
+        }
     }
 
     // ===== 글자 =====
@@ -900,13 +1542,25 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private string BuildContext()
     {
         builder.Clear();
-        builder.AppendStatic(context);
         if (SourceAlive() && source.HasFloor)
         {
+            builder.AppendStatic(context);
             builder.Append(DungeonUiText.SpaceTag).Append(DungeonUiText.SpaceTag)
                    .Append('F').Append(Mathf.Max(1, source.FloorNumber)).Append('/').Append(Mathf.Max(1, source.FloorCount));
             CountRooms(out int cleared, out int total);
             builder.Append(DungeonUiText.SpaceTag).Append(DungeonUiText.SpaceTag).AppendStatic("구역 클리어 ").Append(cleared).Append('/').Append(total);
+        }
+        else if (WaveSourceAlive() && waveSource.HasActiveWave)
+        {
+            builder.AppendStatic(waveContext);
+            int total = Mathf.Max(1, waveSource.TotalWaveCount);
+            int current = Mathf.Clamp(waveSource.CurrentWaveNumber, 1, total);
+            builder.Append(DungeonUiText.SpaceTag).Append(DungeonUiText.SpaceTag)
+                   .Append("WAVE").Append(DungeonUiText.SpaceTag).Append(current).Append('/').Append(total);
+        }
+        else
+        {
+            builder.AppendStatic(context);
         }
         return builder.ToString();
     }
@@ -1074,35 +1728,42 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private bool SourceAlive()
     {
         if (source == null) return false;
-        if (source is Object unityObject && unityObject == null) { source = null; return false; }
+        if (source is UnityEngine.Object unityObject && unityObject == null) { source = null; return false; }
         return true;
     }
 
     private bool DetailAlive()
     {
         if (detailSource == null) return false;
-        if (detailSource is Object unityObject && unityObject == null) { detailSource = null; return false; }
+        if (detailSource is UnityEngine.Object unityObject && unityObject == null) { detailSource = null; return false; }
         return true;
     }
 
     private bool ObjectiveAlive()
     {
         if (objectiveSource == null) return false;
-        if (objectiveSource is Object unityObject && unityObject == null) { objectiveSource = null; return false; }
+        if (objectiveSource is UnityEngine.Object unityObject && unityObject == null) { objectiveSource = null; return false; }
         return true;
     }
 
     private bool ThreatAlive()
     {
         if (threatSource == null) return false;
-        if (threatSource is Object unityObject && unityObject == null) { threatSource = null; return false; }
+        if (threatSource is UnityEngine.Object unityObject && unityObject == null) { threatSource = null; return false; }
         return true;
     }
 
     private bool ExitAlive()
     {
         if (exitSource == null) return false;
-        if (exitSource is Object unityObject && unityObject == null) { exitSource = null; return false; }
+        if (exitSource is UnityEngine.Object unityObject && unityObject == null) { exitSource = null; return false; }
+        return true;
+    }
+
+    private bool WaveSourceAlive()
+    {
+        if (waveSource == null) return false;
+        if (waveSource is UnityEngine.Object unityObject && unityObject == null) { waveSource = null; return false; }
         return true;
     }
 }

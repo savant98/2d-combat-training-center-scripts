@@ -99,7 +99,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
 
     [Header("Colors")]
     [SerializeField] private Color hostileColor = new Color32(0xff, 0x5a, 0x3c, 0xff);
-    [SerializeField] private Color clearColor = new Color32(0x33, 0xf2, 0x59, 0xff);
+    [SerializeField] private Color clearColor = new Color32(0x38, 0xb6, 0xff, 0xff);
     [SerializeField] private Color sectorColor = new Color32(0xff, 0xd1, 0x66, 0xff);
     [Tooltip("4차 순찰 띠(어두운 앰버)")]
     [SerializeField] private Color patrolColor = new Color32(0xd6, 0x92, 0x36, 0xff);

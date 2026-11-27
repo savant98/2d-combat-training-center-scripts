@@ -73,7 +73,7 @@ public sealed class DungeonStatusPlateGraphic : MaskableGraphic
         switch (t)
         {
             case Tone.Clear:
-                return clearStyle ??= Make(new Color32(6, 20, 12, 219), new Color32(51, 242, 89, 255), new Color32(18, 84, 36, 255), new Color32(170, 255, 190, 255));
+                return clearStyle ??= Make(new Color32(6, 16, 26, 219), new Color32(56, 182, 255, 255), new Color32(20, 74, 118, 255), new Color32(175, 232, 255, 255));
             case Tone.Sector:
                 return sectorStyle ??= Make(new Color32(22, 17, 6, 219), new Color32(255, 209, 102, 255), new Color32(96, 72, 24, 255), new Color32(255, 236, 178, 255));
             case Tone.Patrol:

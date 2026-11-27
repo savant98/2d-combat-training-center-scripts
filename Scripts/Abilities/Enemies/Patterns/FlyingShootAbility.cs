@@ -116,7 +116,10 @@ public class FlyingShootAbility : FlyingAbility
         Vector2 origin = MuzzlePosition;
         ProjectileBase projectile = WorldEntityPool.Instance.Spawn(shootData.projectilePrefab, origin, Quaternion.identity);
         if (projectile is DroneEnemyBullet coneBullet)
+        {
             coneBullet.FireConeAngle = shootData.maxAimAngle;
+            coneBullet.MaxTravelDistance = shootData.maxBulletDistance;
+        }
         projectile.Initialize(controller, shootData.damageInfo, shootData.projectileSpeed, shootData.shotCount, shootData.collideLayer);
 
         // 반동: 플레이어 반대쪽으로 외부 힘을 준다. EnemyController가 감쇠하고 EnemyFlightTilt가 기울기로 보여 준다.

@@ -2,6 +2,21 @@ using UnityEngine;
 
 public class PlayerCounterState : MonoBehaviour
 {
+    private static ProjectileBase currentImpactProjectile;
+    /// <summary>지금 피격 판정을 실행 중인 투사체(반격 성공 시 해당 투사체를 즉시 식별·소멸시키기 위해 기록).</summary>
+    public static ProjectileBase CurrentImpactProjectile => currentImpactProjectile;
+
+    internal static void PushImpactProjectile(ProjectileBase projectile)
+    {
+        currentImpactProjectile = projectile;
+    }
+
+    internal static void PopImpactProjectile(ProjectileBase projectile)
+    {
+        if (currentImpactProjectile == projectile)
+            currentImpactProjectile = null;
+    }
+
     public bool IsWaiting { get; private set; }
     public bool IsSuccess { get; private set; }
     /// <summary>반격 성공 무적이 켜져 있는가(CounterShield 잔광 표시가 읽는다).</summary>

@@ -41,6 +41,9 @@ public class AngleChargeShot : ProjectileBase
     // 관통하면서 같은 대상을 여러 번 때리지 않도록
     private readonly HashSet<HealthBase> hitSet = new(8);
 
+    // 준비(예고) 단계에서는 아직 발사되지 않았으므로 발사 후 비행 중인 투사체만 반사 대상으로 본다.
+    public override bool CanBeCounterReflected => base.CanBeCounterReflected && state == ShotState.Fired;
+
     public void SetAngleFromVertical(float angle)
     {
         angleFromVertical = angle;

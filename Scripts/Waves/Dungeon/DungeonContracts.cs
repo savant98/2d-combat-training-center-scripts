@@ -615,3 +615,23 @@ public interface IDungeonThreatLadder
     /// <summary>그 단계가 시작되는 첫 클리어 방 수(입문 = 0, 기본 0·2·4·6·8). 실시간 난이도가 없으면 0.</summary>
     int ThreatThreshold(DungeonThreatLevel level);
 }
+
+/// <summary>
+/// 일반 Wave(던전 아님) 진행 상태를 휴대용 단말기(DungeonFieldTerminal)에 내주는 읽기 전용 접점.
+/// WaveFieldTerminalHost가 구현하고, 단말기는 구독해 상태 표시·Wave 재시작 요청만 수행한다.
+/// </summary>
+public interface IWaveTerminalSource
+{
+    bool HasActiveWave { get; }
+    int CurrentWaveNumber { get; }
+    int TotalWaveCount { get; }
+    bool IsHalted { get; }
+    event Action WaveStateChanged;
+}
+
+/// <summary>일반 Wave 단말기 화면 접점. WaveFieldTerminalHost가 생성한 뒤 BindWave로 연결한다.</summary>
+public interface IWaveTerminalView
+{
+    void BindWave(IWaveTerminalSource source);
+    void UnbindWave();
+}

@@ -285,6 +285,8 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
             var builder = Content.gameObject.AddComponent<WaveRoomBuilder>();
             builder.Configure(Content, play);
         }
+        if (run == null && play.waves != null && play.waves.Length > 0)
+            Content.waves.gameObject.AddComponent<WaveFieldTerminalHost>().Configure(Content.waves);
         owner.BindContent(Content);
         entryPoint.localPosition = WaveRoomState.EntryPoint(play);
         if (!activateContent) Content.gameObject.SetActive(false);

@@ -30,12 +30,30 @@ public sealed class PropCraneHook : ZipCraneBase
     public const int MinPoints = 2, MaxPoints = 8;
     /// <summary>트롤리(레일)가 매달린 발보다 높은 칸 수.</summary>
     public const float TrackHeight = 4f;
-    /// <summary>경로 시작·끝 가감속 시간(초).</summary>
+    /// <summary>경로 끝 감속 시간(초).</summary>
     public const float PathEase = .1f;
+    /// <summary>출발·반전 후 최고 속도(activeSpeed)까지 가속하는 시간(초).</summary>
+    public const float AccelTime = 1f;
+    /// <summary>도착 도크 직전 감속 시간(초).</summary>
+    public const float DecelEase = .12f;
+    /// <summary>진행 반대 방향 입력 시 멈춰 서는 덜컹 정지 시간(초).</summary>
+    public const float ReverseStopDelay = .22f;
+    /// <summary>방향 전환 직후 중복 반전 방지 쿨다운(초).</summary>
+    public const float ReverseCooldown = .15f;
+    /// <summary>도착 도크 대기 상태에서 방향키 재출발 허용 전 짧은 완충 시간(초).</summary>
+    public const float WaitDepartCooldown = .12f;
+    /// <summary>탑승 직후 출발 구간에서 의도치 않은 즉시 역주행(출발점 복귀 멈춤)을 막는 입력 여유 시간(초).</summary>
+    public const float MountReverseGrace = .35f;
+    /// <summary>방향 입력으로 인식하는 최소 입력 크기.</summary>
+    public const float ReverseInputThreshold = .35f;
+    /// <summary>입력 방향과 실제 운동 방향(좌/우·상/하 벡터)의 내적 판정 기준(0.25 ≈ 75° 이내 정렬/반대).</summary>
+    public const float DirectionAlignThreshold = .25f;
+    /// <summary>이동 중 RollerSparkFeedback 재생 기본 간격(초, 기존 0.25초의 2배 빈도).</summary>
+    public const float DefaultSparkInterval = .125f;
     /// <summary>5차 기본 이동 속도(칸/초, 대시 30의 0.8배 — DESIGN_V5 판단값).</summary>
     public const float DefaultSpeed = 24f;
-    /// <summary>5차 빈 크레인 복귀 속도(칸/초, 상수 — 배치 설정 키를 늘리지 않는다). 6차: 빈 도크 호출은 이동 없이 즉시 생성한다.</summary>
-    public const float ReturnSpeed = 40f;
+    /// <summary>도중 하차 시 빈 크레인 복귀 속도(칸/초) — 내렸다가 다시 붙을 수 있게 천천히 돌아간다.</summary>
+    public const float ReturnSpeed = 6f;
     /// <summary>5차 체결 뒤 출발 지연(초).</summary>
     public const float DepartDelay = .12f;
     /// <summary>6차 T4: 표시 기준점 G의 머리 로컬 y(머리 원점 = 매달린 발 + 2 → G = 매달린 발 + 1.97, 강조 테두리 중심 — 스프레더·훅 블록·집게를 한 상자에 담는다).</summary>
@@ -96,8 +114,9 @@ public sealed class PropCraneHook : ZipCraneBase
 
     [Header("경로 크레인 효과(기존 효과음·효과 재사용)")]
     [SerializeField] private SoundOptions travelLoop;
+    [SerializeField, Tooltip("이동 중 진행 반대 방향 입력 시 덜컹 멈춤 효과음.")] private SoundOptions reverseClunkSound;
     [SerializeField] private FeedbackDataSO sparkFeedback;
-    [SerializeField, Min(.05f)] private float sparkInterval = .25f;
+    [SerializeField, Min(.05f)] private float sparkInterval = DefaultSparkInterval;
 
     // 빈 도크 호출 지점(붙기 목록에 따로 오른다 — 6차 T5: 고르면 크레인이 그 도크에 즉시 생기고 같은 프레임에 붙는다).
     private sealed class DockPoint : IZipAnchor, IZipCallTarget
@@ -123,11 +142,12 @@ public sealed class PropCraneHook : ZipCraneBase
     private readonly Vector2[] activeOffsets = new Vector2[MaxPoints];
     private float activeSpeed = DefaultSpeed;
     private Vector2[] worldPath = Array.Empty<Vector2>();
-    private Vector2[] reversedPath = Array.Empty<Vector2>();
     private Vector2[] localTrack = Array.Empty<Vector2>();
     private float pathLength;
     private float pathS;                    // 수레가 있는 경로 위 거리(0 = 집 도크, pathLength = 끝 도크)
-    private int restDock, departDock, targetDock;
+    private int restDock, targetDock;
+    private int originDock, arrivedDock;    // 이번 탑승의 원래 출발 도크·최종 도착 도크(중간 반전·복귀 중 재탑승 구분)
+    private int rideDirSign = 1;            // 탑승 이동 진행 부호(+1 = 집 → 끝, −1 = 끝 → 집)
     private float moveFrom, moveDistance, moveSign, moveTime;
     private float summonFlash = -1f;        // 6차 T5: 즉시 생성 뒤 경과(음수 = 섬광 없음)
     private int summonDock;
@@ -164,6 +184,28 @@ public sealed class PropCraneHook : ZipCraneBase
     public float PeakMoveSpeed { get; private set; }
     /// <summary>5차: 붙은 뒤 실제로 출발하기까지 걸린 시간(초, 검사용).</summary>
     public float LastDepartWait { get; private set; }
+    /// <summary>탑승 이동 중 현재 속도(칸/초, 검사용).</summary>
+    public float CurrentRideSpeed { get; private set; }
+    /// <summary>탑승 이동 중 현재 진행 부호(+1 = 집 → 끝, −1 = 끝 → 집, 검사용).</summary>
+    public int RideDirectionSign => rideDirSign;
+    /// <summary>현재 위치·진행 부호 기준 플레이어의 실시간 운동 방향 단위 벡터(좌↔우, 하↔상, 검사용).</summary>
+    public Vector2 CurrentTravelDirectionNow => CurrentTravelDirection(pathS, rideDirSign);
+    /// <summary>이동 중 반대 방향 입력으로 반전한 횟수(검사용).</summary>
+    public int Reversals { get; private set; }
+    /// <summary>반전 정지 시 덜컹 효과음을 재생한 횟수(검사용).</summary>
+    public int ReverseClunks { get; private set; }
+    /// <summary>경로 끝 도크 도달 시 덜컹 연출을 재생한 횟수(검사용).</summary>
+    public int DockArrivalClunks { get; private set; }
+    /// <summary>도착 도크 대기 상태에서 방향키로 재출발한 횟수(검사용).</summary>
+    public int DeparturesFromWait { get; private set; }
+    /// <summary>복귀 도중 재탑승한 횟수(검사용).</summary>
+    public int MidReturnMounts { get; private set; }
+    /// <summary>이동 중 스파크 효과 재생 간격(초, 검사용).</summary>
+    public float SparkInterval => sparkInterval;
+    /// <summary>현재 트롤리 스파크 파티클 초당 방출률(검사용).</summary>
+    public float TrolleySparkRate => trolleySparks != null ? trolleySparks.emission.rateOverTime.constant : 0f;
+    /// <summary>검사용 방향 입력 덮어쓰기(입력 장치 없이 반대 방향 반전 검증).</summary>
+    public Vector2? RideInputOverride { get; set; }
     /// <summary>지금 경로 점(월드 매달린 발, 검사용).</summary>
     public Vector2[] WorldPath => worldPath;
     /// <summary>경로 길이(칸).</summary>
@@ -186,7 +228,7 @@ public sealed class PropCraneHook : ZipCraneBase
     // ── 설정 ─────────────────────────────
 
     private WaveDeviceParameter CountParameter => new WaveDeviceParameter(PathCountKey, "경로 점 수", "집(점 0)을 포함한 경로 점 수입니다. 2면 집에서 점 1까지 곧게 갑니다. 양 끝이 도크(승강장)입니다.", "개", MinPoints, MaxPoints, 1f, pathCount, true);
-    private WaveDeviceParameter SpeedParameter => new WaveDeviceParameter(SpeedKey, "이동 속도", "Player를 태우고 경로를 따라 옮기는 일정 속도입니다(시작·끝 0.1초만 가감속). 도중에 내린 빈 크레인은 40칸/초로 돌아가고, 빈 도크를 골라 ↑를 누르면 크레인이 그 도크에 바로 생겨납니다.", "칸/초", 10f, 40f, 1f, travelSpeed);
+    private WaveDeviceParameter SpeedParameter => new WaveDeviceParameter(SpeedKey, "이동 속도", "Player를 태우고 1초 가속 뒤 유지하는 최고 속도입니다. 이동 중 반대 방향키로 멈췄다 반전할 수 있고, 도중 하차 시 천천히(6칸/초) 원래 도크로 복귀하며 복귀 중에도 다시 탈 수 있습니다.", "칸/초", 10f, 40f, 1f, travelSpeed);
 
     private WaveDeviceParameter PointParameter(int i, bool y)
     {
@@ -254,7 +296,8 @@ public sealed class PropCraneHook : ZipCraneBase
 
     private float DockS(int index) => index <= 0 ? 0f : pathLength;
 
-    public override bool ZipAvailable => base.ZipAvailable && Mathf.Abs(pathS - DockS(restDock)) < .05f;
+    protected override bool CanAcceptZipPhase => phase == Phase.Idle || phase == Phase.Returning;
+    public override bool ZipAvailable => base.ZipAvailable && (phase == Phase.Returning || Mathf.Abs(pathS - DockS(restDock)) < .05f);
     public override Vector2 ZipFeet => worldPath.Length > 0 ? FacilityMesh.PointAlong(worldPath, pathS, out _) : HomeFeet;
     protected override float ShakeScale => 1.2f;
     protected override bool AnyFocus => ZipFocused || dockFocus[0] || dockFocus[1];
@@ -298,10 +341,12 @@ public sealed class PropCraneHook : ZipCraneBase
         FacilityFeedback.Burst(trolleySparks, VanishSparks);
         FacilityFeedback.Play(releaseFeedback, oldHook);
         // ② 그 도크에서 쉬는 크레인.
-        targetDock = restDock = dock;
+        targetDock = restDock = originDock = arrivedDock = dock;
+        rideDirSign = dock == 0 ? 1 : -1;
         pathS = DockS(dock);
         moveFrom = moveDistance = moveTime = 0f;
         travelVelocity = Vector2.zero;
+        CurrentRideSpeed = 0f;
         hauledToDock = false;
         phase = Phase.Idle;
         phaseTime = 0f;
@@ -361,12 +406,15 @@ public sealed class PropCraneHook : ZipCraneBase
         LastRideArrived = false;
         hauledToDock = false;
         Returns = Calls = SummonEffects = 0;
-        PeakSpeed = PeakMoveSpeed = LastDepartWait = 0f;
+        Reversals = ReverseClunks = DockArrivalClunks = DeparturesFromWait = MidReturnMounts = 0;
+        PeakSpeed = PeakMoveSpeed = LastDepartWait = CurrentRideSpeed = 0f;
+        RideInputOverride = null;
         LastSummonFrom = Vector2.zero;
         summonFlash = -1f;
         summonDock = 0;
         pathS = 0f;
-        restDock = departDock = targetDock = 0;
+        restDock = targetDock = originDock = arrivedDock = 0;
+        rideDirSign = 1;
         moveFrom = moveDistance = moveTime = 0f;
         moveSign = 1f;
         dockFocus[0] = dockFocus[1] = false;
@@ -406,6 +454,8 @@ public sealed class PropCraneHook : ZipCraneBase
 
     protected override void OnReturning()
     {
+        RideInputOverride = null;
+        CurrentRideSpeed = 0f;
         UnregisterDocks();
         loop.Stop();
         FacilityFeedback.Emit(thruster, false);
@@ -451,8 +501,6 @@ public sealed class PropCraneHook : ZipCraneBase
         Vector2 home = HomeFeet;
         worldPath = new Vector2[count];
         for (int i = 0; i < count; i++) worldPath[i] = home + activeOffsets[i];
-        reversedPath = new Vector2[count];
-        for (int i = 0; i < count; i++) reversedPath[i] = worldPath[count - 1 - i];
         pathLength = FacilityMesh.PathLength(worldPath);
         localTrack = new Vector2[count];
         for (int i = 0; i < count; i++) localTrack[i] = (Vector2)transform.InverseTransformPoint(worldPath[i] + Vector2.up * TrackHeight);
@@ -506,11 +554,24 @@ public sealed class PropCraneHook : ZipCraneBase
 
     protected override void OnRideStarted()
     {
+        bool fromReturn = phase == Phase.Returning;
         LastRideArrived = false;
         hauledToDock = false;
         PeakSpeed = 0f;
+        CurrentRideSpeed = 0f;
         LastDepartWait = 0f;
-        departDock = restDock;
+        if (fromReturn)
+        {
+            MidReturnMounts++;
+            // 복귀 도중 재탑승: 원래 출발 도크(originDock) 기준 진행 방향(반대 도크 쪽)으로 이어서 출발한다.
+            rideDirSign = originDock == 0 ? 1 : -1;
+        }
+        else
+        {
+            originDock = restDock;
+            rideDirSign = restDock == 0 ? 1 : -1;
+        }
+        arrivedDock = rideDirSign > 0 ? 1 : 0;
         if (pathLength < .05f)
         {
             phase = Phase.Waiting;
@@ -520,29 +581,164 @@ public sealed class PropCraneHook : ZipCraneBase
         }
         phase = Phase.Riding;
         phaseTime = 0f;
-        routine = StartCoroutine(RideRoutine(departDock));
+        routine = StartCoroutine(RideRoutine(false));
     }
 
-    private IEnumerator RideRoutine(int from)
+    private void DepartFromWait(int departDirSign)
+    {
+        if (routine != null) { StopCoroutine(routine); routine = null; }
+        originDock = restDock;
+        rideDirSign = departDirSign;
+        arrivedDock = rideDirSign > 0 ? 1 : 0;
+        hauledToDock = false;
+        LastRideArrived = false;
+        PeakSpeed = 0f;
+        CurrentRideSpeed = 0f;
+        LastDepartWait = 0f;
+        DeparturesFromWait++;
+        phase = Phase.Riding;
+        phaseTime = 0f;
+        FacilityMesh.PointAlong(worldPath, Mathf.Clamp(pathS, .01f, Mathf.Max(.01f, pathLength - .01f)), out Vector2 segDir);
+        Vector2 travelDir = segDir * rideDirSign;
+        float kickDir = Mathf.Abs(travelDir.x) > .1f ? -Mathf.Sign(travelDir.x) : -rideDirSign;
+        TriggerKick(kickDir, .9f);
+        FacilityFeedback.Burst(trolleySparks, 8);
+        routine = StartCoroutine(RideRoutine(true));
+    }
+
+    private IEnumerator RideRoutine(bool skipDepartDelay)
     {
         bool done = false;
         try
         {
-            // 출발 지연: 체결 흔들림 첫 반 주기가 읽히도록 물리 틱으로 0.12초 기다린다(구속은 이미 크레인이 잡고 있다).
+            // 출발 지연: 처음 체결 시 흔들림 첫 반 주기가 읽히도록 물리 틱으로 0.12초 기다린다(도착 도크에서 방향키 재출발 시 즉시 가속).
             var tick = new WaitForFixedUpdate();
             float waited = 0f;
-            while (waited < DepartDelay - 1e-4f)
+            if (!skipDepartDelay)
+            {
+                while (waited < DepartDelay - 1e-4f)
+                {
+                    yield return tick;
+                    if (!ride.IsRiding || ride.Interrupted) yield break;
+                    waited += Time.fixedDeltaTime;
+                }
+            }
+            LastDepartWait = waited;
+
+            float currentSpeed = 0f;
+            float movedLeg = 0f;
+            float reverseCooldown = 0f;
+            // 새로 탑승한 경우 출발 직후 MountReverseGrace(0.35초) 동안 반전을 보류하고,
+            // 탑승 시점에 이미 누르고 있던 방향키(연쇄 크레인 이동 중 유지 입력)는 손을 떼거나 방향을 바꾸기 전까지 반전으로 보지 않는다.
+            float mountGrace = skipDepartDelay ? 0f : MountReverseGrace;
+            Vector2 prevTravelDir = CurrentTravelDirection(pathS, rideDirSign);
+            Vector2Int latchedInput = !skipDepartDelay ? ReadQuantizedRideInput(ride.Rider) : Vector2Int.zero;
+            bool hasInputLatch = latchedInput != Vector2Int.zero;
+            Vector2Int prevInput = latchedInput;
+            Vector2 lastFeet = FacilityMesh.PointAlong(worldPath, pathS, out _);
+
+            while (ride.IsRiding && !ride.Interrupted)
             {
                 yield return tick;
                 if (!ride.IsRiding || ride.Interrupted) yield break;
-                waited += Time.fixedDeltaTime;
+                var rider = ride.Rider;
+                if (rider == null || rider.Motor == null) yield break;
+                float dt = Time.fixedDeltaTime;
+                if (dt <= 0f) continue;
+
+                // 플레이어의 실시간 실제 운동 방향(왼쪽↔오른쪽, 아래↔위)과 입력 방향을 직접 비교해 반대 방향 입력만 반전한다.
+                // 직선·수직·대각선·'ㄷ'자 모든 구간에서 지금 실제로 나아가는 방향의 반대 키(내적 ≤ -0.25)로 직관적으로 전환된다.
+                Vector2 travelDir = CurrentTravelDirection(pathS, rideDirSign);
+                Vector2Int input = ReadQuantizedRideInput(rider);
+                if (hasInputLatch && input != latchedInput)
+                    hasInputLatch = false;
+                if (Vector2.Dot(prevTravelDir, travelDir) < .85f)
+                {
+                    // 커브·대각선 꺾임 지점에서 이전 구간부터 계속 누르고 있던 키가 갑자기 반대가 된 경우, 떼기 전까지 반전하지 않는다.
+                    if (input != Vector2Int.zero && input == prevInput && CompareInputToDirection(input, travelDir) < 0)
+                    {
+                        latchedInput = input;
+                        hasInputLatch = true;
+                    }
+                }
+                prevTravelDir = travelDir;
+                prevInput = input;
+
+                if (mountGrace > 0f) mountGrace -= dt;
+                if (reverseCooldown > 0f) reverseCooldown -= dt;
+                else if (mountGrace <= 0f && !hasInputLatch && (currentSpeed > .2f || movedLeg > .02f))
+                {
+                    if (CompareInputToDirection(input, travelDir) < 0)
+                    {
+                        currentSpeed = 0f;
+                        CurrentRideSpeed = 0f;
+                        travelVelocity = Vector2.zero;
+                        Reversals++;
+                        float kickDir = Mathf.Abs(travelDir.x) > .1f ? -Mathf.Sign(travelDir.x) : -rideDirSign;
+                        if (PlayMechanismClunk(kickDir, 1.35f, .28f, 8, reverseClunkSound)) ReverseClunks++;
+                        FacilityFeedback.Burst(trolleySparks, 10);
+
+                        float stopWaited = 0f;
+                        while (stopWaited < ReverseStopDelay - 1e-4f)
+                        {
+                            yield return tick;
+                            if (!ride.IsRiding || ride.Interrupted) yield break;
+                            stopWaited += Time.fixedDeltaTime;
+                        }
+                        rideDirSign = -rideDirSign;
+                        arrivedDock = rideDirSign > 0 ? 1 : 0;
+                        movedLeg = 0f;
+                        reverseCooldown = ReverseCooldown;
+                        prevTravelDir = CurrentTravelDirection(pathS, rideDirSign);
+                        prevInput = ReadQuantizedRideInput(ride.Rider);
+                        continue;
+                    }
+                }
+
+                float destS = rideDirSign > 0 ? pathLength : 0f;
+                float remaining = rideDirSign > 0 ? pathLength - pathS : pathS;
+                if (remaining <= 1e-4f)
+                {
+                    pathS = destS;
+                    arrivedDock = rideDirSign > 0 ? 1 : 0;
+                    hauledToDock = true;
+                    break;
+                }
+
+                // 출발 후 1초에 걸쳐 최고 속도(activeSpeed)까지 가속하고, 도착 도크 직전에는 부드럽게 감속한다.
+                float accel = activeSpeed / AccelTime;
+                float decel = activeSpeed / DecelEase;
+                float nextSpeed = Mathf.Min(activeSpeed, currentSpeed + accel * dt);
+                float maxBrake = Mathf.Sqrt(2f * decel * remaining);
+                if (nextSpeed > maxBrake) nextSpeed = maxBrake;
+
+                float stepDist = .5f * (currentSpeed + nextSpeed) * dt;
+                if (stepDist < 1e-4f) stepDist = Mathf.Min(remaining, nextSpeed * dt);
+                if (remaining - stepDist <= .005f) stepDist = remaining;
+                else stepDist = Mathf.Min(remaining, stepDist);
+
+                float nextS = Mathf.Clamp(pathS + rideDirSign * stepDist, 0f, pathLength);
+                Vector2 nextFeet = FacilityMesh.PointAlong(worldPath, nextS, out _);
+                rider.Motor.ShiftConfinement(nextFeet - lastFeet);
+                travelVelocity = (nextFeet - lastFeet) / dt;
+                pathS = nextS;
+                lastFeet = nextFeet;
+                currentSpeed = nextSpeed;
+                CurrentRideSpeed = currentSpeed;
+                movedLeg += stepDist;
+                PeakSpeed = Mathf.Max(PeakSpeed, travelVelocity.magnitude);
+
+                if (stepDist >= remaining - 1e-4f)
+                {
+                    pathS = destS;
+                    arrivedDock = rideDirSign > 0 ? 1 : 0;
+                    hauledToDock = true;
+                    break;
+                }
             }
-            LastDepartWait = waited;
-            var path = from == 0 ? worldPath : reversedPath;
-            for (var step = ride.HaulPath(path, activeSpeed, PathEase, OnHaulStep); step.MoveNext();) yield return step.Current;
-            if (!ride.IsRiding || ride.Interrupted) yield break;
+
+            if (!ride.IsRiding || ride.Interrupted || !hauledToDock) yield break;
             // 마지막으로 넘긴 이동량이 반영된 뒤 도착 도크 대기로 바꾼다. 그 한 틱 안에 내려도 도착으로 본다(OnRideEnded — 경로는 이미 다 갔다).
-            hauledToDock = true;
             yield return tick;
             done = ride.IsRiding && !ride.Interrupted;
         }
@@ -550,46 +746,107 @@ public sealed class PropCraneHook : ZipCraneBase
         {
             routine = null;
             travelVelocity = Vector2.zero;
+            CurrentRideSpeed = 0f;
             if (done)
             {
-                pathS = DockS(1 - from);
+                pathS = DockS(arrivedDock);
+                restDock = arrivedDock;
                 phase = Phase.Waiting;
                 phaseTime = 0f;
                 LastRideArrived = true;
+                // 끝 도크 도달 시 방향전환 때와 동일한 덜컹 연출(소리·회전 흔들림·스파크·카메라 임펄스)
+                float probe = Mathf.Clamp(pathS - rideDirSign * .05f, .01f, Mathf.Max(.01f, pathLength - .01f));
+                FacilityMesh.PointAlong(worldPath, probe, out Vector2 endSegDir);
+                Vector2 endTravel = endSegDir * rideDirSign;
+                float kickDir = Mathf.Abs(endTravel.x) > .1f ? -Mathf.Sign(endTravel.x) : -rideDirSign;
+                if (PlayMechanismClunk(kickDir, 1.35f, .28f, 8, reverseClunkSound)) DockArrivalClunks++;
+                FacilityFeedback.Burst(trolleySparks, 10);
             }
         }
     }
 
-    private void OnHaulStep(Vector2 feet, Vector2 velocity, float distance)
+    // 현재 경로 거리 s·진행 부호 dirSign에서 플레이어가 실제로 움직이는 실시간 운동 방향 단위 벡터를 구한다.
+    private Vector2 CurrentTravelDirection(float s, int dirSign)
     {
-        travelVelocity = velocity;
-        pathS = departDock == 0 ? distance : pathLength - distance;
-        PeakSpeed = Mathf.Max(PeakSpeed, velocity.magnitude);
+        if (worldPath == null || worldPath.Length < 2 || pathLength < 1e-4f)
+            return dirSign >= 0 ? Vector2.right : Vector2.left;
+        float probe = Mathf.Clamp(s + dirSign * .02f, .01f, Mathf.Max(.01f, pathLength - .01f));
+        FacilityMesh.PointAlong(worldPath, probe, out Vector2 segDir);
+        Vector2 dir = segDir * dirSign;
+        return dir.sqrMagnitude > 1e-6f ? dir.normalized : (dirSign >= 0 ? Vector2.right : Vector2.left);
+    }
+
+    // 방향 입력을 8방향 정수 벡터(-1/0/+1, -1/0/+1)로 양자화한다.
+    private Vector2Int ReadQuantizedRideInput(PlayerController rider)
+    {
+        Vector2 input = ReadRideDirectionInput(rider);
+        int ix = input.x >= ReverseInputThreshold ? 1 : (input.x <= -ReverseInputThreshold ? -1 : 0);
+        int iy = input.y >= ReverseInputThreshold ? 1 : (input.y <= -ReverseInputThreshold ? -1 : 0);
+        return new Vector2Int(ix, iy);
+    }
+
+    // 입력 방향이 실제 운동 방향(좌/우·하/상)과 같은 쪽(+1), 반대쪽(-1), 무관/직교(0)인지 판정한다.
+    private static int CompareInputToDirection(Vector2Int quantizedInput, Vector2 travelDir)
+    {
+        if (quantizedInput == Vector2Int.zero || travelDir.sqrMagnitude < 1e-6f) return 0;
+        Vector2 inDir = ((Vector2)quantizedInput).normalized;
+        float dot = Vector2.Dot(inDir, travelDir.normalized);
+        if (dot >= DirectionAlignThreshold) return 1;
+        if (dot <= -DirectionAlignThreshold) return -1;
+        return 0;
+    }
+
+    private Vector2 ReadRideDirectionInput(PlayerController rider)
+    {
+        if (RideInputOverride.HasValue) return RideInputOverride.Value;
+        if (rider == null || !rider.CanReceiveInput) return Vector2.zero;
+        Vector2 move = rider.MoveInput;
+        if (InputManager.Instance != null)
+        {
+            Vector2 raw = InputManager.Instance.Move;
+            if (Mathf.Abs(raw.x) > Mathf.Abs(move.x)) move.x = raw.x;
+            if (Mathf.Abs(raw.y) > Mathf.Abs(move.y)) move.y = raw.y;
+            if (move.y > -.3f && InputManager.Instance.MoveDownHeld) move.y = -1f;
+        }
+        return move;
+    }
+
+    private void PlayReverseClunk()
+    {
+        SoundOptions sound = reverseClunkSound.clip != null
+            ? reverseClunkSound
+            : (grabHeavySound.clip != null ? grabHeavySound : grabLockSound);
+        if (sound.clip != null)
+        {
+            FacilityFeedback.Play(sound, ZipHookPoint);
+            ReverseClunks++;
+        }
     }
 
     protected override void StopRideMotion()
     {
         if (routine != null) { StopCoroutine(routine); routine = null; }
         travelVelocity = Vector2.zero;
+        CurrentRideSpeed = 0f;
     }
 
     protected override void OnRideEnded(bool interrupted)
     {
-        // 도착 도크에서 내렸으면 그 도크가 쉬는 자리가 된다(돌아가지 않는다). 도중에 내렸으면 빈 채로 출발 도크로 40칸/초 복귀한다.
+        // 도착 도크에서 내렸으면 그 도크가 쉬는 자리가 된다(돌아가지 않는다). 도중에 내렸으면 빈 채로 원래 출발 도크로 천천히(6칸/초) 복귀한다.
         // 5차 검토 p2: 운반 경로를 다 간 뒤 마지막 이동량 반영 틱(아직 Riding) 안에 내려도 도착으로 본다(pathS는 이미 도착 도크).
         bool hauled = phase == Phase.Riding && hauledToDock;
         hauledToDock = false;
         if (phase == Phase.Waiting || hauled)
         {
             if (hauled) LastRideArrived = true;
-            restDock = LastRideArrived && pathLength >= .05f ? 1 - departDock : departDock;
+            restDock = LastRideArrived && pathLength >= .05f ? arrivedDock : originDock;
             pathS = DockS(restDock);
             phase = Phase.Idle;
             phaseTime = 0f;
             return;
         }
-        restDock = departDock;
-        StartMove(departDock, Phase.Returning);
+        restDock = originDock;
+        StartMove(originDock, Phase.Returning);
     }
 
     protected override void OnGrabbed() => cageFlash = 0f;
@@ -640,16 +897,32 @@ public sealed class PropCraneHook : ZipCraneBase
     protected override void TickMotion(float dt)
     {
         if (transform.position != builtAt) RebuildPath();
+        if (phase == Phase.Waiting && IsRiding && ride.Rider != null && !ride.Interrupted && pathLength >= .05f && routine == null && phaseTime >= WaitDepartCooldown)
+        {
+            Vector2Int input = ReadQuantizedRideInput(ride.Rider);
+            int departDirSign = restDock == 0 ? 1 : -1;
+            Vector2 departDir = CurrentTravelDirection(DockS(restDock), departDirSign);
+            if (CompareInputToDirection(input, departDir) > 0)
+                DepartFromWait(departDirSign);
+        }
         if (phase == Phase.Returning)
         {
-            moveTime += dt;
-            float before = pathS;
-            float duration = FacilityRide.PathDuration(moveDistance, ReturnSpeed, PathEase);
-            pathS = Mathf.Clamp(moveFrom + moveSign * FacilityRide.PathDistance(moveTime, moveDistance, ReturnSpeed, PathEase), 0f, pathLength);
-            Vector2 a = FacilityMesh.PointAlong(worldPath, before, out _), b = FacilityMesh.PointAlong(worldPath, pathS, out _);
-            travelVelocity = dt > 0f ? (b - a) / dt : Vector2.zero;
-            PeakMoveSpeed = Mathf.Max(PeakMoveSpeed, travelVelocity.magnitude);
-            if (moveTime >= duration) FinishMove();
+            // 복귀 중 Player가 이 크레인으로 붙어 오는 동안은 잠시 멈춰 안정적으로 체결한다.
+            if (ZipIncoming)
+            {
+                travelVelocity = Vector2.zero;
+            }
+            else
+            {
+                moveTime += dt;
+                float before = pathS;
+                float duration = FacilityRide.PathDuration(moveDistance, ReturnSpeed, PathEase);
+                pathS = Mathf.Clamp(moveFrom + moveSign * FacilityRide.PathDistance(moveTime, moveDistance, ReturnSpeed, PathEase), 0f, pathLength);
+                Vector2 a = FacilityMesh.PointAlong(worldPath, before, out _), b = FacilityMesh.PointAlong(worldPath, pathS, out _);
+                travelVelocity = dt > 0f ? (b - a) / dt : Vector2.zero;
+                PeakMoveSpeed = Mathf.Max(PeakMoveSpeed, travelVelocity.magnitude);
+                if (moveTime >= duration) FinishMove();
+            }
         }
         if (cageFlash >= 0f) { cageFlash += dt; if (cageFlash > .2f) cageFlash = -1f; }
         if (summonFlash >= 0f) { summonFlash += dt; if (summonFlash > SummonFlashTime) summonFlash = -1f; }
@@ -684,13 +957,13 @@ public sealed class PropCraneHook : ZipCraneBase
         UpdateDockLights();
         UpdateArrows(moving);
 
-        // 탑승부 효과: 추진 불꽃(탑승 중 이동), 트롤리 접점 불꽃(속도 비례) + 기존 불꽃 효과 0.25초 간격, 구동음.
+        // 탑승부 효과: 추진 불꽃(탑승 중 이동), 트롤리 접점 불꽃(속도 비례, 기존 2배) + 기존 불꽃 효과 0.125초 간격(기존 2배), 구동음.
         FacilityFeedback.Emit(thruster, phase == Phase.Riding && speed > 1f);
         FacilityFeedback.Emit(trolleySparks, moving && speed > 6f);
         if (trolleySparks != null)
         {
             var emission = trolleySparks.emission;
-            emission.rateOverTime = Mathf.Lerp(8f, 40f, Mathf.Clamp01(speed / 40f));
+            emission.rateOverTime = Mathf.Lerp(16f, 80f, Mathf.Clamp01(speed / 40f));
         }
         sparkClock += dt;
         if (moving && speed > 10f && sparkClock >= sparkInterval)
@@ -704,7 +977,8 @@ public sealed class PropCraneHook : ZipCraneBase
     // 다음 도크 쪽 경로 진행 부호(+1 = 집 → 끝, −1 = 끝 → 집).
     private float NextDockSign()
     {
-        if (phase == Phase.Riding || phase == Phase.Waiting) return departDock == 0 ? 1f : -1f;
+        if (phase == Phase.Riding) return rideDirSign;
+        if (phase == Phase.Waiting) return restDock == 0 ? 1f : -1f;
         if (phase == Phase.Returning) return moveSign;
         return restDock == 0 ? 1f : -1f;
     }

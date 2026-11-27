@@ -467,7 +467,7 @@ public sealed class FacilityZip : MonoBehaviour
         Rect body = FacilityAccess.BodyRect(p);
         Vector2 goal = anchor.ZipFeet + Vector2.up * (body.height * .5f);
         float distance = Vector2.Distance(goal, body.center);
-        if (distance > anchor.ZipRadius || distance < .05f) return false;
+        if (distance > anchor.ZipRadius) return false;
         return Sight(p, body, anchor, fresh);
     }
 
@@ -525,9 +525,9 @@ public sealed class FacilityZip : MonoBehaviour
             Vector2 goal = anchor.ZipFeet + Vector2.up * halfHeight;
             Vector2 delta = goal - center;
             float distance = delta.magnitude;
-            if (distance > anchor.ZipRadius || distance < .05f) continue;
+            if (distance > anchor.ZipRadius) continue;
             float score = distance;
-            if (directed)
+            if (directed && distance > 1e-4f)
             {
                 float dot = Vector2.Dot(delta / distance, direction);
                 if (cone && dot < ConeCos) continue;
@@ -535,7 +535,7 @@ public sealed class FacilityZip : MonoBehaviour
                 if (cone && rule == FamilyRule.PointedOnly && family && dot < FamilyAimCos) continue;
                 score = distance * (1f + ForwardWeight * (1f - dot));
             }
-            else if (rule == FamilyRule.Penalty && family) score *= 1f + LeftPenalty;
+            else if (!directed && rule == FamilyRule.Penalty && family) score *= 1f + LeftPenalty;
             // 동점(TieEpsilon 안)은 높은 대상 우선 — 시야 질의 전에 거른다.
             if (score > bestScore + TieEpsilon) continue;
             if (best != null && score > bestScore - TieEpsilon && anchor.ZipFeet.y <= best.ZipFeet.y) continue;

@@ -12,6 +12,7 @@ public class MovingEntityBase : WorldEntityBase
     protected float speed;
     protected RaycastMotor2D motor;
     protected Vector2 velocity;
+    public Vector2 CurrentVelocity => velocity;
 
     private bool ignoreRaycastCheck = true;
 

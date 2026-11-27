@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 /// <summary>
 /// 추격 분쇄기(ChasingGrinder)의 보이는 몸체다. 판정과 추격은 ChasingGrinder가 맡고, 여기서는 그 위치에 놓여
@@ -8,10 +9,12 @@ using UnityEngine;
 /// 풀이 분쇄기 개체를 여러 개 만들어 두어도 무거운 몸체는 Prefab마다 필요한 수만 만들어 빌려 쓴다.
 /// 격자 편집기에서 띠 폭을 바꾼 분쇄기는 빌릴 때 몸체를 그 폭에 맞춘다(Fit). 늘이지 않고, 폭에 따라 달라지는 몸체·소켓은
 /// ChasingGrinderLayout으로 다시 그리고 톱날·드릴·기어는 간격에 맞춰 옮기거나 복제한다. Prefab의 폭이면 아무것도 바꾸지 않는다.
-/// 6차 T15 고정 모드(SetFixedMode — 던전 분쇄 투입구 PropShredder가 빌려 쓸 때): 어둠(Back)·몸체(Housing)·소켓 묶음을 끄고 날 띠만 남겨
-/// 지형 뒤(Default 층 FixedOrderMin~FixedOrderMax, 방 벽 배경 -38~-14보다 앞)에 그린다. 구덩이 아래로 나가는 날·팔·드릴 축은 바닥 지형이 가린다
-/// (깊이 상한). 구덩이 안쪽은 검은 판(FixedPitShade)으로 메운다. 화면 떨림은 몸체가 내지 않는다(추격 분쇄기 ChasingGrinder만 낸다).
-/// 돌려줄 때(Release) 원래 정렬·묶음·빨강으로 되돌려 추격 분쇄기가 같은 몸체를 그대로 다시 빌릴 수 있다.
+/// 설치형 고정 모드(SetFixedMode — 던전 분쇄 투입구 PropShredder가 빌려 쓸 때):
+///   - Design에 SortingGroup(Default 층 FixedDesignOrder = -2)을 켜서 자식 Renderer의 원래 정렬 순서(20~60)를 압축 없이 100% 보존한다.
+///     (드릴·가시·뒷톱날 깊이가 추격 분쇄기와 완전히 동일하게 유지되며 지형 Default 0~1 뒤·방 벽 배경 -38~-14 앞에 그려진다.)
+///   - 검정 사각형(FixedPitShade) 대신 구덩이 상단은 방 배경이 자연스럽게 드러나게 두고, 하단 소켓 받침(Throat, Default -6~-4)과
+///     구덩이 양옆·하단 테두리를 감싸는 볼트 체결 외곽 프레임(OuterFrame, Default 3~5)으로 설치형 마감을 입힌다.
+///   - 돌려줄 때(Release) SortingGroup·설치 외곽 프레임을 끄고 원래 묶음·빨강으로 되돌려 추격 분쇄기가 그대로 다시 빌릴 수 있다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class ChasingGrinderBody : MonoBehaviour
@@ -57,8 +60,8 @@ public sealed class ChasingGrinderBody : MonoBehaviour
     private static readonly List<Mesh> generatedMeshes = new();
     // Prefab마다 지금까지 예열한 가장 넓은 폭의 앞줄 톱날 수. 나중에 만든 몸체에도 그만큼의 부품을 준비한다.
     private static readonly Dictionary<ChasingGrinderBody, int> unitCapacity = new();
-    // 6차 고정 모드: 폭(0.01칸 단위)별 구덩이 안쪽 검은 판 Mesh.
-    private static readonly Dictionary<int, Mesh> pitShadeMeshes = new();
+    // 설치형 고정 모드: 폭(0.01칸 단위)별 외곽 프레임·소켓 받침 Mesh(6개: Throat/Frame × Interior/Outline/Detail).
+    private static readonly Dictionary<int, Mesh[]> fixedCasingMeshes = new();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
     private static void ResetStatics()
@@ -71,7 +74,7 @@ public sealed class ChasingGrinderBody : MonoBehaviour
         generatedMeshes.Clear();
         fittedMeshes.Clear();
         unitCapacity.Clear();
-        pitShadeMeshes.Clear();
+        fixedCasingMeshes.Clear();
     }
 
     private static int SpanKey(float span) => Mathf.RoundToInt(span * 100f);
@@ -216,14 +219,13 @@ public sealed class ChasingGrinderBody : MonoBehaviour
     {
         EnsureRig();
         if (blades == null || housing == null) return false;
-        // 고정 모드·빨강 끔 상태에서 복제하면 바뀐 정렬·꺼진 Renderer가 복제본의 '원래 값'이 되므로, 복제하는 동안만 원래대로 되돌린다.
-        bool wasFixed = fixedMode, wasDark = !dangerOn;
+        // 빨강 끔 상태에서 복제하면 꺼진 Renderer가 복제본의 '원래 값'이 되므로, 복제하는 동안만 원래대로 되돌린다.
+        // 고정 모드 정렬은 Design SortingGroup이 담당하므로 자식 Renderer 정렬은 건드리지 않는다.
+        bool wasDark = !dangerOn;
         if (wasDark) SetDangerLights(true);
-        if (wasFixed) ApplyFixedSorting(false);
         try { return AddUnits(saws); }
         finally
         {
-            if (wasFixed) ApplyFixedSorting(true);
             if (wasDark) SetDangerLights(false);
         }
     }
@@ -286,7 +288,7 @@ public sealed class ChasingGrinderBody : MonoBehaviour
         sparkRate = -1f;
         // 복제했거나 켜고 끈 부품을 Animation이 다시 찾게 한다.
         if (animator != null && animator.isActiveAndEnabled) animator.Rebind();
-        if (fixedMode) RefreshPitShade();
+        if (fixedMode) RefreshFixedCasing();
     }
 
     // prefix + 번호 부품 가운데 first..saws-1번을 간격에 맞춰 놓고 켜며, 나머지는 끈다. joint면 톱날 사이 자리에 놓는다.
@@ -311,30 +313,43 @@ public sealed class ChasingGrinderBody : MonoBehaviour
             Quaternion.LookRotation(Vector3.forward, forward));
     }
 
-    // ───────────── 고정 모드(6차 T15 — 던전 분쇄 투입구) ─────────────
-    /// <summary>고정 모드 정렬 범위(Default 층). 지형(0·1)보다 뒤, 방 벽 배경(-38~-14)보다 앞. 가장 뒤 칸은 구덩이 안쪽 검은 판이 쓴다.</summary>
+    // ───────────── 설치형 고정 모드(던전 분쇄 투입구) ─────────────
+    /// <summary>고정 모드 정렬 기준(Default 층). 방 벽 배경(-38~-14)보다 앞, 바닥 지형(0·1)보다 뒤, 설치 외곽 프레임은 지형 앞(3~5·Player 뒤).</summary>
     public const int FixedOrderMin = -13, FixedOrderMax = -1;
-    /// <summary>구덩이 안쪽 검은 판의 깊이(칸, 분쇄선부터 아래로). 구덩이보다 깊은 부분은 바닥 지형이 가린다.</summary>
-    public const float PitShadeDepth = 3f;
-    private const string PitShadeName = "FixedPitShade";
+    public const int FixedThroatOrder = -6;
+    public const int FixedDesignOrder = -2;
+    public const int FixedFrameOrder = 3;
+    /// <summary>설치 구덩이 깊이(칸, 분쇄선부터 아래로). 바닥 지형이 이 아래로 나가는 축을 가린다.</summary>
+    public const float FixedPitDepth = 2f;
+    private const string FixedCasingName = "FixedCasing";
     private static readonly string[] FixedHiddenGroups = { "Back", "Housing", "Sockets", "SawSockets" };
-    private readonly List<(Renderer renderer, int layer, int order)> fixedSorting = new();
+    private static readonly string[] CasingPartNames =
+    {
+        "ThroatInterior", "ThroatOutline", "ThroatDetail",
+        "FrameInterior", "FrameOutline", "FrameDetail",
+    };
     private readonly List<(GameObject node, bool active)> fixedHidden = new();
     private readonly List<(Renderer renderer, bool enabled)> dangerParts = new();
     private bool fixedMode;
     private bool dangerOn = true;
-    private MeshRenderer pitShade;
+    private SortingGroup designSortingGroup;
+    private Transform fixedCasing;
+    private MeshFilter[] casingFilters;
+    private MeshRenderer[] casingRenderers;
 
     /// <summary>고정 모드(던전 분쇄 투입구)로 빌려 쓰는 중.</summary>
     public bool IsFixed => fixedMode;
     /// <summary>날·미끄럼판의 빨강(Damage 재질 Renderer)이 켜져 있는지.</summary>
     public bool DangerLightsOn => dangerOn;
-    /// <summary>고정 모드에서 구덩이를 메우는 검은 판(없으면 null, 검사용).</summary>
-    public Renderer PitShade => pitShade;
+    /// <summary>고정 모드에서 Design 내부 정렬(20~60)을 압축 없이 지형 뒤(Default -2)로 묶는 SortingGroup(검사용).</summary>
+    public SortingGroup FixedSortingGroup => designSortingGroup;
+    /// <summary>고정 모드의 설치형 외곽 프레임·소켓 받침 루트(없으면 null, 검사용).</summary>
+    public Transform FixedCasing => fixedCasing;
 
     /// <summary>
-    /// 고정 모드를 켜고 끈다. 켜면 어둠·몸체·소켓 묶음을 끄고, 남은 날 띠의 Renderer를 지형 뒤(Default FixedOrderMin+1~FixedOrderMax)로 옮기고,
-    /// 구덩이 안쪽 검은 판(Default FixedOrderMin)을 켠다. 끄면 원래 정렬·묶음으로 되돌린다.
+    /// 고정 모드를 켜고 끈다. 켜면 Design에 SortingGroup(Default -2)을 켜서 추격 분쇄기 날·드릴의 원래 정렬 순서(20~60)를
+    /// 그대로 유지한 채 지형 뒤에 배치하고, 검정 사각형 없이 설치형 소켓 받침(Default -6~-4)과 외곽 프레임(Default 3~5)을 켠다.
+    /// 끄면 SortingGroup·설치 외곽 프레임을 끄고 원래 묶음으로 되돌린다.
     /// </summary>
     public void SetFixedMode(bool on)
     {
@@ -346,6 +361,7 @@ public sealed class ChasingGrinderBody : MonoBehaviour
             fixedMode = true;
             fixedHidden.Clear();
             if (design != null)
+            {
                 foreach (string group in FixedHiddenGroups)
                 {
                     var node = design.Find(group);
@@ -353,105 +369,253 @@ public sealed class ChasingGrinderBody : MonoBehaviour
                     fixedHidden.Add((node.gameObject, node.gameObject.activeSelf));
                     node.gameObject.SetActive(false);
                 }
-            ApplyFixedSorting(true);
-            RefreshPitShade();
+                if (designSortingGroup == null)
+                {
+                    designSortingGroup = design.GetComponent<SortingGroup>();
+                    if (designSortingGroup == null) designSortingGroup = design.gameObject.AddComponent<SortingGroup>();
+                }
+                designSortingGroup.sortingLayerID = SortingLayer.NameToID("Default");
+                designSortingGroup.sortingOrder = FixedDesignOrder;
+                designSortingGroup.enabled = true;
+            }
+            RefreshFixedCasing();
             return;
         }
-        if (pitShade != null)
+        if (fixedCasing != null)
         {
-            pitShade.transform.localPosition = Vector3.zero;
-            pitShade.gameObject.SetActive(false);
+            fixedCasing.localPosition = Vector3.zero;
+            fixedCasing.gameObject.SetActive(false);
         }
-        ApplyFixedSorting(false);
+        if (designSortingGroup != null) designSortingGroup.enabled = false;
         foreach (var (node, active) in fixedHidden)
             if (node != null) node.SetActive(active);
         fixedHidden.Clear();
         fixedMode = false;
     }
 
-    // 날 띠의 Renderer 정렬을 지형 뒤로 옮기거나(on) 기록해 둔 원래 값으로 되돌린다. 같은 정렬 순서는 Prefab의 앞뒤 거리(z)로 겹친다.
-    private void ApplyFixedSorting(bool on)
-    {
-        if (!on)
-        {
-            foreach (var (renderer, layer, order) in fixedSorting)
-                if (renderer != null) { renderer.sortingLayerID = layer; renderer.sortingOrder = order; }
-            fixedSorting.Clear();
-            return;
-        }
-        fixedSorting.Clear();
-        var design = transform.Find("Design");
-        if (design == null) return;
-        int low = int.MaxValue, high = int.MinValue;
-        foreach (var renderer in design.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer == null || renderer is ParticleSystemRenderer) continue;
-            fixedSorting.Add((renderer, renderer.sortingLayerID, renderer.sortingOrder));
-            low = Mathf.Min(low, renderer.sortingOrder);
-            high = Mathf.Max(high, renderer.sortingOrder);
-        }
-        int slots = FixedOrderMax - (FixedOrderMin + 1);
-        int defaultLayer = SortingLayer.NameToID("Default");
-        foreach (var (renderer, _, order) in fixedSorting)
-        {
-            float k = high > low ? (order - low) / (float)(high - low) : 1f;
-            renderer.sortingLayerID = defaultLayer;
-            renderer.sortingOrder = FixedOrderMin + 1 + Mathf.RoundToInt(k * slots);
-        }
-    }
-
-    // 구덩이 안쪽 검은 판: 지금 폭의 사각형(분쇄선부터 아래로 PitShadeDepth칸)을 어둠 재질로 그린다(폭별 Mesh는 한 번만 만든다).
-    private void RefreshPitShade()
+    // 설치형 외곽 프레임(Default 3~5) + 하단 소켓 받침(Default -6~-4):
+    // 구덩이 상단 뒷배경은 열어 두어 어색한 검정 사각형을 없애고, 추격 분쇄기와 동일한 Machine 재질로 외곽만 깔끔하게 마감한다.
+    private void RefreshFixedCasing()
     {
         if (!fixedMode) return;
-        if (pitShade == null)
+        if (fixedCasing == null)
         {
-            var node = transform.Find(PitShadeName);
+            var node = transform.Find(FixedCasingName);
             if (node == null)
             {
-                node = new GameObject(PitShadeName).transform;
+                node = new GameObject(FixedCasingName).transform;
                 node.SetParent(transform, false);
             }
-            if (node.GetComponent<MeshFilter>() == null) node.gameObject.AddComponent<MeshFilter>();
-            pitShade = node.GetComponent<MeshRenderer>();
-            if (pitShade == null) pitShade = node.gameObject.AddComponent<MeshRenderer>();
-            var back = transform.Find("Design/Back");
-            var voidRenderer = back != null ? back.GetComponentInChildren<MeshRenderer>(true) : null;
-            pitShade.sharedMaterial = voidRenderer != null ? voidRenderer.sharedMaterial : null;
-            pitShade.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            pitShade.receiveShadows = false;
-            pitShade.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
-            pitShade.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+            fixedCasing = node;
+            ResolveMachineMaterials(out var interiorMat, out var outlineMat, out var detailMat);
+            var mats = new[] { interiorMat, outlineMat, detailMat, interiorMat, outlineMat, detailMat };
+            var orders = new[]
+            {
+                FixedThroatOrder, FixedThroatOrder + 1, FixedThroatOrder + 2,
+                FixedFrameOrder, FixedFrameOrder + 1, FixedFrameOrder + 2,
+            };
+            int defaultLayer = SortingLayer.NameToID("Default");
+            casingFilters = new MeshFilter[CasingPartNames.Length];
+            casingRenderers = new MeshRenderer[CasingPartNames.Length];
+            for (int i = 0; i < CasingPartNames.Length; i++)
+            {
+                var part = fixedCasing.Find(CasingPartNames[i]);
+                if (part == null)
+                {
+                    part = new GameObject(CasingPartNames[i]).transform;
+                    part.SetParent(fixedCasing, false);
+                }
+                var mf = part.GetComponent<MeshFilter>();
+                if (mf == null) mf = part.gameObject.AddComponent<MeshFilter>();
+                var mr = part.GetComponent<MeshRenderer>();
+                if (mr == null) mr = part.gameObject.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = mats[i];
+                mr.shadowCastingMode = ShadowCastingMode.Off;
+                mr.receiveShadows = false;
+                mr.lightProbeUsage = LightProbeUsage.Off;
+                mr.reflectionProbeUsage = ReflectionProbeUsage.Off;
+                mr.sortingLayerID = defaultLayer;
+                mr.sortingOrder = orders[i];
+                casingFilters[i] = mf;
+                casingRenderers[i] = mr;
+            }
         }
-        pitShade.sortingLayerID = SortingLayer.NameToID("Default");
-        pitShade.sortingOrder = FixedOrderMin;
         int key = SpanKey(span);
-        if (!pitShadeMeshes.TryGetValue(key, out var mesh) || mesh == null)
+        if (!fixedCasingMeshes.TryGetValue(key, out var meshes) || meshes == null || meshes.Length != CasingPartNames.Length || meshes[0] == null)
         {
-            float half = span * .5f;
-            mesh = new Mesh { name = "ChasingGrinder_PitShade_W" + key };
-            mesh.SetVertices(new List<Vector3> { new Vector3(-half, -PitShadeDepth), new Vector3(-half, 0f), new Vector3(half, 0f), new Vector3(half, -PitShadeDepth) });
-            mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
-            mesh.SetUVs(0, new List<Vector2> { Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero });
+            meshes = BuildFixedCasingMeshes(span, key);
+            foreach (var m in meshes) generatedMeshes.Add(m);
+            fixedCasingMeshes[key] = meshes;
+        }
+        for (int i = 0; i < CasingPartNames.Length; i++)
+        {
+            casingFilters[i].sharedMesh = meshes[i];
+            casingRenderers[i].enabled = meshes[i].vertexCount > 0;
+        }
+        fixedCasing.gameObject.SetActive(true);
+    }
+
+    private void ResolveMachineMaterials(out Material interior, out Material outline, out Material detail)
+    {
+        interior = outline = detail = null;
+        var root = housing != null ? housing : transform.Find("Design");
+        if (root == null) return;
+        foreach (var mr in root.GetComponentsInChildren<MeshRenderer>(true))
+        {
+            var mat = mr.sharedMaterial;
+            if (mat == null) continue;
+            if (interior == null && mat.name.StartsWith("MachineInterior", System.StringComparison.Ordinal)) interior = mat;
+            else if (outline == null && mat.name.StartsWith("MachineOutline", System.StringComparison.Ordinal)) outline = mat;
+            else if (detail == null && mat.name.StartsWith("MachineDetail", System.StringComparison.Ordinal)) detail = mat;
+        }
+        if (interior == null) interior = outline;
+        if (outline == null) outline = interior;
+        if (detail == null) detail = outline;
+    }
+
+    // 폭 span 기준 설치형 외곽 마감·소켓 받침 Mesh 6종을 생성한다(폭별 1회 캐시).
+    private static Mesh[] BuildFixedCasingMeshes(float span, int key)
+    {
+        float half = span * .5f;
+        int saws = ChasingGrinderLayout.SawCount(span);
+        const float pitY = -FixedPitDepth;   // -2.0 (구덩이 바닥선)
+
+        var buckets = new (List<Vector3> v, List<int> t, List<Vector2> uv)[CasingPartNames.Length];
+        for (int i = 0; i < buckets.Length; i++)
+            buckets[i] = (new List<Vector3>(), new List<int>(), new List<Vector2>());
+
+        void AddShape(int idx, Vector2[] poly)
+        {
+            var (v, t, uv) = buckets[idx];
+            int start = v.Count;
+            var sv = new List<Vector3>();
+            var st = new List<int>();
+            ChasingGrinderLayout.ShapeMesh(poly, sv, st);
+            v.AddRange(sv);
+            foreach (int tri in st) t.Add(start + tri);
+            for (int k = 0; k < sv.Count; k++) uv.Add(Vector2.zero);
+        }
+
+        void AddStroke(int idx, Vector2[] line, float width, bool closed)
+        {
+            var (v, t, uv) = buckets[idx];
+            int start = v.Count;
+            var sv = new List<Vector3>();
+            var st = new List<int>();
+            var suv = new List<Vector2>();
+            ChasingGrinderLayout.StrokeMesh(new[] { line }, width, closed, sv, st, suv);
+            v.AddRange(sv);
+            foreach (int tri in st) t.Add(start + tri);
+            uv.AddRange(suv);
+        }
+
+        void AddSegments(int idx, List<(Vector2 a, Vector2 b)> segs, float width)
+        {
+            if (segs.Count == 0) return;
+            var (v, t, uv) = buckets[idx];
+            int start = v.Count;
+            var sv = new List<Vector3>();
+            var st = new List<int>();
+            ChasingGrinderLayout.SegmentMesh(segs, width, sv, st);
+            v.AddRange(sv);
+            foreach (int tri in st) t.Add(start + tri);
+            for (int k = 0; k < sv.Count; k++) uv.Add(Vector2.zero);
+        }
+
+        void AddPanel(int interiorIdx, int outlineIdx, Vector2[] poly, float lineW)
+        {
+            AddShape(interiorIdx, poly);
+            AddStroke(outlineIdx, poly, lineW, true);
+        }
+
+        // ── 1) 하단 소켓 받침(Throat, Default -6~-4, Design 뒤): 상단 구덩이 배경은 비워 검정 사각형을 없애고 하단 기계 받침만 배치 ──
+        var throatBed = ChasingGrinderLayout.Chamfer(-half, pitY - .06f, half, pitY + .52f, .06f);
+        AddPanel(0, 1, throatBed, .04f);
+        var throatLines = new List<(Vector2, Vector2)>
+        {
+            (new Vector2(-half + .18f, pitY + .34f), new Vector2(half - .18f, pitY + .34f)),
+        };
+        // 앞줄 톱날·드릴 축이 드나드는 소켓 칼라(ChasingGrinderLayout의 SawSockets·Sockets 문법)
+        for (int i = 0; i < saws; i++)
+        {
+            float sx = ChasingGrinderLayout.SawX(span, i);
+            AddPanel(0, 1, ChasingGrinderLayout.Chamfer(sx - .24f, pitY - .04f, sx + .24f, pitY + .64f, .045f), .03f);
+            throatLines.Add((new Vector2(sx - .13f, pitY + .48f), new Vector2(sx + .13f, pitY + .48f)));
+        }
+        for (int j = 1; j < saws; j++)
+        {
+            float jx = ChasingGrinderLayout.JointX(span, j);
+            AddPanel(0, 1, ChasingGrinderLayout.Chamfer(jx - .44f, pitY - .04f, jx + .44f, pitY + .60f, .045f), .03f);
+            throatLines.Add((new Vector2(jx - .20f, pitY + .44f), new Vector2(jx + .20f, pitY + .44f)));
+        }
+        // 구덩이 좌우 내벽의 얇은 수직 레일(배경을 막지 않으면서 기계식 구덩이 깊이감을 부여)
+        var wallGuides = new List<(Vector2, Vector2)>
+        {
+            (new Vector2(-half + .05f, pitY), new Vector2(-half + .05f, -.04f)),
+            (new Vector2(half - .05f, pitY), new Vector2(half - .05f, -.04f)),
+        };
+        AddSegments(1, wallGuides, .06f);
+        AddSegments(2, throatLines, .018f);
+
+        // ── 2) 설치형 외곽 마감 프레임(OuterFrame, Default 3~5, 지형 앞·Player 뒤): 양옆 기둥·상단 코너 브래킷·하단 실 빔 ──
+        var frameDetails = new List<(Vector2, Vector2)>();
+        foreach (int side in new[] { -1, 1 })
+        {
+            float x0 = side < 0 ? -half - .16f : half - .10f;
+            float x1 = side < 0 ? -half + .10f : half + .16f;
+            // 좌우 수직 외곽 장갑판
+            AddPanel(3, 4, ChasingGrinderLayout.Chamfer(x0, pitY - .14f, x1, .06f, .045f), .042f);
+            // 구덩이 입구 상단 바닥 턱에 볼트 체결되는 L자 코너 브래킷
+            float bx0 = side < 0 ? -half - .34f : half - .10f;
+            float bx1 = side < 0 ? -half + .10f : half + .34f;
+            AddPanel(3, 4, ChasingGrinderLayout.Chamfer(bx0, -.14f, bx1, .08f, .04f), .04f);
+
+            float seamX = side < 0 ? -half - .03f : half + .03f;
+            frameDetails.Add((new Vector2(seamX, pitY + .02f), new Vector2(seamX, -.16f)));
+            // 측면 볼트 리벳 4개 + 상단 브래킷 볼트 1개
+            for (int r = 0; r < 4; r++)
+            {
+                float by = Mathf.Lerp(pitY + .18f, -.28f, r / 3f);
+                AddShape(5, ChasingGrinderLayout.Box(seamX - .022f, by - .022f, seamX + .022f, by + .022f));
+            }
+            float capBoltX = side < 0 ? -half - .22f : half + .22f;
+            AddShape(5, ChasingGrinderLayout.Box(capBoltX - .026f, -.056f, capBoltX + .026f, -.004f));
+        }
+        // 구덩이 하단 바닥 이음새를 덮는 가로 실 빔(정지 시 날이 이 아래로 깔끔하게 수납됨)
+        AddPanel(3, 4, ChasingGrinderLayout.Chamfer(-half - .16f, pitY - .16f, half + .16f, pitY + .10f, .045f), .042f);
+        frameDetails.Add((new Vector2(-half + .06f, pitY - .02f), new Vector2(half - .06f, pitY - .02f)));
+        int bolts = Mathf.Max(3, Mathf.RoundToInt(span));
+        for (int b = 0; b < bolts; b++)
+        {
+            float bx = Mathf.Lerp(-half + .28f, half - .28f, bolts > 1 ? b / (float)(bolts - 1) : .5f);
+            AddShape(5, ChasingGrinderLayout.Box(bx - .024f, pitY - .10f, bx + .024f, pitY - .052f));
+        }
+        AddSegments(5, frameDetails, .016f);
+
+        var result = new Mesh[CasingPartNames.Length];
+        for (int i = 0; i < CasingPartNames.Length; i++)
+        {
+            var mesh = new Mesh { name = "ChasingGrinder_Fixed_" + CasingPartNames[i] + "_W" + key };
+            mesh.SetVertices(buckets[i].v);
+            mesh.SetTriangles(buckets[i].t, 0);
+            mesh.SetUVs(0, buckets[i].uv);
             mesh.RecalculateBounds();
             mesh.RecalculateNormals();
-            generatedMeshes.Add(mesh);
-            pitShadeMeshes[key] = mesh;
+            result[i] = mesh;
         }
-        pitShade.GetComponent<MeshFilter>().sharedMesh = mesh;
-        pitShade.gameObject.SetActive(true);
+        return result;
     }
 
     /// <summary>
     /// 고정 모드 배치: 분쇄선을 edgeCenter에서 forward 반대쪽으로 sink칸 내린 자리에 둔다(정지 때 날 띠가 구덩이 아래로 가라앉는다).
-    /// 구덩이 안쪽 검은 판은 가라앉지 않고 구덩이 윗변에 남는다.
+    /// 설치형 외곽 프레임과 소켓 받침은 가라앉지 않고 구덩이 테두리에 고정된다.
     /// </summary>
     public void PlaceFixed(Vector2 edgeCenter, Vector2 forward, float sink)
     {
         var direction = forward.sqrMagnitude > 1e-6f ? forward.normalized : Vector2.up;
         sink = Mathf.Max(0f, sink);
         Place(edgeCenter - direction * sink, direction);
-        if (pitShade != null) pitShade.transform.localPosition = new Vector3(0f, sink, 0f);
+        if (fixedCasing != null) fixedCasing.localPosition = new Vector3(0f, sink, 0f);
     }
 
     /// <summary>날·미끄럼판의 빨강(Damage 재질 Renderer)을 켜고 끈다. 끌 때는 Renderer를 끈다(알파 블렌드 재질은 밝기 0이 검은 선으로 남는다).</summary>

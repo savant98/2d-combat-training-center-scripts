@@ -16,6 +16,8 @@ public class GameManager : MonoBehaviour
 
     [HideInInspector] public PlayerController Player;
     public static GameManager Instance { get; private set; }
+    private bool isRetrying;
+    public bool IsRetrying => isRetrying;
     // Lobby(시작 방)와 그 등장 위치. Nightmare 도입부가 끝난 뒤 돌아올 곳과 Lobby 안내가 쓴다.
     public Room LobbyRoom => StartRoom;
     public Transform LobbySpawnPoint => spawnPoint != null ? spawnPoint.transform : null;
@@ -107,37 +109,64 @@ public class GameManager : MonoBehaviour
                 transitionEffect = firstSpawnTransitionEffect
             });
     }
+    public void RequestReturnToLobbyFromTerminal()
+    {
+        if (isRetrying) return;
+        if (RoomTransitionManager.Instance != null && RoomTransitionManager.Instance.IsTransitioning) return;
+        if (TrainingRunTracker.Instance != null && TrainingRunTracker.Instance.IsRunActive)
+            TrainingRunTracker.Instance.CancelRun();
+        RequestReturnToLobby();
+    }
     public void RequestRetry()
     {
-        StartCoroutine(RequestRetryRoutine());
+        if (isRetrying) return;
+        StartCoroutine(RequestRetryRoutine(false));
     }
-    private IEnumerator RequestRetryRoutine()
+    public void RequestRetryFromTerminal()
     {
-        UIManager.Instance.ShowDeathUI(false);
-        // Enemy Despawn
+        if (isRetrying) return;
+        var currentRoom = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
+        if (currentRoom == null || currentRoom.WaveManager == null) return;
+        StartCoroutine(RequestRetryRoutine(true));
+    }
+    private IEnumerator RequestRetryRoutine(bool pushGameplayBlock)
+    {
+        isRetrying = true;
+        if (pushGameplayBlock && UIManager.Instance != null)
+            UIManager.Instance.PushGameplayBlock();
 
-        RoomManager.Instance.CurrentRoom.WaveManager?.ForceClear();
-        StartCoroutine(EnemyDespawnNextFrame());
-
-        yield return retryTransitionEffect.Play(new RoomTransitionContext());
-
-        // 여유 시간
-        yield return new WaitForSeconds(0.25f);
-
-        UIManager.Instance.PopGameplayBlock();
-
-        // Wave 재시작
-        var currentRoom = RoomManager.Instance.CurrentRoom;
-        if (currentRoom.roomType == RoomType.SelfTraining)
+        try
         {
-            var practice = currentRoom.GetComponentInChildren<SelfTrainingController>();
-            if (practice != null)
+            UIManager.Instance.ShowDeathUI(false);
+            // Enemy Despawn
+
+            RoomManager.Instance.CurrentRoom.WaveManager?.ForceClear();
+            StartCoroutine(EnemyDespawnNextFrame());
+
+            yield return retryTransitionEffect.Play(new RoomTransitionContext());
+
+            // 여유 시간
+            yield return new WaitForSeconds(0.25f);
+
+            UIManager.Instance.PopGameplayBlock();
+
+            // Wave 재시작
+            var currentRoom = RoomManager.Instance.CurrentRoom;
+            if (currentRoom.roomType == RoomType.SelfTraining)
             {
-                practice.CancelAnalysis();
-                practice.Configure(practice.DummyCount, practice.UseShield, practice.ShieldCapacity);
+                var practice = currentRoom.GetComponentInChildren<SelfTrainingController>();
+                if (practice != null)
+                {
+                    practice.CancelAnalysis();
+                    practice.Configure(practice.DummyCount, practice.UseShield, practice.ShieldCapacity);
+                }
             }
+            else currentRoom.WaveManager.RestartWaves();
         }
-        else currentRoom.WaveManager.RestartWaves();
+        finally
+        {
+            isRetrying = false;
+        }
     }
     private IEnumerator EnemyDespawnNextFrame()
     {

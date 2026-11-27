@@ -7,6 +7,8 @@ public class LandMine : ProjectileBase
 {
     // 지뢰는 비행 중 접촉 피해 대신 기존 설치·기폭 수명을 사용한다.
     protected override bool UsesPathHitDetection => false;
+    // 바닥에 설치되는 지뢰는 비행 투사체 반사 대상에서 제외한다.
+    public override bool CanBeCounterReflected => false;
 
     [Header("Physics")]
     [SerializeField] private int angleStep = 15;

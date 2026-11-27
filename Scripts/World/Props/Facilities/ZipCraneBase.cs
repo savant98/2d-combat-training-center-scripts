@@ -109,6 +109,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     [SerializeField, Tooltip("5차 붙기 출발음(TerrainPanelDrive 피치 1.5).")] protected SoundOptions zipLaunchSound;
     [SerializeField, Tooltip("5차 도착 체결음(TerrainPanelLock 피치 0.9 — ContainmentLock과 겹친다).")] protected SoundOptions grabLockSound;
     [SerializeField, Tooltip("5차 무거운 체결음(경로 크레인만 LobbyUpgradeAssembleBolt).")] protected SoundOptions grabHeavySound;
+    [SerializeField, Tooltip("덜컹 정지·도착·매달림 연출 효과음(HeavyMechanismClunk).")] protected SoundOptions clunkSound;
 
     protected FacilityRide ride;
     protected bool cached;
@@ -136,7 +137,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     private float aimOffset;
     private float flashTime = -1f;
     private float towFade = -1f;                 // 도착 뒤 꼬리가 머리를 따라잡는 시간(−1 = 진행 중 아님)
-    private float kickTime = -1f, kickSign = 1f;
+    private float kickTime = -1f, kickSign = 1f, kickScale = 1f;
     private static float lastGrabShake = -999f;
     private JumpAbility jumpSource;
     private FacilityHighlight highlight;
@@ -190,13 +191,19 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     /// <summary>5차: 지금 크레인 흔들림 각도(도, 회전만)·마지막 도착 뒤 최대 절댓값(검사용).</summary>
     public float KickAngle { get; private set; }
     public float KickPeak { get; private set; }
+    /// <summary>덜컹 효과음(clunkSound)이 재생된 총 횟수(검사용).</summary>
+    public int ClunksPlayed { get; protected set; }
+    /// <summary>마지막 붙기 도착 시 계산한 흔들림 부호(±1).</summary>
+    protected float LastKickSign => kickSign;
 
     /// <summary>집(점 0)의 매달린 발(월드).</summary>
     public Vector2 HomeFeet => transform.TransformPoint(HangFeetLocal);
 
     // ── IZipAnchor ─────────────────────────────
 
-    public virtual bool ZipAvailable => isLive && isActiveAndEnabled && phase == Phase.Idle && !IsRiding && Usable && FacilityAccess.Allows(use);
+    /// <summary>이 단계에서 붙기(Zip)를 받을 수 있는지(기본 Idle, 경로 크레인은 복귀 중 재탑승 포함).</summary>
+    protected virtual bool CanAcceptZipPhase => phase == Phase.Idle;
+    public virtual bool ZipAvailable => isLive && isActiveAndEnabled && CanAcceptZipPhase && !IsRiding && Usable && FacilityAccess.Allows(use);
     public virtual Vector2 ZipFeet => HomeFeet;
     public float ZipRadius => activeRadius;
     public Vector2 ZipHookPoint => hookPoint != null ? (Vector2)hookPoint.position : HomeFeet + Vector2.up * 1.6f;
@@ -271,10 +278,38 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         if (DungeonObjectiveShake.Impulse(strength, 0f, at)) { GrabImpulses++; LastGrabImpulse = strength; }
         // 크레인 흔들림(회전만): 부호 = 붙기 진행 x 방향.
         float dx = ZipFeet.x - (player != null ? zipStartBody.x : ZipFeet.x);
-        kickSign = Mathf.Abs(dx) > .05f ? Mathf.Sign(dx) : 1f;
+        TriggerKick(Mathf.Abs(dx) > .05f ? Mathf.Sign(dx) : 1f, 1f);
+        OnGrabbed();
+    }
+
+    /// <summary>크레인 감쇠 흔들림(회전만)을 시작한다(도착 체결·진행 반대 방향 급정지 등).</summary>
+    protected void TriggerKick(float sign, float scale = 1f)
+    {
+        kickSign = sign < 0f ? -1f : 1f;
+        kickScale = Mathf.Max(.1f, scale);
         kickTime = 0f;
         KickPeak = 0f;
-        OnGrabbed();
+    }
+
+    /// <summary>방향전환·끝 도달·고정 크레인 매달림에 공통으로 쓰는 무거운 덜컹 연출(소리·회전 흔들림·스파크·카메라 임펄스).</summary>
+    protected bool PlayMechanismClunk(float sign, float kickMultiplier = 1.35f, float shakeStrength = .28f, int sparks = 8, SoundOptions preferredSound = default)
+    {
+        SoundOptions sound = preferredSound != null && preferredSound.clip != null
+            ? preferredSound
+            : (clunkSound != null && clunkSound.clip != null
+                ? clunkSound
+                : (grabHeavySound != null && grabHeavySound.clip != null ? grabHeavySound : grabLockSound));
+        bool played = false;
+        if (sound != null && sound.clip != null)
+        {
+            FacilityFeedback.Play(sound, ZipHookPoint);
+            ClunksPlayed++;
+            played = true;
+        }
+        TriggerKick(sign, kickMultiplier);
+        if (sparks > 0) FacilityFeedback.Burst(arrivalSparks, sparks);
+        if (shakeStrength > 0f) DungeonObjectiveShake.Impulse(shakeStrength, 0f, ZipHookPoint);
+        return played;
     }
 
     /// <summary>5차: 화면 흔들림 배율(경로 크레인 1.2 — 무거운 운반기).</summary>
@@ -286,7 +321,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
     public bool AcceptZip(PlayerController player)
     {
         Cache();
-        if (!isLive || !isActiveAndEnabled || phase != Phase.Idle || IsRiding || !Usable) return false;
+        if (!isLive || !isActiveAndEnabled || !CanAcceptZipPhase || IsRiding || !Usable) return false;
         if (!ride.BeginHandoff(player, use, false)) return false;
         WatchJump(jumpToDismount && player.AbilityManager != null ? player.AbilityManager.JumpAbility : null);
         SetZipFocus(false);
@@ -381,9 +416,10 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         cageClose = clawClose = 0f;
         travelVelocity = Vector2.zero;
         Dismounts = DashDismounts = AutoDrops = 0;
-        GrabImpulses = LaunchFlashes = StreakEmits = 0;
+        GrabImpulses = LaunchFlashes = StreakEmits = ClunksPlayed = 0;
         LastGrabImpulse = KickAngle = KickPeak = 0f;
         kickTime = flashTime = towFade = -1f;
+        kickScale = 1f;
         focused = false;
         incoming = null;
         if (zipPrompt != null) { zipPrompt.DOKill(); zipPrompt.alpha = 0f; }
@@ -549,7 +585,7 @@ public abstract class ZipCraneBase : MonoBehaviour, IDungeonPropPart, IDungeonPr
         if (kickTime < 0f) { KickAngle = 0f; return; }
         kickTime += dt;
         float envelope = Mathf.Exp(-kickTime / KickDecay);
-        KickAngle = kickSign * KickDegrees * envelope * Mathf.Sin(2f * Mathf.PI * kickTime / KickPeriod);
+        KickAngle = kickSign * (KickDegrees * kickScale) * envelope * Mathf.Sin(2f * Mathf.PI * kickTime / KickPeriod);
         KickPeak = Mathf.Max(KickPeak, Mathf.Abs(KickAngle));
         if (envelope < .02f) { kickTime = -1f; KickAngle = 0f; }
     }

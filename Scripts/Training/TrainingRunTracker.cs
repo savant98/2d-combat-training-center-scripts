@@ -113,6 +113,18 @@ public class TrainingRunTracker : MonoBehaviour
         UIManager.Instance.ShowTrainingScoreBoard(true, this);
     }
 
+    public void CancelRun()
+    {
+        PauseTiming();
+        CleanupSubscriptions();
+        training = null;
+        ended = true;
+        killPending = false;
+        defeatResultPending = false;
+        if (UIManager.Instance != null)
+            UIManager.Instance.ShowTrainingScoreBoard(false, this);
+    }
+
     private void OnDisable()
     {
         PauseTiming();

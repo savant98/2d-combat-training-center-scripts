@@ -49,7 +49,7 @@ public sealed class DungeonPropCatalogSO : ScriptableObject
         [Tooltip("길이 설정 키(왼쪽 변 고정 · 오른쪽으로 늘어남 — 늘어난 칸도 같은 칸 규칙에 든다). 없으면 비움.")] public string lengthKey = "";
         [Tooltip("중력형 파괴 Prop(중력형 위에 쌓지 않는다).")] public bool gravity;
         public Danger danger;
-        [Tooltip("위험 범위 설정 키(톱날 length · 접속함 sparkRadius · 피스톤 stroke). 비면 기본값만 쓴다.")] public string dangerKey = "";
+        [Tooltip("위험 범위 설정 키(톱날 length · 피스톤 stroke). 비면 기본값만 쓴다.")] public string dangerKey = "";
         [Tooltip("위험 범위 기본값(설정 키 값이 없을 때) — 원 반지름·뻗는 칸 수.")] public float dangerBase;
         [Tooltip("위험 원에 더하는 값(톱날 날 반지름).")] public float dangerExtra;
         [Tooltip("함정 묶음 위상 설정 키(일정하게 늘어야 한다 — 파도).")] public string phaseKey = "";
@@ -349,7 +349,7 @@ public sealed class DungeonPropCatalogSO : ScriptableObject
             E("DungeonPropRockfall", "낙석 구조물", Kind.Trap, Mount.Ceiling, Collision.None, 4, 4, R0, 'r'),   // 7차 V1: 옛 폐자재 슈트(k)를 대신함
             E("DungeonPropLaserWelderArm", "레이저 용접 팔", Kind.Trap, Mount.Wall, Collision.None, 2, 2, R02, 'Q'),
             E("DungeonPropLaserEmitter", "소형 레이저 사출기", Kind.Trap, Mount.Rot, Collision.None, 1, 1, RA, '+'),
-            E("DungeonPropCableJunction", "전기 접속함", Kind.Trap, Mount.Any, Collision.None, 1, 1, RA, 'e'),
+            E("DungeonPropCableJunction", "전기 접속함", Kind.Decoration, Mount.Any, Collision.None, 1, 1, RA, 'e'),
             E("RotatingSawCell", "회전 톱날", Kind.Trap, Mount.Any, Collision.None, 1, 1, RA, '*'),
             E("RotatingSawLargeCell", "큰 회전 톱날", Kind.Trap, Mount.Any, Collision.None, 1, 1, RA, '&'),
             E("PistonTrapCell", "피스톤", Kind.Trap, Mount.Rot, Collision.None, 1, 1, RA, 'm'),
@@ -389,7 +389,6 @@ public sealed class DungeonPropCatalogSO : ScriptableObject
         Trap("DungeonPropRockfall", Danger.DropBlock, "", 0f, 0f, "");   // 7차 V1: 한 번만 떨어짐 — 위상 키 없음
         Trap("DungeonPropLaserWelderArm", Danger.WelderRows, "", 0f, 0f, "welderOffset");
         Trap("DungeonPropLaserEmitter", Danger.Ray, "", 0f, 0f, "welderOffset");
-        Trap("DungeonPropCableJunction", Danger.Circle, "sparkRadius", 1.5f, 0f, "sparkOffset");
         Trap("RotatingSawCell", Danger.Circle, "length", 3f, .4f, "sawStartAngle");
         Trap("RotatingSawLargeCell", Danger.Circle, "length", 3f, .8f, "sawStartAngle");
         Trap("PistonTrapCell", Danger.Stroke, "stroke", 2f, 0f, "pistonOffset");

@@ -2,7 +2,7 @@ using System;
 using System.Collections;
 using UnityEngine;
 
-// 레일건 충전(Railgun 무장 Gear 1단계). 실행 첫 프레임에 PlayerWeaponTraits.ChargeRail(총열 열을 바로 0%로 + ChargeDuration(5초) 충전, 완료 큐 RailCharge)을 부른다.
+// 레일건 충전(Railgun 무장 Gear 1단계). 실행 첫 프레임에 PlayerWeaponTraits.ChargeRail(과열 게이지 +30% + ChargeDuration(10초) 충전, 완료 큐 RailCharge)을 부른다.
 // 2026-11-21 무장 특성 3차(사용자 요청 "레일건 충전 시 효과·Animation도 다른 레일건 무장과 톤을 맞춰" — 사용자 검수 전 시안):
 // - 준비 시작에 충전 연출(chargeUpFeedback: 둘레에서 코어로 모이는 분홍·청록 빛 알갱이, 코일 고리 세 개가 뒤에서 앞으로 차례로 켜짐)을
 //   레일건 코어(모형 중심)에서 보는 쪽으로 돌려 재생하고, 총열 덧그림(RailgunBarrelVisual)에 준비 시간을 넘겨 코일·전류가 함께 차오르게 한다.

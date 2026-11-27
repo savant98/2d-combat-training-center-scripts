@@ -16,6 +16,9 @@ public abstract class WorldEntityBase : MonoBehaviour
 
     internal virtual bool PreserveAfterBossDefeat => owner is PlayerController;
     internal uint PoolLease { get; private set; }
+    public CharacterController2D Owner => owner;
+    public Faction OwnerFaction => ownerFaction;
+    public bool IsReturning => isReturning;
     internal bool IsOwnedBy(CharacterController2D actor) => owner == actor;
 
     protected virtual void Awake()
