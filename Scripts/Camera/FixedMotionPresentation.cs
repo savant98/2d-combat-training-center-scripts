@@ -75,6 +75,14 @@ public sealed class FixedMotionPresentation : MonoBehaviour
         if (instance == null || !instance.isActiveAndEnabled) return;
         foreach (var body in instance.bodies) if (body != null) body.SamplePhysics();
     }
+    /// <summary>카메라 계산 중 Follow 자리에 잠시 들어간 표시용 대상이면 원래 대상을, 아니면 그대로 돌려준다.</summary>
+    public static Transform SourceOf(Transform target)
+    {
+        if (target == null || instance == null) return target;
+        foreach (var pair in instance.targets)
+            if (pair.Value == target) return pair.Key;
+        return target;
+    }
     private Transform PresentationTarget(Transform target)
     {
         if (target == null) return null;
@@ -100,6 +108,8 @@ public sealed class FixedMotionPresentation : MonoBehaviour
             for (int i = 0; i < CinemachineCore.VirtualCameraCount; i++)
             {
                 if (!(CinemachineCore.GetVirtualCamera(i) is CinemachineCamera camera)) continue;
+                // 모든 VCam 공통 Player 프레이밍(Follow가 Player인 VCam에서만 작동한다).
+                PlayerCameraFraming.Ensure(camera);
                 var saved = camera.Target;
                 var replaced = saved;
                 replaced.TrackingTarget = PresentationTarget(saved.TrackingTarget);

@@ -68,6 +68,7 @@ public sealed class RoomViewRules : MonoBehaviour
         if(room == null || RoomManager.Instance == null || RoomManager.Instance.CurrentRoom != room || brain.OutputCamera == null) return;
         CurrentBounds=ResolveBounds(brain);
         if(CurrentBounds == null) return;
+        // Player 프레이밍은 각 VCam의 PlayerCameraFraming 확장이 Cinemachine 계산 안에서 이미 적용했다. 여기서는 최종 출력만 경계 안으로 제한한다.
         Constrain(brain.OutputCamera,CurrentBounds);
         // 방에 속하지 않은 카메라 범위(각개 전투 엘리베이터의 이동 카메라처럼 방 밖에 둔 가상 카메라의 Confiner)에는 바닥 그림자를 옮기지 않는다.
         // 옮기면 방 내용의 그림자가 그 범위 개체의 자식이 되어, 방이 꺼진 뒤에도 남아 보이고 다른 방으로 함께 끌려간다.

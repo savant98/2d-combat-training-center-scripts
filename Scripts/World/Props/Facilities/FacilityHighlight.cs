@@ -18,6 +18,8 @@ public interface IFacilityHighlightSource
 ///   · 쓸 수 있음(IFacilityHighlightSource.FacilityReady): 1.2초 주기 '두 번 깜박임'(바닥 .35 ↔ 최고 2.9) + 테두리를 따라 도는 빛 점 2개(이동만, 크기 변형 없음).
 ///   · 범위 안(지점의 키 안내가 켜짐 — HighlightChanged, 또는 붙기 대상 선택 SetFocus): 깜박임 대신 꾸준히 2.2 + 빛 점.
 ///   · 쓸 수 없음(FacilityReady false — FacilityAccess.Allows false·방전·사용 중): 흐린 정적 선 .25, 깜박임·빛 점 없음.
+///   · 화면 가독성 처리(ScreenReadability)가 켜진 방에서는 Player와 먼 '쓸 수 있음' 대상(기본 6~10칸에서 섞음)의 깜박임 최고치를 낮추고(기본 1.1) 빛 점을 줄인다.
+///     가까운 대상·범위 안·쓸 수 없음은 그대로다. 처리가 꺼진 방(Lobby 포함)에서는 위 값 그대로다.
 /// - 쉐브론(▼)은 4차에서 완전히 없앴다(R3 — 범위 안에서는 기존 키 안내만 보인다). chevrons·chevronOffsets는 옛 생성 도구 호환용으로만 남긴 빈 직렬화 필드다(쓰지 않는다).
 /// - 밝기는 FacilityLights(MaterialPropertyBlock _Intensity)로, 색은 같은 블록의 _EmissionColor로 바꾼다. 거의 0이면 Renderer를 끈다.
 ///   Prefab에는 Renderer를 꺼 둔 채 저장해 격자 Tool 미리보기에 강조선이 보이지 않게 하고, 실행 중에만 켠다.
@@ -261,14 +263,17 @@ public sealed class FacilityHighlight : MonoBehaviour
         bool ready = source == null || source.FacilityReady;
         bool any = AnyHighlighted && ready;
         mode = any ? Mode.Active : ready ? Mode.Idle : Mode.Disabled;
-        float wantIntensity = mode == Mode.Active ? activeLevel : mode == Mode.Idle ? Mathf.Lerp(idleFloor, idlePeak, Blink(clock)) : disabledLevel;
+        // 화면 가독성 처리(ScreenReadability)가 켜진 방에서는 Player와 먼 '쓸 수 있음' 대상의 깜박임 최고치·빛 점을 줄인다(가까운 대상·범위 안은 그대로).
+        float calm = mode == Mode.Idle ? ScreenReadability.FacilityCalm(transform.position) : 0f;
+        float peak = calm > 0f ? Mathf.Lerp(idlePeak, Mathf.Max(idleFloor, ScreenReadability.DistantBlinkPeak), calm) : idlePeak;
+        float wantIntensity = mode == Mode.Active ? activeLevel : mode == Mode.Idle ? Mathf.Lerp(idleFloor, peak, Blink(clock)) : disabledLevel;
         float want = wantIntensity / baseIntensity;
         // 깜박임은 곡선 그대로 따른다(빠르게 켜지는 맛을 살린다). 상태가 바뀔 때만 fadeTime 동안 옮겨 간다.
         if (mode == Mode.Idle) outlineLevel = want;
         else outlineLevel = Mathf.MoveTowards(outlineLevel, want, Mathf.Max(.01f, idlePeak / baseIntensity) * dt / fadeTime);
         outlineLights.Set(outlineLevel);
 
-        float cometWant = mode == Mode.Disabled || comets.Length == 0 ? 0f : cometLevel / baseIntensity;
+        float cometWant = mode == Mode.Disabled || comets.Length == 0 ? 0f : cometLevel / baseIntensity * (calm > 0f ? Mathf.Lerp(1f, ScreenReadability.DistantCometScale, calm) : 1f);
         cometShown = Mathf.MoveTowards(cometShown, cometWant, Mathf.Max(.01f, cometLevel / baseIntensity) * dt / fadeTime);
         cometLights.Set(cometShown);
         if (cometShown > 0f && loopLength > 1e-3f && cometPath.Length >= 2)

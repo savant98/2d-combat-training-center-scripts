@@ -35,6 +35,19 @@ public sealed class WaveRoomBackground : MonoBehaviour, IDungeonRoomBackdrop
     public GameObject SelectedPrefab => selectedPrefab;
     public bool FitsRoom => fitToRoom;
 
+    /// <summary>Play 중 통창 비교용(저장하지 않는다). null이면 Wave 데이터(hideObservationWindow)·벽면 방 규칙을 따르고, false면 시차 배경 방에서도 통창을 통째로 숨긴다.</summary>
+    public static bool? ObservationWindowOverride { get; private set; }
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetOverride() => ObservationWindowOverride = null;
+
+    /// <summary>통창 비교 값을 바꾸고 지금 켜진 모든 방 배경에 바로 반영한다.</summary>
+    public static void SetObservationWindowOverride(bool? value)
+    {
+        ObservationWindowOverride = value;
+        foreach (var background in FindObjectsByType<WaveRoomBackground>(FindObjectsSortMode.None)) background.RefreshRoomWindow();
+    }
+
     public static bool IsBackground(GameObject prefab)
         => prefab != null && prefab.GetComponentsInChildren<Renderer>(true).Length > 0
             && prefab.GetComponentsInChildren<Camera>(true).Length == 0
@@ -80,7 +93,7 @@ public sealed class WaveRoomBackground : MonoBehaviour, IDungeonRoomBackdrop
         // 통창의 위치·크기는 WaveRoomBackdrop이 꺼진 동안에도 맞춰 두고, 그동안 건너뛴 둘레 케이블은 다시 켤 때 맞춘다.
         if (observationWindow != null)
         {
-            bool show = observationWindowActive && !data.hideObservationWindow;
+            bool show = observationWindowActive && (ObservationWindowOverride ?? !data.hideObservationWindow);
             if (observationWindow.activeSelf != show)
             {
                 observationWindow.SetActive(show);
@@ -199,7 +212,7 @@ public sealed class WaveRoomBackground : MonoBehaviour, IDungeonRoomBackdrop
     private void RefreshRoomWindow()
     {
         if (observationWindow == null) return;
-        bool show = roomWall == null && observationWindowActive && (data == null || !data.hideObservationWindow);
+        bool show = roomWall == null && observationWindowActive && (ObservationWindowOverride ?? (data == null || !data.hideObservationWindow));
         if (observationWindow.activeSelf == show) return;
         observationWindow.SetActive(show);
         if (show) GetComponent<WaveRoomBackdrop>()?.RefreshWindow();

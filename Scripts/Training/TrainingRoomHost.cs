@@ -34,6 +34,8 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
     private bool stagedDungeon;
     // 지금 방 내용을 만들 때 WaveData가 고른 방 배경(WaveDataSO.roomBackdrop). Tool에서 바꾼 뒤 같은 WaveData로 다시 들어오면 방 내용을 새로 만든다.
     private GameObject contentBackdrop;
+    /// <summary>지금 방 내용에 넣은 방 배경 교체 Prefab(WaveDataSO.roomBackdrop). null이면 Room 원본 배경(TrainingBackdrop)이다.</summary>
+    public GameObject ContentBackdrop => contentBackdrop;
     private const string BackdropName = "TrainingBackdrop";
 
     // ── 입장 로딩 ──
