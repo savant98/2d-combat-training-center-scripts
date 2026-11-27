@@ -1083,6 +1083,7 @@ public partial class WaveEditorWindow : EditorWindow
                         : "이 커스텀 Room은 코스 카메라·마무리 연출을 유지하면서, 일반 Platform으로 둘러싸인 연결 공간에 카메라·배경·통창을 자동으로 맞춥니다. 위 설정은 실내 치수 연출을 가진 Room(관리자 평가)에서만 쓰입니다.", MessageType.None);
                 }
                 else EditorGUILayout.HelpBox("일반 Room은 일반 Platform으로 둘러싸인 연결 공간에 카메라·배경·통창을 자동으로 맞춥니다. OneWayPlatform은 경계를 막지 않습니다. 외부로 열렸거나 공간을 계산할 수 없으면 저장된 실내 범위를 사용합니다.", MessageType.None);
+                EditorGUILayout.PropertyField(serialized.FindProperty("useRoomBorderBlinder"), new GUIContent("방 사방 3칸 외벽·검정 블라인더 사용", "던전이 아닌 일반 Wave에서도 전투 훈련처럼 상하좌우 3칸 외벽을 카메라 범위에 포함하고 사방 검정색 블라인더를 적용합니다."));
                 GUILayout.Space(6);
                 GUILayout.Label("모든 Wave의 기본 배경", EditorStyles.boldLabel);
                 int backgroundIndex = backgrounds.IndexOf(pendingBackground) + 1;

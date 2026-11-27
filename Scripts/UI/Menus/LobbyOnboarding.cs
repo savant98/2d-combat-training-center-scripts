@@ -4,6 +4,8 @@ using UnityEngine;
 
 /// <summary>
 /// Lobby 안내(2026-11-14). Nightmare에게 패배해 Lobby에 처음 온 훈련생에게 휴대용 단말기와 훈련 메뉴를 알려 준다.
+///   2026-11-26부터 최초 시작 도입부(Nightmare)는 기본으로 꺼져 있다(GameEventManager.IsFirstStartIntroEnabled). 새 세이브도 MainScene이 시작될 때
+///   최초 시작 표시가 지워지고(NightmareIntroSequence.SkipFirstStart) 곧바로 진짜 Lobby에 도착해 이 안내를 받는다.
 /// - 순서(사용자 요청): 오른쪽 위 단말기 아이콘 → 환영 메일 도착(아이콘에 느낌표) → 단말기 여는 키 안내 → 메일 확인
 ///   → 단말기를 닫으면 화살표로 훈련 메뉴가 있는 곳을 가리킨다 → 훈련 메뉴를 열면 끝.
 /// - 메일이 도착하고 그 메일을 확인할 때까지는 해야 할 한 가지만 남긴다(사용자 요청: "단말기만 누르도록 포커싱(나머지 주변 어둡게)해 주고

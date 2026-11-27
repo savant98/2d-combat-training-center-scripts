@@ -233,6 +233,16 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
                     ""priority"": 0
                 },
                 {
+                    ""name"": ""ToggleAutoAim"",
+                    ""type"": ""Button"",
+                    ""id"": ""f05e64c1-5f3e-41c2-b9d3-0b82b726f58d"",
+                    ""expectedControlType"": ""Button"",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": false,
+                    ""priority"": 0
+                },
+                {
                     ""name"": ""Escape"",
                     ""type"": ""Button"",
                     ""id"": ""3970c5ed-7365-44de-be6f-a404001077f9"",
@@ -252,6 +262,17 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
                     ""processors"": """",
                     ""groups"": ""Keyboard&Mouse"",
                     ""action"": ""StoreSkill"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""fd1c826e-6354-48e6-b705-ada4ab31e699"",
+                    ""path"": ""<Keyboard>/v"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": ""Keyboard&Mouse"",
+                    ""action"": ""ToggleAutoAim"",
                     ""isComposite"": false,
                     ""isPartOfComposite"": false
                 },
@@ -1314,6 +1335,7 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
         m_Player_Dash = m_Player.FindAction("Dash", throwIfNotFound: true);
         m_Player_SwapWeapon = m_Player.FindAction("SwapWeapon", throwIfNotFound: true);
         m_Player_StoreSkill = m_Player.FindAction("StoreSkill", throwIfNotFound: true);
+        m_Player_ToggleAutoAim = m_Player.FindAction("ToggleAutoAim", throwIfNotFound: true);
         m_Player_Escape = m_Player.FindAction("Escape", throwIfNotFound: true);
         // UI
         m_UI = asset.FindActionMap("UI", throwIfNotFound: true);
@@ -1422,6 +1444,7 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
     private readonly InputAction m_Player_Dash;
     private readonly InputAction m_Player_SwapWeapon;
     private readonly InputAction m_Player_StoreSkill;
+    private readonly InputAction m_Player_ToggleAutoAim;
     private readonly InputAction m_Player_Escape;
     /// <summary>
     /// Provides access to input actions defined in input action map "Player".
@@ -1490,6 +1513,10 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
         /// Provides access to the underlying input action "Player/StoreSkill".
         /// </summary>
         public InputAction @StoreSkill => m_Wrapper.m_Player_StoreSkill;
+        /// <summary>
+        /// Provides access to the underlying input action "Player/ToggleAutoAim".
+        /// </summary>
+        public InputAction @ToggleAutoAim => m_Wrapper.m_Player_ToggleAutoAim;
         /// <summary>
         /// Provides access to the underlying input action "Player/Escape".
         /// </summary>
@@ -1562,6 +1589,9 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
             @StoreSkill.started += instance.OnStoreSkill;
             @StoreSkill.performed += instance.OnStoreSkill;
             @StoreSkill.canceled += instance.OnStoreSkill;
+            @ToggleAutoAim.started += instance.OnToggleAutoAim;
+            @ToggleAutoAim.performed += instance.OnToggleAutoAim;
+            @ToggleAutoAim.canceled += instance.OnToggleAutoAim;
             @Escape.started += instance.OnEscape;
             @Escape.performed += instance.OnEscape;
             @Escape.canceled += instance.OnEscape;
@@ -1618,6 +1648,9 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
             @StoreSkill.started -= instance.OnStoreSkill;
             @StoreSkill.performed -= instance.OnStoreSkill;
             @StoreSkill.canceled -= instance.OnStoreSkill;
+            @ToggleAutoAim.started -= instance.OnToggleAutoAim;
+            @ToggleAutoAim.performed -= instance.OnToggleAutoAim;
+            @ToggleAutoAim.canceled -= instance.OnToggleAutoAim;
             @Escape.started -= instance.OnEscape;
             @Escape.performed -= instance.OnEscape;
             @Escape.canceled -= instance.OnEscape;
@@ -2019,6 +2052,13 @@ public partial class @PlayerInputActions: IInputActionCollection2, IDisposable
         /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
         /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
         void OnStoreSkill(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "ToggleAutoAim" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnToggleAutoAim(InputAction.CallbackContext context);
         /// <summary>
         /// Method invoked when associated input action "Escape" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
         /// </summary>

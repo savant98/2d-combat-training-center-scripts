@@ -40,6 +40,17 @@ public sealed class FocusDimGraphic : MaskableGraphic
         raycastTarget = false;
     }
 
+    /// <summary>화면 덮개 색·번짐·테두리를 용도에 맞게 조정한다(기본 직렬화 값은 유지하므로 Lobby 안내는 영향 없다).</summary>
+    public void ConfigureStyle(float newDimAlpha, Color newDimColor, float newFeather, float newRimWidth, Color newRimColor)
+    {
+        dimAlpha = Mathf.Clamp01(newDimAlpha);
+        dimColor = newDimColor;
+        feather = Mathf.Max(0f, newFeather);
+        rimWidth = Mathf.Max(0f, newRimWidth);
+        rimColor = newRimColor;
+        SetVerticesDirty();
+    }
+
     /// <summary>대상만 밝게 남기고 어둡게 덮는다. padding은 대상 둘레에 더 남기는 여백(화면 단위)이다.</summary>
     public void Focus(RectTransform newTarget, Vector2 newPadding)
     {

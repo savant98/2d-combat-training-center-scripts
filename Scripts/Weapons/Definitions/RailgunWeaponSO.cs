@@ -280,11 +280,12 @@ public class RailgunWeaponSO : WeaponBaseSO
     }
 
     // 기본 공격의 조준 방향. 보는 쪽과 어긋나면(다른 자리의 지난 값) 보는 쪽 수평.
+    // 자동 조준 시야(2026-11-26): 빛줄기를 막는 지형(platformLayer) 뒤의 적은 고르지 않는다. 벽 판정이 반지름 0 광선이므로 시야도 직선(반지름 0)으로 본다.
     private bool TryGetAim(CharacterController2D controller, PlayerRailgunAim aim, out Vector2 direction)
     {
         direction = default;
         return controller is PlayerController player && player.TryGetRangedAim(
-            aim != null ? aim.transform.position : player.transform.position, maxRange, damageMask, out direction, out _);
+            aim != null ? aim.transform.position : player.transform.position, maxRange, damageMask, platformLayer, 0f, out direction, out _);
     }
 
     private static Vector2 ResolveDirection(CharacterController2D controller)

@@ -1,4 +1,4 @@
-public enum Button { Jump, Dash, Attack, Gear, Interact, SecondaryWeapon, SwapWeapon, Escape }
+public enum Button { Jump, Dash, Attack, Gear, Interact, SecondaryWeapon, SwapWeapon, Escape, ToggleAutoAim }
 public enum ButtonState { None, Pressed, Held, Released }
 public enum PlayerState
 {

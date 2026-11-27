@@ -179,6 +179,30 @@ public class PlayerWeaponAbility : PlayerAbility
     private int chargingTargetStage = 0;
     private float gearTimer = 0f;
     private bool isGearHeld = false;
+    // 대기(Waiting) 중 기어 키를 다시 눌러 다음 단계 충전을 바로 시작했는지(빠른 장전, 2026-11-26 기초 훈련 빠른 장전 수업).
+    // 대기 중 다시 누른 분기에서만 켜고, 처음 1단계를 시작하거나 누른 채 기다려 자동으로 넘어가거나 기어가 풀리면 끈다.
+    private bool gearQuickCharged = false;
+
+    // 기어 상태의 읽기 전용 공개 값과 알림(2026-11-26). 기초 훈련 안내(TutorialWaveGuide)가 리플렉션 대신 읽고 구독한다.
+    // GearState 열거형은 검증 도구가 NonPublic 중첩 형식으로 찾으므로 공개하지 않고 bool·int 값으로만 내보낸다.
+    /// <summary>기어 단계를 충전하는 중인지.</summary>
+    public bool IsGearCharging => gearState == GearState.Charging;
+    /// <summary>기어 단계가 준비되어 발동·저장·다음 단계 입력을 기다리는 중인지.</summary>
+    public bool IsGearWaiting => gearState == GearState.Waiting;
+    /// <summary>준비된 기어 단계(대기 중이면 1~3, 아니면 0).</summary>
+    public int GearStage => gearState == GearState.Waiting ? gearStage : 0;
+    /// <summary>지금 충전 중이거나 준비된 단계가 빠른 장전(대기 중 다시 누름)으로 올라온 것인지.</summary>
+    public bool IsGearQuickCharged => gearState != GearState.Inactive && gearQuickCharged;
+    /// <summary>현재 스킬 게이지.</summary>
+    public float SkillGaugeValue => skillGauge;
+    /// <summary>지금 실행 중이거나 마지막으로 고른 무기(기본 공격·기어 기술·보조 무기).</summary>
+    public WeaponBaseSO SelectedWeaponView => selectedWeapon;
+    /// <summary>무기의 남은 재사용 대기 시간(초, 없으면 0). 기초 훈련 빠른 장전 수업이 '재사용 대기'를 안내할 때 읽는다.</summary>
+    public float GetSkillCooldownRemaining(WeaponBaseSO weapon) => GetWeaponCooldownRemaining(weapon);
+    /// <summary>빠른 장전으로 다음 단계 충전을 시작했다(목표 단계). 누른 채 기다려 자동으로 넘어간 경우에는 알리지 않는다.</summary>
+    public event System.Action<int> GearQuickCharged;
+    /// <summary>기어 기술이 실제로 시작됐다(무기, 단계, 그 단계에 빠른 장전으로 도달했는지).</summary>
+    public event System.Action<WeaponBaseSO, int, bool> GearSkillStarted;
 
     // Gear·무기 변경의 몸 둘레 표시. DashAbility처럼 실행 중에 Player 아래에 만든다.
     private PlayerGearVisual gearVisual;
@@ -660,6 +684,8 @@ public class PlayerWeaponAbility : PlayerAbility
 
         PublishSkillGauge();
 
+        // CancelGear가 단계와 빠른 장전 표시를 지우기 전에 알린다(기초 훈련 빠른 장전 수업의 완료 판정).
+        GearSkillStarted?.Invoke(gearWeapon, gearStage, gearQuickCharged);
         CancelGear(selectedWeapon is HandCannonWeaponSO
             ? PlayerGearVisual.EndReason.Silent : PlayerGearVisual.EndReason.Fired);
         StartWindup();
@@ -1189,6 +1215,9 @@ public class PlayerWeaponAbility : PlayerAbility
 
             isGearHeld = true;
             StartChargingGear(gearStage + 1);
+            // 빠른 장전: 남은 대기 시간을 건너뛰고 다음 단계 충전을 시작했다(StartChargingGear가 끈 표시를 여기서만 켠다).
+            gearQuickCharged = true;
+            GearQuickCharged?.Invoke(chargingTargetStage);
         }
     }
 
@@ -1211,6 +1240,8 @@ public class PlayerWeaponAbility : PlayerAbility
 
     private void StartChargingGear(int targetStage)
     {
+        // 새 충전은 빠른 장전이 아닌 것으로 시작한다. 대기 중 다시 누른 분기(HandleGearPressed)만 호출 뒤에 다시 켠다.
+        gearQuickCharged = false;
         chargingTargetStage = Mathf.Clamp(targetStage, 1, 3);
         gearTimer = 0f;
         gearState = GearState.Charging;
@@ -1308,6 +1339,7 @@ public class PlayerWeaponAbility : PlayerAbility
         chargingTargetStage = 0;
         gearTimer = 0f;
         isGearHeld = false;
+        gearQuickCharged = false;
 
         // Gear 상태에서 눌렀던 Normal 입력이
         // Gear 해제 후 기본공격으로 발동되는 것을 방지

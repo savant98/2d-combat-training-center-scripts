@@ -1,16 +1,20 @@
 using System;
 using UnityEngine;
 
+// Wave 데이터에는 정수 값으로 저장되고 Wave 격자 편집기는 순번으로 읽으므로 새 값은 맨 끝에만 붙인다.
 public enum TutorialAction
 {
-    None, Move, Jump, DoubleJump, Dash, SwapWeapon, SecondaryWeapon, Shield, Break, Gear, Platforms, Trap, ShieldBreakGear, SkillStorage, Attack
+    None, Move, Jump, DoubleJump, Dash, SwapWeapon, SecondaryWeapon, Shield, Break, Gear, Platforms, Trap, ShieldBreakGear, SkillStorage, Attack,
+    GearQuickCharge = 15
 }
 
+// 11은 지운 옛 대상(VideoWall)의 값이라 다시 쓰지 않는다. 여러 HUD 칸을 함께 강조하는 대상은 16부터 명시 값으로 둔다.
 public enum TutorialFocusTarget
 {
     Panel, GridArea, Goal, Platform, Player, PrimaryWeapon, SecondaryWeapon,
     GearOne, GearTwo, GearThree, SkillGauge,
-    Enemy = 12, EnemyShield, EnemyBreak, LessonIcon
+    Enemy = 12, EnemyShield, EnemyBreak, LessonIcon,
+    GearStages = 16, WeaponSet = 17
 }
 
 public enum TutorialStepIcon { None, Attack, Shield, Gear, Break, Gauge, GearReady, Storage, Swap, Secondary }

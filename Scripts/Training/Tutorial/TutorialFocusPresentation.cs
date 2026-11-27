@@ -21,9 +21,12 @@ internal sealed class TutorialFocusPresentation
     private TutorialGoal goal;
     private TerminalEquipmentGlyph glyph;
     private RectTransform glyphRoot;
+    private TutorialCardGraphic glyphTile;
+    private TutorialCardGraphic keyChip;
     private TextMeshProUGUI keyLabel;
     private readonly TMP_FontAsset font;
     private string bindingText;
+    private Color accentColor = new Color(1f, .72f, .3f, 1f);
 
     public TutorialFocusPresentation(RectTransform root, TMP_FontAsset labelFont)
     {
@@ -80,6 +83,9 @@ internal sealed class TutorialFocusPresentation
                 EnsureGlyph(action);
                 target = glyphRoot;
                 return true;
+            case TutorialFocusTarget.GearStages:
+            case TutorialFocusTarget.WeaponSet:
+                return ProjectHudUnion(step.target);
             default:
                 return ProjectRect(HudRect(step.target));
         }
@@ -92,42 +98,50 @@ internal sealed class TutorialFocusPresentation
             glyphRoot = new GameObject("TutorialLessonIconGroup", typeof(RectTransform)).GetComponent<RectTransform>();
             glyphRoot.SetParent(parent, false);
             glyphRoot.anchorMin = glyphRoot.anchorMax = glyphRoot.pivot = new Vector2(.5f, .5f);
-            glyphRoot.sizeDelta = new Vector2(430f, 220f);
+            glyphRoot.sizeDelta = new Vector2(430f, 232f);
+
+            // 어두운 둥근 아이콘 타일(기본 무장 소개 영상 SkillCard 타일 언어)
+            var tileRect = new GameObject("TutorialLessonIconTile", typeof(RectTransform), typeof(CanvasRenderer), typeof(TutorialCardGraphic)).GetComponent<RectTransform>();
+            tileRect.SetParent(glyphRoot, false);
+            tileRect.anchorMin = tileRect.anchorMax = tileRect.pivot = new Vector2(.5f, .5f);
+            tileRect.anchoredPosition = new Vector2(0f, 36f);
+            tileRect.sizeDelta = new Vector2(138f, 138f);
+            glyphTile = tileRect.GetComponent<TutorialCardGraphic>();
+
             glyph = new GameObject("TutorialLessonIcon", typeof(RectTransform), typeof(CanvasRenderer), typeof(TerminalEquipmentGlyph)).GetComponent<TerminalEquipmentGlyph>();
-            glyph.rectTransform.SetParent(glyphRoot, false);
+            glyph.rectTransform.SetParent(tileRect, false);
             glyph.rectTransform.anchorMin = glyph.rectTransform.anchorMax = glyph.rectTransform.pivot = new Vector2(.5f, .5f);
-            glyph.rectTransform.anchoredPosition = new Vector2(0f, 32f);
-            glyph.rectTransform.sizeDelta = new Vector2(120f, 120f);
+            glyph.rectTransform.anchoredPosition = Vector2.zero;
+            glyph.rectTransform.sizeDelta = new Vector2(96f, 96f);
+
+            var chipRect = new GameObject("CurrentBindingChip", typeof(RectTransform), typeof(CanvasRenderer), typeof(TutorialCardGraphic)).GetComponent<RectTransform>();
+            chipRect.SetParent(glyphRoot, false);
+            chipRect.anchorMin = chipRect.anchorMax = chipRect.pivot = new Vector2(.5f, .5f);
+            chipRect.anchoredPosition = new Vector2(0f, -74f);
+            chipRect.sizeDelta = new Vector2(400f, 56f);
+            keyChip = chipRect.GetComponent<TutorialCardGraphic>();
+
             keyLabel = new GameObject("CurrentBinding", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI)).GetComponent<TextMeshProUGUI>();
-            keyLabel.rectTransform.SetParent(glyphRoot, false);
+            keyLabel.rectTransform.SetParent(chipRect, false);
             keyLabel.rectTransform.anchorMin = keyLabel.rectTransform.anchorMax = keyLabel.rectTransform.pivot = new Vector2(.5f, .5f);
-            keyLabel.rectTransform.anchoredPosition = new Vector2(0f, -72f);
-            keyLabel.rectTransform.sizeDelta = new Vector2(420f, 60f);
+            keyLabel.rectTransform.anchoredPosition = Vector2.zero;
+            keyLabel.rectTransform.sizeDelta = new Vector2(376f, 50f);
             keyLabel.font = font;
             keyLabel.alignment = TextAlignmentOptions.Center;
             keyLabel.enableAutoSizing = true;
-            keyLabel.fontSizeMin = 18f;
-            keyLabel.fontSizeMax = 28f;
+            keyLabel.fontSizeMin = 16f;
+            keyLabel.fontSizeMax = 24f;
             keyLabel.raycastTarget = false;
         }
-        TerminalEquipmentGlyph.Glyph kind;
-        switch (action)
-        {
-            case TutorialAction.Jump:
-            case TutorialAction.DoubleJump: kind = TerminalEquipmentGlyph.Glyph.Jump; break;
-            case TutorialAction.Dash: kind = TerminalEquipmentGlyph.Glyph.Dash; break;
-            case TutorialAction.SwapWeapon: kind = TerminalEquipmentGlyph.Glyph.Swap; break;
-            case TutorialAction.SecondaryWeapon: kind = TerminalEquipmentGlyph.Glyph.Secondary; break;
-            case TutorialAction.Gear: kind = TerminalEquipmentGlyph.Glyph.Gear; break;
-            case TutorialAction.Shield: kind = TerminalEquipmentGlyph.Glyph.Shield; break;
-            case TutorialAction.Break: kind = TerminalEquipmentGlyph.Glyph.Break; break;
-            default: kind = TerminalEquipmentGlyph.Glyph.Move; break;
-        }
-        glyph.Configure(kind, new Color(1f, .72f, .3f));
+        TerminalEquipmentGlyph.Glyph kind = TutorialGuideTheme.DefaultGlyph(action);
+        if (glyphTile != null) glyphTile.ConfigureCard(26f, TutorialGuideTheme.TileFill, accentColor, 3f, accentColor, 0f, 0.45f, 12f, 0.08f);
+        if (keyChip != null) keyChip.ConfigureCard(28f, TutorialGuideTheme.InkFill, new Color(accentColor.r, accentColor.g, accentColor.b, 0.55f), 2f, accentColor, 0f, 0.35f, 8f, 0.06f);
+        glyph.Configure(kind, accentColor, 3.4f);
         glyphRoot.gameObject.SetActive(true);
         keyLabel.text = bindingText;
     }
 
+    public void SetAccent(Color accent) => accentColor = accent;
     public void SetBindingText(string value) { bindingText = value; if (keyLabel != null) keyLabel.text = value; }
 
     private RectTransform HudRect(TutorialFocusTarget kind)
@@ -146,6 +160,53 @@ internal sealed class TutorialFocusPresentation
         };
         var slot = name != null ? ReadField(hud, name) : null;
         return (ReadField(slot, "icon") as UnityEngine.UI.Image)?.rectTransform;
+    }
+
+    // 여러 HUD 칸을 한 번에 강조한다(GearStages = 기어 1~3단계, WeaponSet = 기본·기어 1~3·보조). 구멍은 하나이므로
+    // 같은 HUD Canvas에 있는 칸들의 world 모서리 합집합을 proxy에 투영한다. 칸이 잠겨 아이콘이 꺼져 있어도 GameObject는 켜져 있다.
+    private static readonly TutorialFocusTarget[] GearStageSlots = { TutorialFocusTarget.GearOne, TutorialFocusTarget.GearTwo, TutorialFocusTarget.GearThree };
+    private static readonly TutorialFocusTarget[] WeaponSetSlots =
+        { TutorialFocusTarget.PrimaryWeapon, TutorialFocusTarget.GearOne, TutorialFocusTarget.GearTwo, TutorialFocusTarget.GearThree, TutorialFocusTarget.SecondaryWeapon };
+    private readonly Vector3[] slotCorners = new Vector3[4];
+
+    private bool ProjectHudUnion(TutorialFocusTarget kind)
+    {
+        Canvas sourceCanvas = null;
+        Vector3 min = new Vector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+        Vector3 max = new Vector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+        bool any = false;
+        foreach (var slot in kind == TutorialFocusTarget.GearStages ? GearStageSlots : WeaponSetSlots)
+        {
+            var rect = SlotFrame(HudRect(slot));
+            if (rect == null || !rect.gameObject.activeInHierarchy) continue;
+            var slotCanvas = rect.GetComponentInParent<Canvas>();
+            if (any && slotCanvas != sourceCanvas) continue;   // 다른 Canvas의 칸은 좌표계가 달라 합치지 않는다
+            sourceCanvas = slotCanvas;
+            rect.GetWorldCorners(slotCorners);
+            foreach (var corner in slotCorners) { min = Vector3.Min(min, corner); max = Vector3.Max(max, corner); }
+            any = true;
+        }
+        if (!any) return false;
+        bool world = sourceCanvas != null && sourceCanvas.renderMode == RenderMode.WorldSpace;
+        Camera sourceCamera = sourceCanvas != null && sourceCanvas.renderMode != RenderMode.ScreenSpaceOverlay
+            ? sourceCanvas.worldCamera != null ? sourceCanvas.worldCamera : Camera.main : null;
+        if (world && sourceCamera == null) return false;
+        float z = (min.z + max.z) * .5f;
+        corners[0] = new Vector3(min.x, min.y, z);
+        corners[1] = new Vector3(min.x, max.y, z);
+        corners[2] = new Vector3(max.x, max.y, z);
+        corners[3] = new Vector3(max.x, min.y, z);
+        return ProjectCorners(sourceCamera, world);
+    }
+
+    // 칸 아이콘(기어 50×50 등) 대신 그 칸의 배경(GearNBackground 100×100 등)을 쓴다. 부모가 칸보다 훨씬 큰 묶음이면 아이콘 그대로 쓴다.
+    private static RectTransform SlotFrame(RectTransform icon)
+    {
+        if (icon == null) return null;
+        var frame = icon.parent as RectTransform;
+        if (frame == null) return icon;
+        Vector2 own = icon.rect.size, outer = frame.rect.size;
+        return outer.x <= Mathf.Max(own.x, 1f) * 2.5f && outer.y <= Mathf.Max(own.y, 1f) * 2.5f ? frame : icon;
     }
 
     private static object ReadField(object value, string name) => value != null

@@ -7,6 +7,8 @@ public class OptionSettingsService : MonoBehaviour
 {
     public static OptionSettingsService Instance { get; private set; }
     public OptionSettings Current { get; private set; }
+    /// <summary>전환 키로 자동 조준을 바꿨을 때 알린다(켜짐 여부, settings.json 저장 성공 여부). 화면 알림은 UI가 구독한다.</summary>
+    public event System.Action<bool, bool> RangedAutoAimToggled;
     private OptionSettings pendingDisplay;
     private Coroutine displayRoutine;
 
@@ -53,6 +55,23 @@ public class OptionSettingsService : MonoBehaviour
             SoundManager.Instance.SetSFXVolume(Current.sfxVolume);
         }
         if (FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.ApplyAccessibility(Current.bloom, Current.flash);
+    }
+
+    /// <summary>
+    /// 자동 조준 켜기·끄기를 뒤집어 바로 적용하고 settings.json에도 저장한다(설정 창의 자동 조준 행과 같은 값).
+    /// 저장에 실패해도 이번 실행에는 적용하고, 다음 Scene 전환 때 저장값으로 돌아간다. 새 값을 돌려준다.
+    /// </summary>
+    public bool ToggleRangedAutoAim()
+    {
+        var stored = DataManager.Instance.Options.Copy();
+        bool enabled = !(Current != null ? Current.rangedAutoAim : stored.rangedAutoAim);
+        stored.rangedAutoAim = enabled;
+        bool saved = DataManager.Instance.SaveOptions(stored);
+        var applied = Current != null ? Current.Copy() : stored.Copy();
+        applied.rangedAutoAim = enabled;
+        Current = applied;
+        RangedAutoAimToggled?.Invoke(enabled, saved);
+        return enabled;
     }
 
     public static void ApplyTiming(OptionSettings settings)

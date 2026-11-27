@@ -45,6 +45,9 @@ public class OptionMenu : SelectableMenuUI
     private const int AutoAimRow = 25;
     private const int OpenKeysRow = 26;
     private const int BackFromKeysRow = 27;
+    // 자동 조준 켜기·끄기 전환 키(2026-11-26 추가). optionRows 끝(28)에 붙여 기존 행 번호와 저장 구조를 바꾸지 않는다.
+    // Prefab 행(KeyScroll 목록 끝의 Setting28)은 tools/Unity/OptionMenuAutoAimToggleSetup.cs가 만든다.
+    private const int AutoAimToggleRow = 28;
     private static readonly Guid StoreSkillBindingId = new Guid("ed98d38e-dbb6-49ad-a536-196d7492c04c");
     private OptionSettings saved, draft;
     private bool showingKeys;
@@ -57,10 +60,10 @@ public class OptionMenu : SelectableMenuUI
     {
         new[] { 20, 21, 0, 1, 22, 2, 3, 4, 5 },
         new[] { 6, 7, 8 },
-        new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, StoreSkillRow }
+        new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, StoreSkillRow, AutoAimToggleRow }
     };
     private static readonly int[] ControlRows = { ControlModeRow, AutoAimRow, OpenKeysRow };
-    private static readonly int[] KeyDetailRows = { BackFromKeysRow, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, StoreSkillRow };
+    private static readonly int[] KeyDetailRows = { BackFromKeysRow, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, StoreSkillRow, AutoAimToggleRow };
     private int[] CurrentRows => page == 2 ? (showingKeys ? KeyDetailRows : ControlRows) : PageRows[page];
     private UnityEngine.UI.ScrollRect CurrentScroll => page == 0 ? displayScroll : page == 2 && showingKeys ? controlsScroll : null;
     private int RowCount => CurrentRows.Length;
@@ -926,6 +929,7 @@ public class OptionMenu : SelectableMenuUI
         "SecondaryWeapon" => "보조 무기",
         "Interact" => "상호작용",
         "SwapWeapon" => "무장 전환",
+        "ToggleAutoAim" => "자동 조준 켜기 · 끄기",
         _ => row.action
     };
 

@@ -158,6 +158,8 @@ public class PlayerHUD : MonoBehaviour
 
     /// <summary>체력 바 바로 위의 해머 방어막 바(Start에서 Resources/UI/PlayerShieldBar로 만든다, 없으면 null). 검증이 읽기만 한다.</summary>
     public PlayerShieldBar ShieldBar { get; private set; }
+    /// <summary>무기·보조무기 아이콘 왼쪽 아래 상시 자동 조준 배지·플레이어 주변 토스트·옵틱 전환음 위젯.</summary>
+    public AutoAimHudWidget AutoAimWidget { get; private set; }
 
     private Material hpBarMaterial;
     private Material skillGaugeBarMaterial;
@@ -176,6 +178,7 @@ public class PlayerHUD : MonoBehaviour
     private float attackRejectionUntil;
     private const float AttackRejectionDuration = 0.95f;
     private static readonly Color AttackRejectionColor = new Color32(255, 100, 98, 255);
+    // 자동 조준 ON/OFF 상시 배지·플레이어 주변 모드 토스트·옵틱 전환음은 AutoAimHudWidget(Resources/UI/AutoAimHudWidget)이 담당한다.
 
     private void Awake()
     {
@@ -201,6 +204,19 @@ public class PlayerHUD : MonoBehaviour
             ShieldBar = shieldBar;
             shieldBar.Configure(hpBar.rectTransform);
         }
+
+        // 무기·보조무기 아이콘 왼쪽 아래 자동 조준 상시 배지 + 옵틱 딸깍음 + 플레이어 주변 모드 토스트(MainScene 무수정).
+        var autoAimPrefab = Resources.Load<GameObject>(AutoAimHudWidget.ResourcePath);
+        if (autoAimPrefab != null && Instantiate(autoAimPrefab, transform).TryGetComponent<AutoAimHudWidget>(out var widget))
+            AutoAimWidget = widget;
+        else
+        {
+            var node = new GameObject("AutoAimHudWidget", typeof(RectTransform));
+            node.layer = gameObject.layer;
+            node.transform.SetParent(transform, false);
+            AutoAimWidget = node.AddComponent<AutoAimHudWidget>();
+        }
+        AutoAimWidget.Configure(hudCanvasGroup, gearStage3Slot?.cooldownText?.font);
     }
 
     private void OnDisable()
@@ -290,6 +306,9 @@ public class PlayerHUD : MonoBehaviour
         attackRejectionText.alpha = 1f;
         attackRejectionText.gameObject.SetActive(true);
     }
+
+    // 회귀 테스트·외부 호출 호환용 전달자(실제 표시는 AutoAimHudWidget이 담당한다).
+    private void ShowAutoAimToggle(bool enabled, bool saved) => AutoAimWidget?.OnAutoAimToggled(enabled, saved);
 
     internal static void SetResolveRequirement(ref TextMeshProUGUI label, RectTransform icon, TMP_FontAsset font, int stacks, int required)
     {
@@ -385,6 +404,7 @@ public class PlayerHUD : MonoBehaviour
     {
         hudCanvasGroup.alpha = isVisible ? 1f : 0f;
         if (!isVisible && attackRejectionText != null) attackRejectionText.gameObject.SetActive(false);
+        if (!isVisible && AutoAimWidget != null) AutoAimWidget.HideToast();
     }
     public void UpdateWeaponCooldowns(
     float normalRemaining,

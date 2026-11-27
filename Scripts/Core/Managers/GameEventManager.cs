@@ -25,6 +25,10 @@ public enum GameEventId
 /// - 이미 끝난 해금은 세이브에 남고, 다음 접속에서 시설이 바로 가동 상태로 선다.
 /// - 각개 전투 엘리베이터(2026-11-20): 1~7 훈련을 모두 수료하고 Lobby로 돌아오면 천장 해치가 열리고 엘리베이터가 내려오는 연출(FieldElevator)을 한 번 재생한다.
 ///   시설 해금과 실행자·조건이 달라 elevatorEvent 칸에 따로 둔다. 연출 동안 Lobby 카메라의 렌즈를 넓혀 천장 해치와 위층 바닥을 한 화면에 담는다.
+/// - 최초 시작 도입부 끄기(2026-11-26, 사용자 요청 "Intro컷씬에서 Nightmare나오는 부분 삭제(의미없다고 피드백받음). 화면 노이즈부분부터
+///   Nightmare가 나오는 부분까지 통째로 제거. 완전 삭제는 하지 말고, 해당 이벤트를 비활성화"): playFirstStartIntro(기본 꺼짐)가 꺼져 있으면
+///   도입부(도착 노이즈 → 가짜 Lobby → 경로 이탈 경고 → Nightmare 방·등장·전투·패배 → 단말기 → Lobby 이동)를 시작하지 않고,
+///   NightmareIntroSequence.SkipFirstStart로 정리만 한 뒤 기존 세이브처럼 진짜 Lobby에서 시작한다. 연출 코드·에셋·MainScene 배치는 그대로 남긴다.
 /// MainScene의 GameManager 개체에 붙는다. UI는 읽기 전용 상태만 본다.
 /// </summary>
 [DisallowMultipleComponent]
@@ -61,6 +65,11 @@ public sealed class GameEventManager : MonoBehaviour
     [SerializeField, Min(0f), Tooltip("연출이 끝나고 카메라가 Player에게 돌아오기 전 머무는 시간")] private float cameraHoldTime = .6f;
     [SerializeField, Tooltip("카메라가 비출 자리 = 시설 위치 + 이 값")] private Vector2 focusOffset = new Vector2(0f, 1.2f);
 
+    // 2026-11-26: 기본값 false. MainScene에는 이 값이 저장되어 있지 않아 Scene을 고치지 않아도 꺼진 상태로 읽힌다.
+    [Header("최초 시작 도입부(2026-11-26)")]
+    [SerializeField, Tooltip("켜면 최초 시작 세이브가 도입부(도착 노이즈 → 가짜 Lobby → 경로 이탈 경고 → Nightmare 방·등장·전투·패배 → 단말기 → Lobby)로 시작한다. 끄면(기본) 도입부를 건너뛰고 기존 세이브처럼 진짜 Lobby에서 시작하며, 세이브의 최초 시작 표시를 지워 Lobby 안내로 이어진다. 연출 코드·에셋·MainScene 배치는 지우지 않고 남겨 둔다")]
+    private bool playFirstStartIntro;
+
     public static GameEventManager Instance { get; private set; }
     /// <summary>지금 진행 중인 매니저 이벤트(해금 연출). 없으면 null.</summary>
     public GameEventId? CurrentEvent { get; private set; }
@@ -69,6 +78,8 @@ public sealed class GameEventManager : MonoBehaviour
     public LobbyOnboarding Onboarding => onboarding;
     public IReadOnlyList<StationUnlockEvent> UnlockEvents => unlockEvents;
     public ElevatorRevealEvent ElevatorEvent => elevatorEvent;
+    /// <summary>최초 시작 세이브를 도입부로 시작하는가(기본 false = 건너뛰고 Lobby에서 시작). 회귀·UI는 읽기만 한다.</summary>
+    public bool IsFirstStartIntroEnabled => playFirstStartIntro;
 
     private Coroutine lobbyRoutine;
     private Transform focusTarget;
@@ -110,7 +121,15 @@ public sealed class GameEventManager : MonoBehaviour
     /// <summary>MainScene이 시작될 때 GameManager가 부른다. 최초 시작 도입부를 시작했으면 true(그러면 Lobby로 바로 보내지 않는다).</summary>
     public bool TryStartGame(RoomTransitionEffectSO transition)
     {
-        return intro != null && intro.TryBegin(transition);
+        if (intro == null) return false;
+        // 2026-11-26: 도입부를 꺼 두었으면(기본) 연출을 시작하지 않고 예약 소비·이어 온 Title 곡 줄이기·최초 시작 표시 지우기만 한다.
+        // false를 돌려주면 GameManager가 기존 세이브와 같은 경로(Lobby 등장 위치, 첫 등장 전환)로 진짜 Lobby에 보낸다.
+        if (!playFirstStartIntro)
+        {
+            intro.SkipFirstStart();
+            return false;
+        }
+        return intro.TryBegin(transition);
     }
 
     // ===================== 상태 =====================

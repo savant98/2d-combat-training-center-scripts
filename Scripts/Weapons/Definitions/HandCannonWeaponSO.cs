@@ -66,6 +66,9 @@ public class HandCannonWeaponSO : WeaponBaseSO
     public Vector2 AimOrigin(CharacterController2D controller) =>
         (Vector2)controller.transform.position + Vector2.up * apexOffset.y;
 
+    /// <summary>자동 조준 표적을 찾는 반지름(Player 중심부터, 칸) = 꼭짓점 거리 + 부채꼴 반경 + 둘레 여유(약 7.01칸).</summary>
+    public float AutoAimRange => apexOffset.x + fanRadius + edgePadding;
+
     private void Fire(CharacterController2D controller)
     {
         if (controller == null || controller.Motor == null) return;
@@ -75,14 +78,21 @@ public class HandCannonWeaponSO : WeaponBaseSO
         int facing = controller.Facing >= 0 ? 1 : -1;
         Vector2 axis = new Vector2(facing, 0f);
         Vector2 height = AimOrigin(controller);
-        if (controller is PlayerController player && player.TryGetMouseAim(height, out var mouseDirection))
+        int recoilFacing = facing;
+        // 자동 조준(2026-11-26, 사용자 요청 "자동조준 시 핸드캐논도 자동조준"): 옵션이 켜져 있으면 AutoAimRange 안 가장 가까운 적의 가운데로 축을 돌린다.
+        // 부채꼴 피해가 지형을 무시하므로 시야는 보지 않는다(blockLayer 0). 표적이 없거나 옵션이 꺼져 있으면 예전처럼 마우스 조준, 그것도 없으면 보는 쪽 수평이다.
+        if (controller is PlayerController player
+            && player.TryGetRangedAim(height, AutoAimRange, damageMask, 0, 0f, out var aimDirection, out var aimTarget))
         {
-            axis = mouseDirection;
-            player.GetComponent<PlayerStarShotAim>()?.AlignHandCannon(axis);
+            axis = aimDirection;
+            bool assisted = aimTarget != null;
+            // 자동 조준으로 정한 방향이면 반동은 쏜 쪽의 반대로 받는다(라이플 자동 조준과 같다). 마우스 조준은 예전처럼 보는 쪽 기준이다.
+            if (assisted && axis.x != 0f) recoilFacing = axis.x > 0f ? 1 : -1;
+            player.GetComponent<PlayerStarShotAim>()?.AlignHandCannon(axis, assisted);
         }
         Vector2 apex = height + axis * apexOffset.x;
 
-        controller.AddRecoil(recoilPower * Mathf.Abs(axis.x), facing);
+        controller.AddRecoil(recoilPower * Mathf.Abs(axis.x), recoilFacing);
 
         LastApex = apex;
         LastFacing = facing;

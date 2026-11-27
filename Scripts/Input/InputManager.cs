@@ -96,6 +96,7 @@ public class InputManager : MonoBehaviour
         buttonDatas[Button.Interact] = new ButtonData();
         buttonDatas[Button.SwapWeapon] = new ButtonData();
         buttonDatas[Button.Escape] = new ButtonData();
+        buttonDatas[Button.ToggleAutoAim] = new ButtonData();
 
         inputActions.UI.Submit.performed += ctx =>
         {
@@ -146,6 +147,12 @@ public class InputManager : MonoBehaviour
         // Escape
         inputActions.Player.Escape.started += ctx => { buttonDatas[Button.Escape].state = ButtonState.Pressed; buttonDatas[Button.Escape].pressedThisFrame = true; };
         inputActions.Player.Escape.canceled += ctx => buttonDatas[Button.Escape].state = ButtonState.Released;
+
+        // ToggleAutoAim(자동 조준 켜기·끄기 전환 키, 2026-11-26 사용자 요청 "자동조준 ON/OFF를 키 할당해서 관리").
+        // 다른 버튼과 같이 눌림·뗌만 기록하고, 전환은 게임플레이 입력(PlayerController)이 읽어 처리한다(메뉴·안내 중에는 그쪽에서 막힌다).
+        // 기본 키 V는 마우스 조준 모드에서도 쓰지 않는 키라 MouseAimDefaults에 따로 넣지 않는다.
+        inputActions.Player.ToggleAutoAim.started += ctx => { buttonDatas[Button.ToggleAutoAim].state = ButtonState.Pressed; buttonDatas[Button.ToggleAutoAim].pressedThisFrame = true; };
+        inputActions.Player.ToggleAutoAim.canceled += ctx => buttonDatas[Button.ToggleAutoAim].state = ButtonState.Released;
     }
 
     public void LoadControlProfile(OptionSettings settings)
@@ -187,8 +194,34 @@ public class InputManager : MonoBehaviour
             ApplyProfileDefaults();
             Debug.LogWarning("[InputManager] 저장된 키 설정을 읽지 못해 기본키를 사용합니다: " + e.Message);
         }
+        ReleaseConflictingToggleAutoAim();
         if (!wasSuspended) SuspendForRebind(false);
         NotifyBindingsChanged();
+    }
+
+    // 자동 조준 전환 키는 2026-11-26에 새로 생긴 조작이라, 그 전에 저장한 키 설정에는 항목이 없어 기본 키(V)가 그대로 쓰인다.
+    // 사용자가 예전에 다른 조작을 그 키로 바꿔 두었다면 한 번 누를 때 두 조작이 함께 발동하므로(옵션 창의 중복 검사는 키를 바꿀 때만 돈다)
+    // 이때만 전환 키를 미지정으로 둔다. 사용자가 직접 지정한(덮어쓰기가 있는) 전환 키는 건드리지 않는다.
+    private void ReleaseConflictingToggleAutoAim()
+    {
+        var toggle = inputActions.Player.ToggleAutoAim;
+        for (int i = 0; i < toggle.bindings.Count; i++)
+        {
+            var binding = toggle.bindings[i];
+            if (binding.isComposite || binding.overridePath != null || string.IsNullOrEmpty(binding.effectivePath)) continue;
+            if (IsUsedByOtherPlayerAction(toggle, binding.effectivePath)) toggle.ApplyBindingOverride(i, string.Empty);
+        }
+    }
+
+    private bool IsUsedByOtherPlayerAction(InputAction except, string path)
+    {
+        foreach (var action in inputActions.Player.Get().actions)
+        {
+            if (action == except) continue;
+            foreach (var binding in action.bindings)
+                if (!binding.isComposite && string.Equals(binding.effectivePath, path, System.StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     public void SuspendForRebind(bool suspend)

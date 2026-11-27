@@ -48,6 +48,7 @@ public static class InputBindingDisplay
         "SwapWeapon" => "무장 전환",
         "Interact" => "상호작용",
         "StoreSkill" => "스킬 저장",
+        "ToggleAutoAim" => "자동 조준 전환",
         "Escape" => "취소",
         "Inventory" => "휴대용 단말기",
         _ => action
@@ -75,6 +76,7 @@ public static class InputBindingDisplay
             "Interact" => Get("Interact"),
             "Inventory" => Get("Inventory"),
             "StoreSkill" => StoreSkill,
+            "ToggleAutoAim" => Get("ToggleAutoAim"),
             _ => token.Value
         });
     }
@@ -158,6 +160,7 @@ public static class InputBindingDisplay
         "Player/SwapWeapon" => "S",
         "Player/Interact" => "↑",
         "Player/Escape" => "Esc",
+        "Player/ToggleAutoAim" => "V",
         _ => "미할당"
     };
 }

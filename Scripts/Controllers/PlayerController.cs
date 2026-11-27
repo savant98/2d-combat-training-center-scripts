@@ -149,21 +149,17 @@ public class PlayerController : CharacterController2D
     }
 
     public bool TryGetRangedAim(Vector2 origin, float range, LayerMask targets, out Vector2 direction, out Collider2D target)
+        => TryGetRangedAim(origin, range, targets, 0, 0f, out direction, out target);
+
+    // 자동 조준(2026-11-26): blockLayer가 있으면 탄과 같은 규칙(통과 발판은 지나감)으로 지형에 가린 조준점·표적을 건너뛴다(PlayerAutoAim).
+    // probeRadius는 탄의 지형 판정 반지름이다. blockLayer가 0이면 시야를 보지 않고 가장 가까운 적의 가운데를 겨눈다(예전과 같은 결과).
+    // 자동 조준이 꺼져 있거나 겨눌 표적이 없으면 마우스 조준으로 넘어간다(기본 조작 모드에서는 false).
+    public bool TryGetRangedAim(Vector2 origin, float range, LayerMask targets, LayerMask blockLayer, float probeRadius,
+        out Vector2 direction, out Collider2D target)
     {
-        target = null;
-        if (OptionSettingsService.Instance?.Current?.rangedAutoAim == true)
-        {
-            target = RailEcho.FindNearest(this, transform.position, Vector2.zero, range, 0f, targets);
-            if (target != null)
-            {
-                Vector2 offset = (Vector2)target.bounds.center - origin;
-                if (offset.sqrMagnitude >= .0001f)
-                {
-                    direction = offset.normalized;
-                    return true;
-                }
-            }
-        }
+        if (OptionSettingsService.Instance?.Current?.rangedAutoAim == true
+            && PlayerAutoAim.TryFind(this, origin, range, targets, blockLayer, probeRadius, out direction, out target))
+            return true;
         target = null;
         return TryGetMouseAim(origin, out direction);
     }
@@ -273,6 +269,12 @@ public class PlayerController : CharacterController2D
 
         if (InputManager.Pressed(Button.SwapWeapon))
             OnSwapWeaponSet?.Invoke();
+
+        // 자동 조준 전환 키(2026-11-26): 설정 창의 자동 조준 행과 같은 값을 뒤집어 바로 적용하고 settings.json에 저장한다.
+        // 화면 알림은 UI가 OptionSettingsService.RangedAutoAimToggled를 구독한다. 입력을 받을 수 있을 때만 읽는다(메뉴·잡힘 중에는 위에서 돌아간다).
+        // 이 버튼이 InputManager에 등록되지 않았으면 Pressed가 false를 돌려준다(예외 없음).
+        if (InputManager.Pressed(Button.ToggleAutoAim))
+            OptionSettingsService.Instance?.ToggleRangedAutoAim();
     }
     protected override Vector2 CalculateVelocity()
     {

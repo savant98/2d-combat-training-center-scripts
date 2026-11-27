@@ -7,6 +7,8 @@ using UnityEngine;
 // 2026-11-15: 가로등길 앞에 '가짜 Lobby'를 둔다. 도착하면 Lobby와 똑같은 곳(설비 없이 지형·배경만)이고, 오른쪽으로 8칸 가면
 // 노이즈와 함께 "경고: 경로를 이탈했습니다. 즉시 복귀하세요."(입장 불가 창 형식)가 뜨며, 창을 닫으면 노이즈와 함께 가로등길로 바뀐다.
 // 이 흐름의 시작·순서는 GameEventManager가 총괄한다(이 컴포넌트는 실행자다).
+// 2026-11-26: 사용자 요청으로 이 도입부는 기본으로 꺼 둔다(GameEventManager.IsFirstStartIntroEnabled). 연출 코드·에셋·MainScene 배치는 지우지 않으며,
+// 꺼져 있으면 GameEventManager가 TryBegin 대신 SkipFirstStart를 불러 정리만 하고 진짜 Lobby에서 시작한다(TryBegin을 직접 부르는 회귀는 그대로 연출을 건다).
 [DisallowMultipleComponent]
 public sealed class NightmareIntroSequence : MonoBehaviour
 {
@@ -107,6 +109,23 @@ public sealed class NightmareIntroSequence : MonoBehaviour
             targetRoom = finalRoom, teleportPoint = backdrop.EntrySpawnPoint, transitionEffect = arrivalTransition
         });
         return true;
+    }
+
+    /// <summary>
+    /// 도입부를 꺼 두었을 때(2026-11-26) MainScene이 시작되면 GameEventManager가 TryBegin 대신 부른다. 연출은 시작하지 않고(단계는 Dormant 그대로),
+    /// 도입부를 마쳤을 때 하던 정리만 한다: 예약을 소비하고, Title에서 멀리 들리게 이어 온 곡을 줄이고, 세이브의 최초 시작 표시를 지운다.
+    /// 그 뒤 GameManager가 기존 세이브처럼 진짜 Lobby로 보내고, Lobby 안내(단말기 → 메일 → 훈련 메뉴)가 이어진다.
+    /// </summary>
+    public void SkipFirstStart()
+    {
+        // 예약이 남으면 IsStartQueued가 계속 true다.
+        startRequested = false;
+        // '시작하지 못함' 경로와 같은 처리다. Lobby에 들어가면 Lobby BGM이 이어서 재생된다(위장하지 않았으니 RoomBgmPlayer가 켜져 있다).
+        FadeOutCarriedTitleMusic(.5f);
+        // 예약 여부와 상관없이 최초 시작 표시가 남은 세이브면 지운다(편집기에서 MainScene을 바로 연 경우, 도입부 도중에 끈 옛 세이브 포함).
+        // 지우지 않으면 Lobby 안내가 시작되지 않는다(LobbyOnboarding.Step은 최초 시작 세이브를 '끝남'으로 본다).
+        var data = DataManager.Instance;
+        if (data != null && data.HasSelectedSlot && data.CurrentSaveData.isFirstStart) data.CompleteFirstStart();
     }
 
     // 가짜 Lobby에서 오른쪽으로 걸어가면: 화면이 지직거리며 경고 창 → 닫으면 노이즈와 함께 가로등길로.

@@ -143,6 +143,7 @@ public sealed class WaveCellTerrain : MonoBehaviour
     private WaveTransitBackdrop transitBackdrop;
     private Vector2 carryFrom, carryTo;
     private float carryLift;
+    private readonly HashSet<Vector2Int> carryRegion = new();
     // 다음 연결 공간 갱신은 지형이 그대로여도 건너뛰지 않는다(옮기기를 시작하고 끝낼 때 범위가 달라진다).
     private bool forceRoomSpace;
     // 던전 방을 즉시 바꾼 뒤(ShowRoom) Player가 새 방의 연결 공간에 들어설 때까지 공간을 찾을 시작점(방 좌표). 들어서면 비운다.
@@ -1365,11 +1366,11 @@ public sealed class WaveCellTerrain : MonoBehaviour
         bool backdropMatches = backdropBounds.HasValue && ConnectedBounds.HasValue && backdropBounds.Value == ConnectedBounds.Value;
         if (!unchanged && roomSolids != null && roomSolids.SetEquals(solids)) unchanged = true;
         bool force = forceRoomSpace; forceRoomSpace = false;
-        // 실제로 던전이 진행되는 Wave는 입장부터 던전 카메라 범위를 쓴다. 같은 공간이어도 Wave 종류가 바뀌었으면 다시 맞춘다.
+        // 실제로 던전이 진행되는 Wave이거나 사방 3칸 외벽·블라인더 설정(useRoomBorderBlinder)을 켠 일반 Wave는 사방 3칸 카메라 범위·음영을 쓴다.
         // 마지막 Wave를 마친 뒤(currentWaveIndex == waves.Length)에는 마지막 Wave를 따른다(FrameWaveIndex — 클리어 뒤 보스 방에서 범위가 바뀌지 않게).
-        bool dungeonFrame = DungeonFrameAt(FrameWaveIndex(waves.currentWaveIndex, data.waves != null ? data.waves.Length : 0, resetting));
+        bool borderFrame = BorderFrameAt(FrameWaveIndex(waves.currentWaveIndex, data.waves != null ? data.waves.Length : 0, resetting));
         // 지형이 그대로이고 기준점이 지난번에 찾은 공간 안에 있으면 같은 공간이다(옮기는 중에는 범위가 경로를 따라 정해지므로 건너뛰지 않는다).
-        if (!force && !carrying && unchanged && backdropMatches && dungeonFrame == cameraFrameDungeon && (roomSeed == seedCell || roomRegion.Contains(seedCell))) { roomSolids = solids; roomSeed = seedCell; return; }
+        if (!force && !carrying && unchanged && backdropMatches && borderFrame == cameraFrameDungeon && (roomSeed == seedCell || roomRegion.Contains(seedCell))) { roomSolids = solids; roomSeed = seedCell; return; }
         roomSolids = solids;
         roomSeed = seedCell;
         var layout = WaveRoomState.LayoutAt(data, resetting ? 0 : waves.currentWaveIndex);
@@ -1382,17 +1383,20 @@ public sealed class WaveCellTerrain : MonoBehaviour
         if (carrying)
         {
             // 크레인이 옮기는 동안: 출발한 공간과 도착할 공간, 그 사이 경로까지 담는다(Player는 지형을 지나 옮겨진다).
-            if (WaveCellRoomSpace.TryGetBounds(solids, carryFrom, out var leaving)) bounds = Union(bounds, leaving);
-            if (WaveCellRoomSpace.TryGetBounds(solids, carryTo, out var arriving)) bounds = Union(bounds, arriving);
+            // 사방 블라인더가 켜진 일반 Wave에서는 출발·도착 두 실내를 모두 roomRegion에 합쳐 이동 중 두 방 안쪽이 가려지지 않게 한다.
+            carryRegion.Clear();
+            if (WaveCellRoomSpace.TryGetBounds(solids, carryFrom, out var leaving, carryRegion)) { bounds = Union(bounds, leaving); roomRegion.UnionWith(carryRegion); }
+            carryRegion.Clear();
+            if (WaveCellRoomSpace.TryGetBounds(solids, carryTo, out var arriving, carryRegion)) { bounds = Union(bounds, arriving); roomRegion.UnionWith(carryRegion); }
             bounds = Union(bounds, CarryPath());
         }
         // Wave 전환 중에는 미리 넓혀 둔 배경·통창을 줄이지 않는다(끼우기가 먼저 끝나도 뒤이어 빠질 벽 뒤에 배경이 있어야 한다).
         // 전환이 끝나면 Prepare가 한 번 더 불러 실제 공간에 맞춘다.
-        // 던전 방은 셀 외접도 범위를 정하므로, 공간이 같아도 셀 외접이나 Wave 종류가 바뀌면 다시 맞춘다(일반 Wave는 기존 조건 그대로).
-        var cells = dungeonFrame ? SolidBox() : default;
+        // 사방 3칸 외벽 방은 셀 외접도 범위를 정하므로, 공간이 같아도 셀 외접이나 Wave 종류가 바뀌면 다시 맞춘다(일반 Wave는 기존 조건 그대로).
+        var cells = borderFrame ? SolidBox() : default;
         bool cameraChanged = !ConnectedBounds.HasValue || ConnectedBounds.Value != bounds
-            || dungeonFrame != cameraFrameDungeon || (dungeonFrame && !cells.Equals(cameraCells));
-        if (cameraChanged) SetCameraBounds(bounds, resetting || immediateCamera || !ConnectedBounds.HasValue, dungeonFrame, cells);
+            || borderFrame != cameraFrameDungeon || (borderFrame && !cells.Equals(cameraCells));
+        if (cameraChanged) SetCameraBounds(bounds, resetting || immediateCamera || !ConnectedBounds.HasValue, borderFrame, cells);
         RefreshFloorShade();
         // 정착 중인 카메라가 아직 이전 범위를 볼 수 있으므로 배경·통창은 마지막에 줄인다.
         Rect backdrop = (IsTransitioning || IsCameraSettling) && backdropBounds.HasValue ? Union(backdropBounds.Value, bounds) : bounds;
@@ -1459,6 +1463,14 @@ public sealed class WaveCellTerrain : MonoBehaviour
     public static bool DungeonFrameFor(WaveDataSO source, DungeonRun run, int index)
         => source != null && source.waves != null && index >= 0 && index < source.waves.Length && source.waves[index] != null
             && source.waves[index].flowMode == WaveFlowMode.Dungeon && run != null && run.FloorFor(index) != null;
+    private bool BorderFrameAt(int index)
+    {
+        if (data != null && data.useRoomBorderBlinder) return true;
+        return DungeonFrameAt(index);
+    }
+    /// <summary>사방 3칸 외벽 카메라 범위·블라인더(WaveRoomFloorShade) 사용 여부: 일반 Wave의 명시 설정 또는 실제 던전 Wave.</summary>
+    public static bool BorderFrameFor(WaveDataSO source, DungeonRun run, int index)
+        => (source != null && source.useRoomBorderBlinder) || DungeonFrameFor(source, run, index);
     /// <summary>
     /// 카메라 범위가 따르는 Wave 번호(정적 — 회귀 검사도 쓴다). 초기화 중이면 0, 그 밖에는 current를 [0, count − 1]로 자른다
     /// (마지막 Wave를 마친 뒤 WaveManager가 current를 count로 올려도 마지막 Wave의 범위를 유지한다).

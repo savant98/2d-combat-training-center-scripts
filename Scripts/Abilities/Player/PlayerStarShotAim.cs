@@ -34,6 +34,10 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     private bool raisedFrame;
     private int nextMachineGunSound;
     private float scatterStreakStart, lastScatterShot = float.NegativeInfinity;   // 머신건 연사를 이어 온 시간(흩어짐이 커지는 정도)
+    // 핸드캐논 자동 조준(2026-11-26, 사용자 요청 "자동조준 시 핸드캐논도 자동조준"): 자동 조준으로 쏜 방향을 실행·회수 동안 유지한다.
+    // 키보드 조작에서는 마우스 분기가 없어 저장하지 않으면 같은 프레임에 Restore가 총신을 되돌린다. 핸드캐논이 끝나면(또는 다음 준비가 시작되면) 지운다.
+    private Vector2 cannonAim;
+    private bool hasCannonAim;
     public Transform Muzzle => muzzle;
     public bool IsModelVisible => gun != null && gun.gameObject.activeInHierarchy;
     public Vector3 BarrelTip => gun != null ? gun.TransformPoint(tip) : transform.position;
@@ -76,6 +80,16 @@ public sealed class PlayerStarShotAim : MonoBehaviour
     {
         if (IsModelVisible && muzzle != null) Apply(direction, true);
     }
+    // hold = 자동 조준으로 정한 방향: 핸드캐논이 끝날 때까지 총신을 이 방향에 둔다. 마우스 조준(hold false)은 예전처럼 LateUpdate가 마우스를 따라간다.
+    public void AlignHandCannon(Vector2 direction, bool hold)
+    {
+        if (hold)
+        {
+            cannonAim = direction;
+            hasCannonAim = true;
+        }
+        AlignHandCannon(direction);
+    }
 
     private void LateUpdate()
     {
@@ -83,19 +97,34 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         var activeWeapon = ability.IsStarShotActive ? ability.EquippedStarShot : null;
         Vector2 fireAim = default;
         Collider2D target = null;
+        // 자동 조준 시야(2026-11-26): 탄을 막는 지형(platformLayer)과 탄의 지형 판정 반지름을 넘겨, 가려진 조준점·표적을 건너뛴다(PlayerAutoAim).
         bool hasFireAim = activeWeapon != null && owner.TryGetRangedAim(gun.position,
             activeWeapon.projectileSpeed * ((StarShot)activeWeapon.projectilePrefab).LifeTime,
-            1 << LayerMask.NameToLayer("Enemy"), out fireAim, out target);
+            1 << LayerMask.NameToLayer("Enemy"), activeWeapon.platformLayer, PlayerAutoAim.ProbeRadius(activeWeapon.projectilePrefab),
+            out fireAim, out target);
 
         var cannon = ability.ActiveHandCannon;
+        if (cannon == null) hasCannonAim = false;   // 핸드캐논이 끝나면 저장한 방향을 지운다
         Vector2 aimOrigin = cannon != null ? cannon.AimOrigin(owner) : gun.position;
         bool tracksMouse = cannon != null || ((!ability.IsActive || ability.IsStarShotActive) && ability.EquippedStarShot != null);
+        Vector2 cannonDirection = default;
+        bool cannonAssisted = cannon != null && TryGetCannonAim(cannon, aimOrigin, out cannonDirection);
         if (target != null)
         {
             Apply(fireAim, true);
             autoAimApplied = true;
             autoAimReturnTime = 0f;
             lastAutoAim = fireAim;
+            lastAutoMuzzlePosition = muzzle.localPosition;
+            lastAutoMuzzleRotation = muzzle.localRotation;
+        }
+        else if (cannonAssisted)
+        {
+            // 핸드캐논 자동 조준: 라이플 자동 조준과 같은 상태를 남겨, 핸드캐논이 끝나면 아래 ReturnFromAutoAim이 기본 자세로 보간한다.
+            Apply(cannonDirection, true);
+            autoAimApplied = true;
+            autoAimReturnTime = 0f;
+            lastAutoAim = cannonDirection;
             lastAutoMuzzlePosition = muzzle.localPosition;
             lastAutoMuzzleRotation = muzzle.localRotation;
         }
@@ -167,6 +196,21 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         }
         pending.Clear();
     }
+    // 핸드캐논 자동 조준 방향. 쏘기 전 준비 단계에는 자동 조준 표적(시야 검사 없음 — 부채꼴 피해가 지형을 무시한다) 쪽,
+    // 쏜 뒤(실행·회수)에는 자동 조준으로 쏜 방향(AlignHandCannon hold). 자동 조준이 꺼져 있거나 표적이 없거나 마우스로 쏜 경우는 false(아래 분기가 예전처럼 맡는다).
+    private bool TryGetCannonAim(HandCannonWeaponSO cannon, Vector2 origin, out Vector2 direction)
+    {
+        direction = default;
+        if (ability.AttackPhase == AbilityState.Windup)
+        {
+            hasCannonAim = false;   // 준비 중이면 남은 값은 앞선 핸드캐논의 방향이다
+            return owner.TryGetRangedAim(origin, cannon.AutoAimRange, cannon.damageMask, 0, 0f, out direction, out var aimTarget)
+                && aimTarget != null;
+        }
+        if (!hasCannonAim) return false;
+        direction = cannonAim;
+        return true;
+    }
     private void ReturnFromAutoAim(bool attacking)
     {
         autoAimReturnTime += Time.deltaTime;
@@ -201,6 +245,7 @@ public sealed class PlayerStarShotAim : MonoBehaviour
         pending.Clear();
         autoAimApplied = false;
         raisedFrame = false;
+        hasCannonAim = false;
         if (!aimed) return;
         if (gun != null)
         {

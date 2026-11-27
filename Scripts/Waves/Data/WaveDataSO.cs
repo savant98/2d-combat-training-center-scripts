@@ -11,6 +11,8 @@ public class WaveDataSO : ScriptableObject
     public bool customRoom;
     [Tooltip("실내 치수 연출(TrainingRoomPresentation)을 가진 커스텀 Room에서 저장된 실내 크기에 카메라를 맞춥니다. 그 밖의 Room은 커스텀이어도 셀 연결 공간을 이 설정 없이 자동 적용합니다.")]
     public bool adaptCameraToRoom;
+    [Tooltip("던전이 아닌 일반 Wave에서도 전투 훈련(던전)처럼 방 상하좌우 3칸 외벽을 카메라 범위에 포함하고 사방 검정색 블라인더(WaveRoomFloorShade)를 적용합니다.")]
+    public bool useRoomBorderBlinder;
     public GameObject backgroundPrefab;
     [Tooltip("선택한 배경을 현재 방의 연결 공간에 맞춰 중심 정렬합니다. 원본 비율을 유지하며 빈 부분 없이 덮습니다.")]
     public bool fitBackgroundToRoom;
