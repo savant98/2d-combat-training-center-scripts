@@ -14,10 +14,10 @@ public enum TutorialFocusTarget
     Panel, GridArea, Goal, Platform, Player, PrimaryWeapon, SecondaryWeapon,
     GearOne, GearTwo, GearThree, SkillGauge,
     Enemy = 12, EnemyShield, EnemyBreak, LessonIcon,
-    GearStages = 16, WeaponSet = 17
+    GearStages = 16, WeaponSet = 17, AutoAim = 18
 }
 
-public enum TutorialStepIcon { None, Attack, Shield, Gear, Break, Gauge, GearReady, Storage, Swap, Secondary }
+public enum TutorialStepIcon { None, Attack, Shield, Gear, Break, Gauge, GearReady, Storage, Swap, Secondary, AutoAim }
 
 /// <summary>선택 입력 한 번으로 넘기는 설명입니다. 영역 좌표는 Wave 생성 기준점에 상대적입니다.</summary>
 [Serializable]
@@ -47,4 +47,7 @@ public sealed class TutorialLesson
     [Min(.1f)] public float requiredDistance = 4f;
     [Min(0f)] public float dashCrossingOffset;
     public TutorialFocusStep[] steps = Array.Empty<TutorialFocusStep>();
+
+    public bool RequiresPractice => action is not (TutorialAction.None or TutorialAction.Shield or TutorialAction.Break
+        or TutorialAction.Platforms or TutorialAction.Trap);
 }

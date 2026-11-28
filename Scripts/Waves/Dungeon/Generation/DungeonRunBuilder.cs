@@ -31,13 +31,34 @@ public static class DungeonRunBuilder
     /// </summary>
     public static DungeonRun Build(WaveDataSO source, int runSeed)
     {
-        if (!HasDungeon(source)) return null;
+        DungeonRun run = null;
+        foreach (var _ in BuildInSteps(source, runSeed, ready => run = ready)) { }
+        return run;
+    }
+
+    // 엘리베이터로 입장할 때는 한 프레임에 던전 층을 하나씩 생성한다.
+    internal static IEnumerable<object> BuildInSteps(WaveDataSO source, int runSeed, Action<DungeonRun> complete)
+    {
+        if (!HasDungeon(source)) yield break;
         var data = Object.Instantiate(source);
         data.name = source.name + " (Dungeon)";
         data.hideFlags = HideFlags.DontSave;
         var run = new DungeonRun { Data = data, Source = source };
-        Fill(run, runSeed);
-        return run;
+        bool finished = false;
+        try
+        {
+            foreach (var step in Fill(run, runSeed)) yield return step;
+            complete(run);
+            finished = true;
+        }
+        finally
+        {
+            if (!finished)
+            {
+                if (Application.isPlaying) Object.Destroy(data);
+                else Object.DestroyImmediate(data);
+            }
+        }
     }
 
     /// <summary>
@@ -47,10 +68,10 @@ public static class DungeonRunBuilder
     public static void Regenerate(DungeonRun run, int seed)
     {
         if (run == null || run.Data == null || run.Source == null) return;
-        Fill(run, seed);
+        foreach (var _ in Fill(run, seed)) { }
     }
 
-    private static void Fill(DungeonRun run, int runSeed)
+    private static IEnumerable<object> Fill(DungeonRun run, int runSeed)
     {
         if (runSeed == 0) runSeed = Environment.TickCount;
         if (runSeed == 0) runSeed = 1;
@@ -66,6 +87,7 @@ public static class DungeonRunBuilder
         {
             var wave = data.waves[i];
             if (wave == null || wave.flowMode != WaveFlowMode.Dungeon) continue;
+            yield return null;
             var settings = wave.dungeon ?? new DungeonWaveSettings();
             int seed = settings.seed != 0 ? settings.seed : Mix(runSeed, i);
             if (!DungeonGenerator.TryGenerate(settings, seed, out var layout, out var error))
@@ -82,7 +104,7 @@ public static class DungeonRunBuilder
             if (firstDungeon < 0) firstDungeon = i;
             ApplyFloor(data, wave, floor, i);
         }
-        if (firstDungeon < 0) return;
+        if (firstDungeon < 0) yield break;
         if (firstDungeon == 0)
         {
             // 입장하자마자 시작 방에 선다(Room 입장 지점 = 첫 Wave 시작 좌표).

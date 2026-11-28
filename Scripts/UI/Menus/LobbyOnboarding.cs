@@ -1,6 +1,8 @@
 using System.Linq;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
+using UguiButton = UnityEngine.UI.Button;
 
 /// <summary>
 /// Lobby 안내(2026-11-14). Nightmare에게 패배해 Lobby에 처음 온 훈련생에게 휴대용 단말기와 훈련 메뉴를 알려 준다.
@@ -15,8 +17,8 @@ using UnityEngine;
 ///     ② 단말기의 첫 화면: 메시지 수신함 카드만 밝다. 그 카드를 여는 조작만 받는다.
 ///     ③ 수신함: 환영 메일만 밝다. 그 메일을 여는 조작만 받는다. 메일이 열리면 어둠이 걷히고 무엇이든 할 수 있다.
 /// - 진행 단계는 세이브(SaveData.onboardingStep)에 남아 다시 접속해도 이어진다. 도입부를 마치지 않은 세이브(isFirstStart)에서는 아무것도 하지 않는다.
-/// - 단말기 아이콘은 안내가 끝난 뒤에도 Lobby에서 계속 보인다(단말기는 Lobby에서만 열린다).
-/// - 표시는 실제 시간으로 움직인다(단말기가 열려 있으면 게임 시간이 멈춘다). 표시 전용이며 판정·이동과는 무관하다.
+/// - 오른쪽 위 키 표시는 Lobby에서 휴대용 단말기, 훈련 중에는 현장 단말기를 안내한다.
+/// - 아이콘을 클릭하면 Tab과 같은 단말기가 열린다. 표시는 실제 시간으로 움직인다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class LobbyOnboarding : MonoBehaviour
@@ -71,7 +73,13 @@ public sealed class LobbyOnboarding : MonoBehaviour
 
     private float lobbyTime, arrivalAge = -1f;
     private float iconAlpha, openAlpha, readAlpha, arrowAlpha, toastAlpha;
-    private Vector2 toastHome;
+    private Vector2 toastHome, iconHome, iconSize, keyHome;
+    private Vector3 iconScale;
+    private RectTransform iconKey;
+    private Transform[] iconDeviceParts;
+    private bool compactIcon;
+    private UguiButton iconButton;
+    private StageHUD stageHud;
     private bool homesCached, subscribed, focusing;
     private UIManager focusOwner;
     private int shownStep = -1;
@@ -115,6 +123,7 @@ public sealed class LobbyOnboarding : MonoBehaviour
     {
         CacheHomes();
         HideAll();
+        if (iconButton != null) iconButton.onClick.AddListener(OpenTerminalFromIcon);
         if (subscribed) return;
         subscribed = true;
         LobbyInteractionLock.AddBlocker(IsLocked);
@@ -131,6 +140,7 @@ public sealed class LobbyOnboarding : MonoBehaviour
 
     private void OnDisable()
     {
+        if (iconButton != null) iconButton.onClick.RemoveListener(OpenTerminalFromIcon);
         if (subscribed)
         {
             subscribed = false;
@@ -278,8 +288,15 @@ public sealed class LobbyOnboarding : MonoBehaviour
 
         // 목표 표시. 단말기든 훈련 메뉴든 화면을 쓰는 메뉴가 열려 있는 동안에는 아이콘과 길잡이를 치운다(그동안은 단말기도 열리지 않는다).
         bool menuOpen = open || otherMenu;
-        bool showIcon = inLobby && alive && !busy && !menuOpen;
-        bool showBadge = showIcon && unread && step >= StepMailArrived;
+        var waves = WaveManager.ActiveInstance;
+        var currentRoom = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
+        bool inTraining = currentRoom != null && currentRoom.roomType == RoomType.Training
+            && waves != null && waves == currentRoom.WaveManager && !waves.IsHalted
+            && RoomTransitionManager.Instance != null && !RoomTransitionManager.Instance.IsTransitioning
+            && DungeonHudGate.IsHudVisible();
+        var fieldTerminal = inTraining ? DungeonFieldTerminal.ActiveInput : null;
+        bool showIcon = (inLobby || fieldTerminal != null) && alive && !busy && !menuOpen;
+        bool showBadge = inLobby && showIcon && unread && step >= StepMailArrived;
         bool showOpen = guiding && unread && !menuOpen;
         bool showRead = guiding && open && step < SaveData.OnboardingDone;
         var entrance = guiding && !unread && !menuOpen ? FindEntrance() : null;
@@ -292,10 +309,26 @@ public sealed class LobbyOnboarding : MonoBehaviour
         float toastTarget = arrivalAge >= 0f && arrivalAge < toastTime - .5f && showIcon ? 1f : 0f;
         toastAlpha = Mathf.MoveTowards(toastAlpha, toastTarget, delta * 4f);
 
+        bool canClick = showIcon && iconAlpha > .5f && (inLobby ? step >= StepMailArrived && terminal != null && !terminal.IsTransitioning
+            : fieldTerminal != null && fieldTerminal.CanOpen(out _));
         float time = Time.unscaledTime;
-        if (iconGroup != null) iconGroup.alpha = iconAlpha;
+        if (iconGroup != null)
+        {
+            bool notify = showIcon && fieldTerminal != null && fieldTerminal.HasObjectiveUpdate;
+            float flash = notify ? .5f + .5f * Mathf.Cos(time * Mathf.PI * 2f / .8f) : 1f;
+            iconGroup.alpha = iconAlpha * Mathf.Lerp(.28f, 1f, flash);
+            iconGroup.interactable = iconGroup.blocksRaycasts = canClick;
+        }
+        if (iconButton != null) iconButton.interactable = canClick;
         if (iconRoot != null)
         {
+            bool boss = stageHud != null && stageHud.IsBossBarVisible;
+            bool dungeon = currentRoom != null && currentRoom.roomType == RoomType.Training
+                && iconKey != null && TrainingScoreboardUI.IsDungeonActive();
+            ApplyIconLayout(dungeon);
+            var position = dungeon ? DungeonMinimap.TerminalHintPosition(boss)
+                : inTraining ? new Vector2(-28f, boss ? -292f : -220f) : iconHome;
+            if (iconRoot.anchoredPosition != position) iconRoot.anchoredPosition = position;
             // 메일이 도착하면 아이콘이 떨듯 흔들린다.
             float shake = arrivalAge >= 0f ? Mathf.Exp(-arrivalAge * 2.2f) * Mathf.Sin(arrivalAge * 38f) * 12f : 0f;
             iconRoot.localRotation = Quaternion.Euler(0f, 0f, shake);
@@ -341,6 +374,39 @@ public sealed class LobbyOnboarding : MonoBehaviour
         if (homesCached) return;
         homesCached = true;
         if (toastRoot != null) toastHome = toastRoot.anchoredPosition;
+        stageHud = FindFirstObjectByType<StageHUD>(FindObjectsInactive.Include);
+        if (iconRoot == null) return;
+        iconHome = iconRoot.anchoredPosition;
+        iconSize = iconRoot.sizeDelta;
+        iconScale = iconRoot.localScale;
+        iconKey = iconRoot.Find("KeyHint") as RectTransform;
+        if (iconKey != null) keyHome = iconKey.anchoredPosition;
+        iconDeviceParts = new[] { iconRoot.Find("Plate"), iconRoot.Find("Frame"), iconRoot.Find("Glyph") };
+
+        var hit = iconRoot.gameObject.AddComponent<Image>();
+        hit.color = Color.clear;
+        iconButton = iconRoot.gameObject.AddComponent<UguiButton>();
+        iconButton.targetGraphic = hit;
+        iconButton.transition = Selectable.Transition.None;
+        iconButton.navigation = new Navigation { mode = Navigation.Mode.None };
+    }
+
+    // 던전에서는 Tab 키 표시와 클릭 영역을 함께 미니맵 머리말 안에 넣는다.
+    private void ApplyIconLayout(bool compact)
+    {
+        if (compact == compactIcon) return;
+        compactIcon = compact;
+        iconRoot.sizeDelta = compact ? iconKey.sizeDelta : iconSize;
+        iconRoot.localScale = compact ? Vector3.one : iconScale;
+        iconKey.anchoredPosition = compact ? Vector2.zero : keyHome;
+        foreach (var part in iconDeviceParts)
+            if (part != null) part.gameObject.SetActive(!compact);
+    }
+
+    private void OpenTerminalFromIcon()
+    {
+        if (InLobby) terminal?.OpenMenu();
+        else DungeonFieldTerminal.ActiveInput?.TryOpen();
     }
 
     private void HideAll()
@@ -348,7 +414,12 @@ public sealed class LobbyOnboarding : MonoBehaviour
         iconAlpha = openAlpha = readAlpha = arrowAlpha = toastAlpha = 0f;
         arrivalAge = -1f;
         lobbyTime = 0f;
-        if (iconGroup != null) iconGroup.alpha = 0f;
+        if (iconGroup != null)
+        {
+            iconGroup.alpha = 0f;
+            iconGroup.interactable = iconGroup.blocksRaycasts = false;
+        }
+        if (iconButton != null) iconButton.interactable = false;
         if (toastGroup != null) toastGroup.alpha = 0f;
         if (openPromptGroup != null) openPromptGroup.alpha = 0f;
         if (readPromptGroup != null) readPromptGroup.alpha = 0f;

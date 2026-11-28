@@ -42,6 +42,7 @@ public class EnemyUI : MonoBehaviour
     private EnemyController owner;
     private Canvas worldHudCanvas;
     private bool breaking;
+    private (bool canvasEnabled, float hp, float shield, float breakable, float knockDown)? tutorialPreview;
     private BreakDamageCounterView breakCounter;
     private bool countingBreakDamage;
 
@@ -98,6 +99,35 @@ public class EnemyUI : MonoBehaviour
     {
         if (worldHudCanvas == null) worldHudCanvas = GetComponent<Canvas>();
         if (worldHudCanvas != null) worldHudCanvas.enabled = visible;
+    }
+
+    /// <summary>실제 체력·쉴드 상태를 변경하지 않고 설명에 쓸 HUD를 보인다.</summary>
+    public RectTransform BeginTutorialPreview(bool showBreakable)
+    {
+        RectTransform target = showBreakable ? breakNowGroup?.transform as RectTransform
+            : shieldCells != null ? shieldCells.transform as RectTransform : shieldBar?.rectTransform;
+        if (target == null || !target.gameObject.activeInHierarchy || worldHudCanvas == null ||
+            hpGroup == null || shieldGroup == null || breakNowGroup == null || knockDownGroup == null) return null;
+        if (!tutorialPreview.HasValue)
+            tutorialPreview = (worldHudCanvas.enabled, hpGroup.alpha, shieldGroup.alpha, breakNowGroup.alpha, knockDownGroup.alpha);
+        worldHudCanvas.enabled = true;
+        hpGroup.alpha = 1f;
+        shieldGroup.alpha = showBreakable ? 0f : 1f;
+        breakNowGroup.alpha = showBreakable ? 1f : 0f;
+        knockDownGroup.alpha = 0f;
+        return target;
+    }
+
+    public void EndTutorialPreview()
+    {
+        if (!tutorialPreview.HasValue) return;
+        var before = tutorialPreview.Value;
+        tutorialPreview = null;
+        worldHudCanvas.enabled = before.canvasEnabled;
+        hpGroup.alpha = before.hp;
+        shieldGroup.alpha = before.shield;
+        breakNowGroup.alpha = before.breakable;
+        knockDownGroup.alpha = before.knockDown;
     }
 
     public void ShowShield(float normalized, bool isBoss)
@@ -286,6 +316,7 @@ public class EnemyUI : MonoBehaviour
     // 처치되거나 풀로 돌아가며 꺼질 때: 세던 합계는 그 자리에서 총 피해로 바뀌어 잠시 남는다.
     private void OnDisable()
     {
+        EndTutorialPreview();
         breaking = false;
         EndBreakCounter();
     }

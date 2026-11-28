@@ -3,15 +3,12 @@ using System.Collections;
 using UnityEngine;
 
 /// <summary>
-/// Lobby 위층의 각개 전투 엘리베이터 정박대(2026-11-20). 사용자 요청: "마지막 각개전투는 TrainingMenu에서 출발하는게 아니라,
-/// Lobby맨위에서 천장이 갈라지면서 엘리베이터가 내려오고, 그걸 컷씬으로 보여줘. 거기서 탑승하면, 각개전투 교장으로 이동하고,
-/// 이때는 텔레포트하는게 아니라 엘리베이터를 타고 실시간으로 이동하는 연출을 해줘".
-/// - 천장(Tilemap)은 지우지 않는다. 천장 앞에 그린 해치 소품의 두 판이 좌우로 갈라져 하우징 속으로 들어가는 것으로 '천장이 갈라지는' 모습을 낸다.
+/// Lobby 위층의 전투 훈련 엘리베이터 정박대. 훈련 메뉴에서 전투 훈련을 고르면 내려온다.
 /// - 등장 연출(PlayReveal): 경고등·경고음 → 빗장이 빠지고 판이 내려앉았다가 갈라짐(Animator, 이동·회전 Clip) → 케이블에 매달린 케이지가 내려와
 ///   위층 바닥에 착지(완충기·먼지·흔들림). 문은 탑승 입구와 상호작용하면 열린다.
 ///   카메라·입력 막기·세이브 기록은 GameEventManager가 맡는다.
 ///   실행 번호(run)와 OnDisable 확정은 LobbyStationUnlock과 같은 관례다(멈춘 코루틴의 finally는 돌지 않는다).
-/// - 탑승(RequestRide): 훈련 목록에서 각개 전투 WaveData를 찾아 ElevatorRideTransition으로 방 전환을 요청한다. 이동 연출은 Scene 루트의 FieldElevatorRide가 맡는다.
+/// - 탑승(RequestRide): 훈련 목록에서 전투 훈련 WaveData를 찾아 ElevatorRideTransition으로 방 전환을 요청한다. 이동 연출은 Scene 루트의 FieldElevatorRide가 맡는다.
 /// 루트는 배치용(위치만)이며 위층 플랫폼 윗면(Y -28)을 따라 X로만 옮긴다. 해치 모형·천장 위 단면·먼지·케이블 매단 점·카메라 중심은 루트의 자식이라 함께 따라가고,
 /// 이동 장치는 루트 위치로 갱도 원점(CeilingTopY)을 다시 계산한다. Y는 Lobby의 위층 바닥(-28)과 천장 아랫면(-12)이 정하므로 옮기지 않는다:
 /// 해치 모형(Model/Hatch, 루트 +16)은 hatchHeight와 묶이지 않은 도구 상수 자리다. Lobby 높이가 바뀌면 FieldElevatorSetup의 BaySpot·HatchHeight를 고쳐 다시 만든다.
@@ -37,8 +34,8 @@ public sealed class FieldElevator : MonoBehaviour
     [SerializeField, Tooltip("Scene 루트의 이동 장치")] private FieldElevatorRide ride;
 
     [Header("목적지")]
-    [SerializeField, Tooltip("각개 전투를 불러올 방(TrainingRoom)")] private Room targetRoom;
-    [SerializeField, Tooltip("훈련 목록에서 WaveData를 찾는 키")] private string destinationTrainingId = "FieldCombat";
+    [SerializeField, Tooltip("전투 훈련를 불러올 방(TrainingRoom)")] private Room targetRoom;
+    [SerializeField, Tooltip("훈련 목록에서 WaveData를 찾는 키")] private string destinationTrainingId = "CombatBasic";
     [SerializeField, Tooltip("훈련 목록 자체를 불러올 수 없을 때 쓰는 WaveData")] private WaveDataSO fallbackWaveData;
     [SerializeField] private RoomTransitionEffectSO rideTransition;
 
@@ -220,6 +217,12 @@ public sealed class FieldElevator : MonoBehaviour
         return true;
     }
 
+    internal void ClearCallAfterRide()
+    {
+        revealed = false;
+        if (boarding != null) boarding.gameObject.SetActive(false);
+    }
+
     // ===================== 등장 연출 =====================
 
     /// <summary>천장 해치가 열리고 케이지가 내려오는 등장 연출. 끝나면 등장 상태로 확정한다. 이미 등장했으면 바로 끝난다.</summary>
@@ -318,14 +321,16 @@ public sealed class FieldElevator : MonoBehaviour
 
     // ===================== 탑승 =====================
 
-    /// <summary>훈련 목록에서 각개 전투 WaveData를 찾는다. 목록이 있으면 등록된 목적지만 사용한다.</summary>
+    /// <summary>훈련 목록에서 전투 훈련 WaveData를 찾는다. 목록이 있으면 등록된 목적지만 사용한다.</summary>
     public WaveDataSO ResolveDestination()
     {
         var catalog = TrainingCatalogSO.Load();
-        return catalog != null ? catalog.Find(destinationTrainingId)?.waveData : fallbackWaveData;
+        return catalog != null
+            ? (catalog.ElevatorTraining ?? catalog.Find(destinationTrainingId))?.waveData
+            : fallbackWaveData;
     }
 
-    /// <summary>탑승해 각개 전투 교장으로 출발한다(방 전환을 요청). 출발하지 못하면 false.</summary>
+    /// <summary>탑승해 전투 훈련장으로 출발한다(방 전환을 요청). 출발하지 못하면 false.</summary>
     public bool RequestRide()
     {
         if (!CanBoard) return false;
@@ -353,7 +358,7 @@ public sealed class FieldElevator : MonoBehaviour
     private void TestReveal() => ApplyRevealed(true);
     [ContextMenu("시험: 숨김 상태로 두기")]
     private void TestHide() => ApplyRevealed(false);
-    [ContextMenu("시험: 바로 탑승(각개 전투로 이동)")]
+    [ContextMenu("시험: 바로 탑승(전투 훈련로 이동)")]
     private void TestRide()
     {
         if (!revealed) ApplyRevealed(true);

@@ -163,19 +163,25 @@ public sealed class DungeonEnemyMarkers : MonoBehaviour
     /// </summary>
     public void Advance(float deltaTime, IDungeonCombatSource source, bool active)
     {
+        // 순찰 방(통과 가능)은 표시하지 않는다(DESIGN_V4 §2.8 '적 마커는 끔').
+        bool show = active && source != null && source.Phase != DungeonRoomPhase.Patrol;
+        AdvanceEnemies(deltaTime, show ? source.HostileEnemies : null,
+            show && ShouldMarkAll(source.HostilesAllSpawned, source.HostilesRemaining, source.HostilesTotal, markerThreshold));
+    }
+
+    /// <summary>일반 Wave에서 살아 있는 적을 표시할 때도 같은 위치·화살표·페이드 처리를 사용한다.</summary>
+    public void AdvanceEnemies(float deltaTime, IReadOnlyList<EnemyController> enemies, bool markAll)
+    {
         EnsureInit();
         deltaTime = Mathf.Max(0f, deltaTime);
         clock += deltaTime;
         for (int i = 0; i < pool.Count; i++) if (pool[i] != null) pool[i].Wanted = false;
-        MarkingAll = false;
-        // 순찰 방(통과 가능)은 표시하지 않는다(DESIGN_V4 §2.8 '적 마커는 끔').
-        if (active && source != null && source.Phase == DungeonRoomPhase.Patrol) active = false;
 
         var cam = ResolveCamera();
-        var enemies = active && source != null ? source.HostileEnemies : null;
+        MarkingAll = false;
         if (enemies != null && cam != null)
         {
-            MarkingAll = ShouldMarkAll(source.HostilesAllSpawned, source.HostilesRemaining, source.HostilesTotal, markerThreshold);
+            MarkingAll = markAll;
             for (int t = 0; t < tracks.Count; t++) { var tr = tracks[t]; tr.seen = false; tracks[t] = tr; }
 
             Rect viewport = cam.pixelRect;

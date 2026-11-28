@@ -11,6 +11,7 @@ public class TutorialGoal : MonoBehaviour
     private WaveManager waveOwner;
     private bool waveReachGoal;
     public bool HasReached => goalIn;
+    public bool IsPresented => !goalIn && (!waveReachGoal || (waveOwner != null && waveOwner.ShouldShowGoal(this)));
     public bool IsWaveGoalActive => isActiveAndEnabled && !goalIn && waveOwner != null && waveOwner.IsGoalActive(this);
 
     public void ConfigureWaveGoal(string key, WaveManager owner = null, bool reachToClear = false)
@@ -24,7 +25,12 @@ public class TutorialGoal : MonoBehaviour
     public void InitializeGoalSetting()
     {
         goalIn = false;
-        if (goalParticle != null) goalParticle.SetActive(true);
+        RefreshVisibility();
+    }
+
+    internal void RefreshVisibility()
+    {
+        if (goalParticle != null) goalParticle.SetActive(IsPresented);
     }
 
     private void OnTriggerEnter2D(Collider2D collision)

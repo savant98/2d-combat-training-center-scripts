@@ -11,7 +11,7 @@ public enum GameEventId
     TerminalTutorial,    // Lobby 도착 뒤: 단말기 열기 → 메시지 수신함의 입소 환영 메일 확인 → 훈련 메뉴
     UnlockUpgrade,       // 업그레이드 시설 해금(전기가 차올라 다시 가동)
     UnlockSelfTraining,  // 자율훈련장 해금(부품이 채워져 가동)
-    UnlockFieldElevator, // 각개 전투 엘리베이터 등장(앞선 훈련을 모두 수료하고 Lobby로 돌아오면). Scene에는 정수로 남으므로 새 값은 끝에만 더한다
+    UnlockFieldElevator, // 전투 훈련 엘리베이터 호출. Scene에는 정수로 남으므로 새 값은 끝에만 더한다
 }
 
 /// <summary>
@@ -20,10 +20,9 @@ public enum GameEventId
 /// - 실행자는 그대로 둔다: 최초 시작 도입부는 NightmareIntroSequence, 단말기 안내는 LobbyOnboarding, 시설 해금 연출은 LobbyStationUnlock.
 ///   이 매니저는 어떤 이벤트를 언제 시작할지, 끝났는지를 정하고 기록한다.
 /// - 시설 해금: 지정한 훈련을 지정한 등급 이상으로 수료하고 Lobby로 돌아오면 그 시설의 해금 이벤트가 따로따로 차례로 재생된다.
-///   카메라가 시설 쪽으로 옮겨 가 해금 Animation과 소리를 보여 주고 돌아온다. 조건(requiredTrainingId)이 비어 있으면 자동으로 일어나지 않는다
-///   (사용자: "추후 특정 훈련을 통과 이상으로 클리어하고 Lobby로 복귀하면 발생시킬 거야" — 지금은 조건 자리만 두고 시험 실행 진입점을 둔다).
+///   훈련 목록에서 시설별 선행 훈련을 읽는다. 카메라가 시설 쪽으로 옮겨 가 해금 Animation과 소리를 보여 주고 돌아온다.
 /// - 이미 끝난 해금은 세이브에 남고, 다음 접속에서 시설이 바로 가동 상태로 선다.
-/// - 각개 전투 엘리베이터(2026-11-20): 1~7 훈련을 모두 수료하고 Lobby로 돌아오면 천장 해치가 열리고 엘리베이터가 내려오는 연출(FieldElevator)을 한 번 재생한다.
+/// - 전투 훈련을 선택하면 천장 해치가 열리고 엘리베이터가 내려온다. 플레이어가 탑승할 때 훈련장으로 출발한다.
 ///   시설 해금과 실행자·조건이 달라 elevatorEvent 칸에 따로 둔다. 연출 동안 Lobby 카메라의 렌즈를 넓혀 천장 해치와 위층 바닥을 한 화면에 담는다.
 /// - 최초 시작 도입부 끄기(2026-11-26, 사용자 요청 "Intro컷씬에서 Nightmare나오는 부분 삭제(의미없다고 피드백받음). 화면 노이즈부분부터
 ///   Nightmare가 나오는 부분까지 통째로 제거. 완전 삭제는 하지 말고, 해당 이벤트를 비활성화"): playFirstStartIntro(기본 꺼짐)가 꺼져 있으면
@@ -43,21 +42,21 @@ public sealed class GameEventManager : MonoBehaviour
         public Grade minimumGrade = Grade.Pass;
     }
 
-    /// <summary>각개 전투 엘리베이터 등장 이벤트. 실행자·조건이 시설 해금과 달라 따로 둔다(시설 해금 칸의 형식은 도구·회귀가 읽으므로 바꾸지 않는다).</summary>
+    /// <summary>전투 훈련 엘리베이터 등장 이벤트. 실행자·조건이 시설 해금과 달라 따로 둔다(시설 해금 칸의 형식은 도구·회귀가 읽으므로 바꾸지 않는다).</summary>
     [Serializable]
     public sealed class ElevatorRevealEvent
     {
         public GameEventId id = GameEventId.UnlockFieldElevator;
         [Tooltip("천장 해치가 열리고 케이지가 내려오는 연출을 맡는 Lobby 엘리베이터")] public FieldElevator elevator;
-        [Tooltip("훈련 목록(TrainingCatalogSO) 진행 사슬에서 이 훈련보다 앞선 훈련을 모두 수료하고 Lobby로 돌아오면 발생한다. 비우면 자동으로 발생하지 않는다")]
-        public string beforeTrainingId = "FieldCombat";
+        [Tooltip("훈련 목록에 엘리베이터 목적지가 지정되지 않은 경우 쓸 기존 훈련 키")]
+        public string beforeTrainingId = "CombatBasic";
         [Min(1f), Tooltip("연출 동안 Lobby 카메라의 Orthographic Size. 천장 해치와 위층 바닥을 한 화면에 담는다")] public float cameraSize = 9f;
     }
 
     [SerializeField] private NightmareIntroSequence intro;
     [SerializeField, Tooltip("단말기 안내(InventoryTerminal 안의 Onboarding)")] private LobbyOnboarding onboarding;
     [SerializeField] private StationUnlockEvent[] unlockEvents = Array.Empty<StationUnlockEvent>();
-    [SerializeField, Tooltip("각개 전투 엘리베이터 등장(시설 해금과 따로 줄을 서서 그 뒤에 재생된다)")] private ElevatorRevealEvent elevatorEvent = new ElevatorRevealEvent();
+    [SerializeField, Tooltip("훈련 메뉴에서 호출하는 전투 훈련 엘리베이터")] private ElevatorRevealEvent elevatorEvent = new ElevatorRevealEvent();
 
     [Header("해금 연출의 카메라")]
     [SerializeField, Min(0f), Tooltip("Lobby에 도착한 뒤 이벤트를 시작하기까지 기다리는 시간")] private float lobbySettleDelay = .8f;
@@ -114,6 +113,7 @@ public sealed class GameEventManager : MonoBehaviour
         RestoreLobbyLens();
         ReleaseBlock();
         CurrentEvent = null;
+        pending.Clear();
     }
 
     // ===================== 최초 시작 =====================
@@ -166,30 +166,61 @@ public sealed class GameEventManager : MonoBehaviour
     /// <summary>해금 이벤트의 조건(지정 훈련을 지정 등급 이상으로 수료)을 만족하는가.</summary>
     public static bool MeetsCondition(StationUnlockEvent unlock)
     {
-        if (unlock == null || string.IsNullOrEmpty(unlock.requiredTrainingId) || DataManager.Instance == null) return false;
-        var record = DataManager.Instance.GetTrainingRoomRecord(unlock.requiredTrainingId);
+        if (unlock == null || DataManager.Instance == null) return false;
+        var required = StationPrerequisite(unlock.id);
+        string trainingId = required != null ? required.trainingId : unlock.requiredTrainingId;
+        if (string.IsNullOrEmpty(trainingId)) return false;
+        var record = DataManager.Instance.GetTrainingRoomRecord(trainingId);
         return DataManager.IsCleared(record) && record.bestGrade >= unlock.minimumGrade;
     }
 
-    /// <summary>엘리베이터 등장 조건(훈련 목록의 진행 사슬에서 beforeTrainingId보다 앞선 훈련을 모두 수료)을 만족하는가. 목록 에셋이 없으면 false.</summary>
+    private static TrainingDefinitionSO StationPrerequisite(GameEventId id)
+    {
+        var catalog = TrainingCatalogSO.Load();
+        return id switch
+        {
+            GameEventId.UnlockUpgrade => catalog != null ? catalog.upgradeRequiredTraining : null,
+            GameEventId.UnlockSelfTraining => catalog != null ? catalog.selfTrainingRequiredTraining : null,
+            _ => null,
+        };
+    }
+
     public static bool MeetsCondition(ElevatorRevealEvent reveal)
     {
-        if (reveal == null || string.IsNullOrEmpty(reveal.beforeTrainingId) || DataManager.Instance == null) return false;
+        if (reveal == null) return false;
         var catalog = TrainingCatalogSO.Load();
-        return catalog != null && catalog.AllProgressionCleared(reveal.beforeTrainingId, DataManager.Instance);
+        var entry = catalog != null ? catalog.ElevatorTraining ?? catalog.Find(reveal.beforeTrainingId) : null;
+        return entry != null && catalog.IsUnlocked(entry, DataManager.Instance);
+    }
+
+    /// <summary>훈련 메뉴에서 선택한 목적지로 갈 엘리베이터를 메뉴가 닫힌 뒤 호출한다.</summary>
+    public bool RequestTrainingElevator(WaveDataSO waveData)
+    {
+        var elevator = elevatorEvent?.elevator;
+        if (waveData == null || elevator == null || GameManager.Instance == null || RoomManager.Instance == null ||
+            RoomManager.Instance.CurrentRoom != GameManager.Instance.LobbyRoom ||
+            elevator.ResolveDestination() != waveData || !MeetsCondition(elevatorEvent)) return false;
+        if (elevator.IsRevealed || elevator.IsPlaying) return true;
+
+        if (!pending.Contains(elevatorEvent.id)) pending.Enqueue(elevatorEvent.id);
+        if (lobbyRoutine == null) lobbyRoutine = StartCoroutine(LobbyArrivalRoutine(0f));
+        return true;
     }
 
     private bool IsElevator(GameEventId id) => elevatorEvent != null && elevatorEvent.elevator != null && id == elevatorEvent.id;
 
-    // 이미 끝난 해금은 시설을 바로 가동 상태로 둔다(연출 없이).
     private void ApplySavedUnlocks()
     {
         foreach (var unlock in unlockEvents)
-            if (unlock != null && unlock.unlock != null && unlock.unlock.Station != null && IsCompleted(unlock.id))
-                unlock.unlock.Station.SetPowered(true);
-        // 엘리베이터: 끝난 등장은 내려와 있는 상태로(연출 없이), 아직이면 해치가 닫히고 케이지가 없는 상태로 둔다.
-        if (elevatorEvent != null && elevatorEvent.elevator != null && !elevatorEvent.elevator.IsPlaying)
-            elevatorEvent.elevator.ApplyRevealed(IsCompleted(elevatorEvent.id));
+        {
+            var station = unlock?.unlock != null ? unlock.unlock.Station : null;
+            if (station == null) continue;
+            // 이전 선행 조건으로 해금된 세이브도 현재 수료 조건을 적용한다. 구매 기록은 세이브에 남는다.
+            if (StationPrerequisite(unlock.id) != null)
+                station.SetPowered(IsCompleted(unlock.id) && MeetsCondition(unlock));
+            else if (IsCompleted(unlock.id))
+                station.SetPowered(true);
+        }
     }
 
     // ===================== Lobby 도착 =====================
@@ -199,25 +230,24 @@ public sealed class GameEventManager : MonoBehaviour
         var game = GameManager.Instance;
         if (game == null || RoomManager.Instance.CurrentRoom != game.LobbyRoom) return;
         ApplySavedUnlocks();
-        if (lobbyRoutine == null) lobbyRoutine = StartCoroutine(LobbyArrivalRoutine());
+        var ride = elevatorEvent?.elevator != null ? elevatorEvent.elevator.Ride : null;
+        if (ride != null && ride.HoldsCar && !ride.IsRiding) ride.ForceReturnCar();
+        if (lobbyRoutine == null) lobbyRoutine = StartCoroutine(LobbyArrivalRoutine(lobbySettleDelay));
     }
 
-    private IEnumerator LobbyArrivalRoutine()
+    private IEnumerator LobbyArrivalRoutine(float settleDelay)
     {
         try
         {
             // 전환이 끝나 입력 막기가 모두 풀린 뒤에 시작한다(전환 끝의 ClearGameplayBlocks가 우리 막기를 지우지 않게).
             while (RoomTransitionManager.Instance != null && RoomTransitionManager.Instance.IsTransitioning) yield return null;
             float wait = 0f;
-            while (wait < lobbySettleDelay) { wait += Time.deltaTime; yield return null; }
+            yield return null;
+            while (wait < settleDelay) { wait += Time.deltaTime; yield return null; }
 
             foreach (var unlock in unlockEvents)
                 if (unlock != null && !IsCompleted(unlock.id) && MeetsCondition(unlock) && !pending.Contains(unlock.id))
                     pending.Enqueue(unlock.id);
-            // 엘리베이터 등장은 시설 해금 뒤에 줄을 선다.
-            if (elevatorEvent != null && elevatorEvent.elevator != null && !IsCompleted(elevatorEvent.id) && MeetsCondition(elevatorEvent) && !pending.Contains(elevatorEvent.id))
-                pending.Enqueue(elevatorEvent.id);
-
             // 조건을 만족한 해금은 하나씩 따로 재생한다.
             while (pending.Count > 0)
             {
@@ -230,7 +260,7 @@ public sealed class GameEventManager : MonoBehaviour
                 var id = pending.Dequeue();
                 // 연출 루틴을 Unity의 중첩 코루틴으로 맡기지 않고 직접 돌린다. 연출 루틴 안에서 예외가 나도 그 루틴과 이 루틴의 finally
                 // (입력 막기·카메라·렌즈 복구, lobbyRoutine 비우기)가 돌아 다음 Lobby 도착 이벤트가 막히지 않는다.
-                for (var step = IsElevator(id) ? PlayElevatorRoutine(true) : PlayUnlockRoutine(id, true); step.MoveNext();) yield return step.Current;
+                for (var step = IsElevator(id) ? PlayElevatorRoutine(false) : PlayUnlockRoutine(id, true); step.MoveNext();) yield return step.Current;
             }
         }
         finally
@@ -255,7 +285,7 @@ public sealed class GameEventManager : MonoBehaviour
     private void TestUnlockUpgrade() => TriggerUnlock(GameEventId.UnlockUpgrade);
     [ContextMenu("시험: 자율훈련장 해금 연출")]
     private void TestUnlockSelfTraining() => TriggerUnlock(GameEventId.UnlockSelfTraining);
-    [ContextMenu("시험: 각개 전투 엘리베이터 등장 연출")]
+    [ContextMenu("시험: 전투 훈련 엘리베이터 등장 연출")]
     private void TestRevealFieldElevator() => TriggerUnlock(GameEventId.UnlockFieldElevator);
 
     private StationUnlockEvent Find(GameEventId id)

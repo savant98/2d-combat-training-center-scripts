@@ -225,7 +225,7 @@ public static class DungeonPropFeedback
         return 1f - t * t * (3f - 2f * t);
     }
 
-    public static void Play(FeedbackDataSO data, Vector3 position, Quaternion rotation)
+    public static void Play(FeedbackDataSO data, Vector3 position, Quaternion rotation, float shakeMultiplier = 1f)
     {
         if (data == null || FeedbackPlayer.Instance == null) return;
         float gain = DistanceGain(position);
@@ -238,7 +238,7 @@ public static class DungeonPropFeedback
             if (copy.particlePrefabs == null) copy.particlePrefabs = Array.Empty<GameObject>();
             copies[data] = copy;
         }
-        copy.shakeIntensity = data.shakeIntensity * gain;
+        copy.shakeIntensity = data.shakeIntensity * gain * shakeMultiplier;
         if (data.sound != null)
         {
             copy.sound = data.sound.WithPitchMultiplier(1f);

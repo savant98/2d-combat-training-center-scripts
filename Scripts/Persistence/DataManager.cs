@@ -36,6 +36,7 @@ public class SaveData
 
     // 필증을 이미 준 훈련(trainingId). 같은 훈련을 다시 수료해도 또 주지 않는다. 옛 세이브에는 없어 빈 목록으로 읽힌다.
     public List<string> certifiedTrainings = new List<string>();
+    public List<string> bonusCertifiedTrainings = new List<string>();
 
     // 실제 등장 연출이 끝나 만난 적입니다. 이전 저장 파일은 비어 있는 도감으로 읽습니다.
     public List<string> encounteredEnemies = new List<string>();
@@ -857,22 +858,19 @@ public class DataManager : MonoBehaviour
             && CurrentSaveData.certifiedTrainings.Contains(trainingId);
     }
 
-    /// <summary>
-    /// 훈련을 수료한 판에서 부른다. 이 훈련의 필증을 아직 받지 않았으면 1개를 주고 저장한다(최초 수료 보상).
-    /// 이미 받았거나 훈련 목록(TrainingCatalogSO)의 지급 대상이 아니면 아무것도 하지 않고 false.
-    /// </summary>
-    public bool TryAwardTrainingCertificate(string trainingId)
-    {
-        if (CurrentSaveData == null || string.IsNullOrEmpty(trainingId) || HasTrainingCertificate(trainingId)) return false;
-        var catalog = TrainingCatalogSO.Load();
-        if (catalog == null || !catalog.GrantsCertificate(trainingId)) return false;
+    public bool TryAwardTrainingCertificate(string trainingId) => AwardTrainingCertificates(trainingId) > 0;
 
-        CurrentSaveData.certifiedTrainings ??= new List<string>();
-        CurrentSaveData.certifiedTrainings.Add(trainingId);
-        CurrentSaveData.trainingCertificates++;
+    /// <summary>처음 수료한 훈련의 보상을 지급하고 실제 지급 수량을 돌려준다.</summary>
+    public int AwardTrainingCertificates(string trainingId)
+    {
+        if (CurrentSaveData == null || string.IsNullOrEmpty(trainingId) || HasTrainingCertificate(trainingId)) return 0;
+        int reward = TrainingCatalogSO.Load()?.CertificateReward(trainingId) ?? 0;
+        if (reward == 0) return 0;
+
+        AddCertificateReward(trainingId, reward, alreadyGranted: false);
         SaveGame();
-        Debug.Log($"[DataManager] 훈련 필증 지급: {trainingId} (보유 {CurrentSaveData.trainingCertificates})");
-        return true;
+        Debug.Log($"[DataManager] 훈련 필증 지급: {trainingId} +{reward} (잔액 {CurrentSaveData.trainingCertificates})");
+        return reward;
     }
 
     /// <summary>필증을 쓰고 저장한다. 모자라면 쓰지 않고 false.</summary>
@@ -900,16 +898,28 @@ public class DataManager : MonoBehaviour
         TrainingCatalogSO catalog = null;
         foreach (var record in trainingCache.Values)
         {
-            if (!IsCleared(record) || CurrentSaveData.certifiedTrainings.Contains(record.trainingId)) continue;
-            if (catalog == null)
-            {
-                catalog = TrainingCatalogSO.Load();
-                if (catalog == null) return; // 훈련 목록이 없으면 지급 대상을 알 수 없다
-            }
-            if (!catalog.GrantsCertificate(record.trainingId)) continue;
-            CurrentSaveData.certifiedTrainings.Add(record.trainingId);
-            CurrentSaveData.trainingCertificates++;
+            if (!IsCleared(record)) continue;
+            bool alreadyGranted = CurrentSaveData.certifiedTrainings.Contains(record.trainingId);
+            if (alreadyGranted && CurrentSaveData.bonusCertifiedTrainings?.Contains(record.trainingId) == true) continue;
+            catalog ??= TrainingCatalogSO.Load();
+            if (catalog == null) return;
+
+            int reward = catalog.CertificateReward(record.trainingId);
+            if (reward > (alreadyGranted ? 1 : 0)) AddCertificateReward(record.trainingId, reward, alreadyGranted);
         }
+    }
+
+    private void AddCertificateReward(string trainingId, int reward, bool alreadyGranted)
+    {
+        CurrentSaveData.certifiedTrainings ??= new List<string>();
+        if (!alreadyGranted) CurrentSaveData.certifiedTrainings.Add(trainingId);
+        // 기존 세이브에는 최초 보상 1개를 지급한 기록이 있으므로 늘어난 수량만 한 번 보충한다.
+        if (reward > 1)
+        {
+            CurrentSaveData.bonusCertifiedTrainings ??= new List<string>();
+            CurrentSaveData.bonusCertifiedTrainings.Add(trainingId);
+        }
+        CurrentSaveData.trainingCertificates += reward - (alreadyGranted ? 1 : 0);
     }
 
     // ==========================

@@ -5,7 +5,7 @@ using UnityEngine;
 public sealed class TerminalEquipmentGlyph : UnityEngine.UI.MaskableGraphic
 {
     // 직렬화된 정수 값을 지키기 위해 새 아이콘은 항상 끝에 붙인다(Shield=7, Breakable=8, Break=9).
-    public enum Glyph { Move, Jump, Dash, Attack, Swap, Gear, Secondary, Shield, Breakable, Break, Burn, Resolve, Heat, Gauge, GearReady, Storage }
+    public enum Glyph { Move, Jump, Dash, Attack, Swap, Gear, Secondary, Shield, Breakable, Break, Burn, Resolve, Heat, Gauge, GearReady, Storage, AutoAim, Health }
     [SerializeField] private Glyph glyph;
     [SerializeField] private float thickness=2.8f;
     private Rect drawingRect;
@@ -38,6 +38,18 @@ public sealed class TerminalEquipmentGlyph : UnityEngine.UI.MaskableGraphic
                 Line(vh,new Vector2(-33,0),new Vector2(-20,0));Line(vh,new Vector2(-29,-14),new Vector2(-4,-14));break;
             case Glyph.Attack:
                 Blade(vh,new Vector2(-25,-25),new Vector2(25,25));Blade(vh,new Vector2(25,-25),new Vector2(-25,25));break;
+            case Glyph.AutoAim:
+                Ring(vh, 21f, 24);
+                Line(vh, new Vector2(-32f, 0f), new Vector2(-12f, 0f));
+                Line(vh, new Vector2(12f, 0f), new Vector2(32f, 0f));
+                Line(vh, new Vector2(0f, -32f), new Vector2(0f, -12f));
+                Line(vh, new Vector2(0f, 12f), new Vector2(0f, 32f));
+                break;
+            case Glyph.Health:
+                Plate(vh, Vector2.zero, new Vector2(56f, 56f), 8f);
+                Line(vh, new Vector2(-15f, 0f), new Vector2(15f, 0f));
+                Line(vh, new Vector2(0f, -15f), new Vector2(0f, 15f));
+                break;
             case Glyph.Swap:
                 Line(vh,new Vector2(-27,-6),new Vector2(-27,15));Arrow(vh,new Vector2(-27,15),new Vector2(25,15),9);
                 Line(vh,new Vector2(27,6),new Vector2(27,-15));Arrow(vh,new Vector2(27,-15),new Vector2(-25,-15),9);break;

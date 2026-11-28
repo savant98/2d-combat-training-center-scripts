@@ -4,7 +4,7 @@ using UnityEngine.EventSystems;
 /// <summary>
 /// 7차(2026-11-26, DESIGN_V7 §1.4 V7) 현장 단말기 큰 지도의 마우스 입력. EventSystem 포인터 이벤트(MainScene EventSystem + InputSystemUIInputModule, UI Canvas GraphicRaycaster)를
 /// 단말기 공개 API로 넘기기만 한다 — 입력 설정 에셋·PlayerInputActions는 건드리지 않는다. Selectable이 아니어서 방향키 내비게이션·Enter 재클릭 문제가 없다.
-/// - Role.Map(지도 위 투명 hit Image): 왼쪽 끌기 = 지도 이동(<see cref="DungeonFieldTerminal.PointerPan"/>), 휠 = 확대·축소(<see cref="DungeonFieldTerminal.PointerScroll"/>).
+/// - Role.Map(구역 지도 전체를 감싸는 투명 hit Image): 왼쪽 끌기 = 지도 이동(<see cref="DungeonFieldTerminal.PointerPan"/>), 휠 = 확대·축소(<see cref="DungeonFieldTerminal.PointerScroll"/>).
 ///   끌기 델타는 RectTransformUtility.ScreenPointToLocalPointInRectangle(space, 위치, pressEventCamera)로 앞뒤 점을 지도 좌표로 바꾼 차이다(손목 단말기 배율·회전·CanvasScaler 반영).
 /// - Role.ZoomIn·ZoomOut·Recenter(머리줄 버튼 hit Image): 왼쪽 클릭 = 버튼, 올리면 밝게(단말기가 Controls 층에 알림), 휠도 확대·축소.
 /// - 왼쪽 버튼만 받는다(오른쪽·가운데 무시). 단말기는 열려 있고 닫는 중이 아니며 최상단 입력 수신자일 때만 받는다(단말기가 확인).
@@ -24,7 +24,6 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
         Recenter = 3,
         Restart = 4,
         GiveUp = 5,
-        MapButton = 6,
         ConfirmYes = 7,
         ConfirmNo = 8,
     }
@@ -68,7 +67,6 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
             if (!eventData.dragging) terminal.PressMapButton();
             return;
         }
-        if (role == Role.MapButton) { terminal.PressMapButton(); return; }
         if (role == Role.Restart) { terminal.PressRestart(); return; }
         if (role == Role.GiveUp) { terminal.PressGiveUp(); return; }
         terminal.PressControl(ControlIndex);
@@ -77,7 +75,7 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
     public void OnPointerEnter(PointerEventData eventData)
     {
         if (terminal == null) return;
-        if (role == Role.Map || role == Role.MapButton) { terminal.SetMapButtonHover(true); return; }
+        if (role == Role.Map) { terminal.SetMapButtonHover(true); return; }
         if (role == Role.Restart) { terminal.SetRestartHover(true); return; }
         if (role == Role.GiveUp) { terminal.SetGiveUpHover(true); return; }
         if (role == Role.ConfirmYes) { terminal.SetConfirmHover(true, true); return; }
@@ -88,7 +86,7 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
     public void OnPointerExit(PointerEventData eventData)
     {
         if (terminal == null) return;
-        if (role == Role.Map || role == Role.MapButton) { terminal.SetMapButtonHover(false); return; }
+        if (role == Role.Map) { terminal.SetMapButtonHover(false); return; }
         if (role == Role.Restart) { terminal.SetRestartHover(false); return; }
         if (role == Role.GiveUp) { terminal.SetGiveUpHover(false); return; }
         if (role == Role.ConfirmYes) { terminal.SetConfirmHover(true, false); return; }
@@ -99,7 +97,7 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
     public void OnScroll(PointerEventData eventData)
     {
         if (eventData == null || !Alive) return;
-        if (role == Role.Restart || role == Role.GiveUp || role == Role.MapButton || role == Role.ConfirmYes || role == Role.ConfirmNo) return;
+        if (role == Role.Restart || role == Role.GiveUp || role == Role.ConfirmYes || role == Role.ConfirmNo) return;
         if (terminal.State == DungeonFieldTerminal.TerminalState.ConfirmPopup) return;
         terminal.PointerScroll(eventData.scrollDelta.y);
     }
@@ -132,7 +130,6 @@ public sealed class DungeonFieldTerminalPointer : MonoBehaviour,
     {
         if (terminal == null) return;
         if (role == Role.Map) { terminal.EndPointerDrag(); terminal.SetMapButtonHover(false); }
-        else if (role == Role.MapButton) terminal.SetMapButtonHover(false);
         else if (role == Role.Restart) terminal.SetRestartHover(false);
         else if (role == Role.GiveUp) terminal.SetGiveUpHover(false);
         else if (role == Role.ConfirmYes) terminal.SetConfirmHover(true, false);

@@ -66,6 +66,7 @@ internal static class TutorialGuideTheme
     public static TerminalEquipmentGlyph.Glyph StepGlyph(TutorialStepIcon icon, TutorialAction fallbackAction) => icon switch
     {
         TutorialStepIcon.Attack => TerminalEquipmentGlyph.Glyph.Attack,
+        TutorialStepIcon.AutoAim => TerminalEquipmentGlyph.Glyph.AutoAim,
         TutorialStepIcon.Shield => TerminalEquipmentGlyph.Glyph.Shield,
         TutorialStepIcon.Gear => TerminalEquipmentGlyph.Glyph.Gear,
         TutorialStepIcon.Break => TerminalEquipmentGlyph.Glyph.Breakable,
@@ -83,6 +84,7 @@ internal static class TutorialGuideTheme
         ("무장 세트", "#FF85D0"),
         ("무장 전환", "#FF85D0"),
         ("빠른 장전", "#FF8A5B"),
+        ("자동 조준", "#4CD9FF"),
         ("기어 스킬", "#64FDFD"),
         ("기어 준비", "#64FDFD"),
         ("무기 투척", "#FF8A5B"),
@@ -146,6 +148,7 @@ internal static class TutorialGuideTheme
         }
         switch (step.target)
         {
+            case TutorialFocusTarget.AutoAim: return new() { Key("ToggleAutoAim"), Label("자동 조준 전환") };
             case TutorialFocusTarget.WeaponSet: return SwapKeys();
             case TutorialFocusTarget.GearOne:
             case TutorialFocusTarget.GearTwo:

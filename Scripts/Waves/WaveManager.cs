@@ -13,6 +13,7 @@ public class WaveManager : MonoBehaviour
 
     public WaveDataSO Data => waveData;
     public IReadOnlyList<WorldEntityBase> WorldEntities => currentWaveEntities;
+    internal IReadOnlyCollection<EnemyController> EnemiesInCurrentWave => currentWaveEnemies;
     public Transform SpawnRoot => spawnRoot;
     private WavePlayerStart playerStartSequence;
     private readonly Dictionary<WaveSpawnInfo, WorldEntityBase> preparedCourses = new();
@@ -60,6 +61,7 @@ public class WaveManager : MonoBehaviour
     public int aliveTargets = 0;
 
     private Coroutine coroutine;
+    private bool arrivalPrepared;
     private bool isWaveActive = false;
     private bool isSpawnActive = false;
     private bool bossDefeatedThisWave;
@@ -75,6 +77,22 @@ public class WaveManager : MonoBehaviour
 
     public void BeginWaves(bool showWaveIntro = true)
     {
+        bool usePreparedRoom = arrivalPrepared;
+        arrivalPrepared = false;
+        if (!usePreparedRoom) ResetToFirstWave();
+        ActiveInstance = this;
+
+        if (coroutine != null)
+            StopCoroutine(coroutine);
+
+        if (!SuppressTrainingRecording && TrainingRunTracker.Instance != null && currentTrainingDef != null)
+            TrainingRunTracker.Instance.Begin(currentTrainingDef);
+
+        if (showWaveIntro) coroutine = StartCoroutine(NextWaveDelay(0f, usePreparedRoom));
+        else coroutine = StartCoroutine(PrepareWave(false, usePreparedRoom));
+    }
+    private void ResetToFirstWave()
+    {
         IsHalted = false;
         ReleasePlayer();
         preparedCourses.Clear();
@@ -89,17 +107,17 @@ public class WaveManager : MonoBehaviour
         isWaveActive = false;
         WavesReset?.Invoke();
         currentWaveIndex = 0;
-        ActiveInstance = this;
-
-        if (coroutine != null)
-            StopCoroutine(coroutine);
-
-        if (!SuppressTrainingRecording && TrainingRunTracker.Instance != null && currentTrainingDef != null)
-            TrainingRunTracker.Instance.Begin(currentTrainingDef);
-
-        if (showWaveIntro) coroutine = StartCoroutine(NextWaveDelay());
-        else coroutine = StartCoroutine(PrepareAndSpawn());
     }
+
+    // 입장 화면이 가려져 있는 동안 시작 방을 구성한다. 기록과 Wave 시계는 BeginWaves에서 시작한다.
+    internal IEnumerator PrepareDungeonArrival(WaveCellTerrain terrain, DungeonManager dungeon)
+    {
+        ResetToFirstWave();
+        yield return terrain.Prepare(0, WaveRoomState.PlayerStartAt(waveData, 0));
+        arrivalPrepared = dungeon.PrepareArrival();
+        yield return null;
+    }
+
     public void RestartWaves()
     {
         GameManager.Instance.Player.ResetPlayerStatus();
@@ -108,6 +126,7 @@ public class WaveManager : MonoBehaviour
     }
     public void ForceClear()
     {
+        arrivalPrepared = false;
         IsHalted = false;
         ReleasePlayer();
         preparedCourses.Clear();
@@ -124,17 +143,16 @@ public class WaveManager : MonoBehaviour
         if (ActiveInstance == this)
             ActiveInstance = null;
     }
-    private IEnumerator NextWaveDelay(float clearDelay = 0f)
+    private IEnumerator NextWaveDelay(float clearDelay = 0f, bool usePreparedRoom = false)
     {
         // 앞 웨이브의 정리(발판 소멸·지형 복귀)를 기다린 뒤 다음 웨이브 안내를 시작한다.
         if (clearDelay > 0f)
             yield return new WaitForSeconds(clearDelay);
 
         UIManager.Instance.ShowBossHP(false);
-        yield return PrepareWave(true);
+        yield return PrepareWave(true, usePreparedRoom);
     }
-    private IEnumerator PrepareAndSpawn() => PrepareWave(false);
-    private IEnumerator PrepareWave(bool showWaveIntro)
+    private IEnumerator PrepareWave(bool showWaveIntro, bool usePreparedRoom)
     {
         var wave = waveData.waves[currentWaveIndex];
         int preparation = ++preparationSerial;
@@ -153,7 +171,16 @@ public class WaveManager : MonoBehaviour
             bool carried = PlayerStartSequence.IsCarrying;
             // 안쪽 준비 순서는 Unity에 맡기지 않고(yield return 순서) 직접 돌린다. 맡기면 안쪽에서 예외가 났을 때 이 순서가 그대로 멈춰
             // 아래 finally가 실행되지 않고, Player가 구속된 채(옮기는 Wave면 크레인에 들린 채) 남는다.
-            if (cells != null) { for (var step = Unwound(cells.Prepare(currentWaveIndex)); step.MoveNext();) yield return step.Current; }
+            if (cells != null)
+            {
+                if (!usePreparedRoom)
+                {
+                    if (TryGetComponent(out DungeonCutsceneDirector cutscene) && cutscene.IsCoveredArrival(currentWaveIndex))
+                        cells.PrepareCoveredRoom(currentWaveIndex);
+                    else
+                        for (var step = Unwound(cells.Prepare(currentWaveIndex)); step.MoveNext();) yield return step.Current;
+                }
+            }
             else
             {
                 if (roomLayout != null && roomLayout.isActiveAndEnabled) { for (var step = Unwound(roomLayout.PrepareWave(currentWaveIndex)); step.MoveNext();) yield return step.Current; }
@@ -227,6 +254,7 @@ public class WaveManager : MonoBehaviour
     }
     private void OnDisable()
     {
+        arrivalPrepared = false;
         StopTutorialPractice();
         StopAllCoroutines();
         isWaveActive = isSpawnActive = false;
@@ -505,6 +533,19 @@ public class WaveManager : MonoBehaviour
 
     public bool IsGoalActive(TutorialGoal goal) => goal != null && goal.isActiveAndEnabled && isWaveActive && currentWave != null
         && currentWave.clearType == WaveClearType.ReachGoal && activeGoals.Contains(goal);
+
+    internal bool ShouldShowGoal(TutorialGoal goal)
+    {
+        if (!IsGoalActive(goal)) return false;
+        var lesson = currentWave.tutorial;
+        return lesson == null || !lesson.enabled || !lesson.RequiresPractice || TutorialWaveGuide.CanComplete(this);
+    }
+
+    internal void RevealPracticeGoals()
+    {
+        foreach (var goal in activeGoals)
+            if (goal != null) goal.RefreshVisibility();
+    }
 
     public bool CanReachGoal(TutorialGoal goal) => IsGoalActive(goal)
         && TutorialWaveGuide.CanComplete(this)

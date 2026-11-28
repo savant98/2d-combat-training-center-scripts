@@ -133,6 +133,7 @@ public class StageHUD : MonoBehaviour
     private RectTransform barArea, barAreaInner, barAreaSource;
     // 지금 체력바가 보여 주는 보스(검증·연출이 읽기만 한다).
     public EnemyController CurrentBoss => boss;
+    public bool IsBossBarVisible => hpGroup != null && (boss != null || hpGroup.alpha > .01f);
 
     private void Awake()
     {

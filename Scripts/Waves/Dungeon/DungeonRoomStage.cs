@@ -764,7 +764,9 @@ public sealed class DungeonRoomStage
             powered.Add(new PoweredPart { part = part, component = part as Component, owner = owner, lease = lease });
             poweredList.Add(part);
         }
-        foreach (var part in target.GetComponentsInChildren<IDungeonRoomHazard>(true))
+        var roomHazards = target.GetComponentsInChildren<IDungeonRoomHazard>(true);
+        if (roomHazards.Length > 0) DungeonHazardSorting.MoveInFrontOfProps(target);
+        foreach (var part in roomHazards)
         {
             if (part == null || hazardList.Contains(part)) continue;
             hazards.Add(new HazardPart { part = part, component = part as Component, owner = owner, lease = lease });

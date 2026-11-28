@@ -24,7 +24,12 @@ public class RoomTransitionManager : MonoBehaviour
             return;
 
         var player = GameManager.Instance != null ? GameManager.Instance.Player : null;
-        if (player != null && player.AbilityManager.Grab != null) player.AbilityManager.Grab.Abort();
+        var from = RoomManager.Instance != null ? RoomManager.Instance.CurrentRoom : null;
+        var to = request.targetRoom;
+        bool leavingPractice = from != null && from.roomType == RoomType.SelfTraining && from != to;
+        if (player != null && (leavingPractice || (to != null && to.roomType == RoomType.Training)))
+            player.ResetCombatState();
+        else player?.AbilityManager?.Grab?.Abort();
         StartCoroutine(TransitionRoutine(request));
     }
 

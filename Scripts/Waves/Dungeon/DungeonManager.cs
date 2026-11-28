@@ -78,9 +78,6 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     // 3차 화면 요소: 미니맵이 함께 구현할 수 있는 상세·목표 접점, 목표 패널, 현장 단말기(지도·상세·목표 접점을 찾는 대로 연결).
     private IDungeonDetailView minimapDetailView;
     private IDungeonObjectiveView minimapObjectiveView;
-    private GameObject objectivePanel;
-    private IDungeonDetailView objectivePanelDetailView;
-    private IDungeonObjectiveView objectivePanelView;
     private GameObject fieldTerminal;
     private IDungeonMapView fieldTerminalMapView;
     private IDungeonDetailView fieldTerminalDetailView;
@@ -117,8 +114,6 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     private GameObject objectiveMarkers;
     private readonly List<IDungeonObjectiveTargetsView> targetsViews = new();
     private readonly List<IDungeonThreatView> threatViews = new();
-    private IDungeonDetailView roomStatusDetailView;
-    private IDungeonObjectiveView roomStatusObjectiveView;
     // 출구 입장 연출(문간 흡입) 동안 시설 붙잡음으로 알리는 최대 시간(초). 실물이 먼저 풀어도 된다(판단값 — 흡입 0.35초보다 길게).
     private const float ExitBusyHold = .6f;
     // 동적 구성 파도를 Player가 너무 가까울 때 미루는 최대 시간(초, 판단값). 넘기면 같은 방 후보에서 먼 자리를 다시 고른다(4차 검토).
@@ -291,18 +286,12 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         roomStatus = null;
         Unbind(ref minimapDetailView);
         Unbind(ref minimapObjectiveView);
-        Unbind(ref objectivePanelDetailView);
-        Unbind(ref objectivePanelView);
-        if (objectivePanel != null) Destroy(objectivePanel);
-        objectivePanel = null;
         if (fieldTerminalMapView != null) { try { fieldTerminalMapView.Unbind(); } catch (Exception e) { Debug.LogException(e); } }
         fieldTerminalMapView = null;
         Unbind(ref fieldTerminalDetailView);
         Unbind(ref fieldTerminalObjectiveView);
         if (fieldTerminal != null) Destroy(fieldTerminal);
         fieldTerminal = null;
-        Unbind(ref roomStatusDetailView);
-        Unbind(ref roomStatusObjectiveView);
         foreach (var view in targetsViews) { try { view?.Unbind(); } catch (Exception e) { Debug.LogException(e); } }
         targetsViews.Clear();
         foreach (var view in threatViews) { try { view?.Unbind(); } catch (Exception e) { Debug.LogException(e); } }
@@ -315,7 +304,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
     // 시작 안내가 뜰 때 시작 방(Prop·출입구)을 미리 세운다. 안내 없이 시작하면 Wave 시작 때 세운다. 관 통과는 Wave가 진행 중일 때만 된다.
     private void OnWaveIntro(int number) => TryBeginFloor(number - 1);
     private void OnWaveStarted(Wave wave) => TryBeginFloor(waves != null ? waves.currentWaveIndex : -1);
-    private void OnWaveEnded() => EndFloor(true);
+    private void OnWaveEnded() => EndFloor(cutscenes == null || !cutscenes.IsCoveredArrival(waves.currentWaveIndex + 1));
 
     private void OnWavesReset()
     {
@@ -340,6 +329,15 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         stage?.ClearBackdrop();
         // 재생성으로 쓰지 않게 된 옛 셀 배열의 초기맵 조회 집합을 놓아 준다(재도전마다 쌓이지 않게).
         terrain.ForgetStaleInitialCaches();
+    }
+
+    // 엘리베이터 안에서 첫 방의 Prop·출입구·시설을 세운다. Wave 시작 이벤트는 같은 방을 재사용한다.
+    internal bool PrepareArrival()
+    {
+        var first = run?.FloorFor(0);
+        if (first == null) return false;
+        TryBeginFloor(0);
+        return floor == first && stage.Room != null;
     }
 
     private void TryBeginFloor(int index)
@@ -400,7 +398,6 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         EnsureFieldTerminal();
         EnsureMinimap();
         EnsureRoomStatus();
-        EnsureObjectivePanel();
         EnsureObjectiveMarkers();
         RebuildTargets();
         FloorStarted?.Invoke();
@@ -1399,26 +1396,13 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         catch (Exception e) { Debug.LogException(e, this); }
     }
 
-    // 상황판 바로 뒤 목표 패널(DungeonRulesSO.objectivePanelPrefab)을 한 번 만들고 IDungeonObjectiveView로 연결한다. 목표가 없는 던전에서는 패널이 스스로 숨는다.
-    private void EnsureObjectivePanel()
-    {
-        if (objectivePanel != null) return;
-        var rules = Rules;
-        if (rules == null || rules.objectivePanelPrefab == null) return;
-        objectivePanel = DungeonUiPlacement.Instantiate(rules.objectivePanelPrefab, DungeonUiPlacement.Slot.AfterScoreboard);
-        if (objectivePanel == null) return;
-        BindExtraViews(objectivePanel, ref objectivePanelDetailView, ref objectivePanelView);
-        BindFourthViews(objectivePanel);
-        if (objectivePanelView == null) Debug.LogWarning("[DungeonManager] 목표 패널 Prefab에 IDungeonObjectiveView 컴포넌트가 없습니다.", objectivePanel);
-    }
-
     // 현장 단말기(DungeonRulesSO.fieldTerminalPrefab, Tab으로 여는 큰 지도)를 한 번 만들고 찾은 지도·상세·목표 접점을 모두 연결한다.
     private void EnsureFieldTerminal()
     {
         if (fieldTerminal != null) return;
         var rules = Rules;
         if (rules == null || rules.fieldTerminalPrefab == null) return;
-        // 단말기는 열면 화면을 덮으므로 HUD(상황판·미니맵·목표 패널)보다 앞, 암전 바로 앞에 둔다(ui3 약속).
+        // 단말기는 열면 화면을 덮으므로 HUD(미니맵·방 상태 띠)보다 앞, 암전 바로 앞에 둔다(ui3 약속).
         fieldTerminal = DungeonUiPlacement.Instantiate(rules.fieldTerminalPrefab, DungeonUiPlacement.Slot.BeforeFade);
         if (fieldTerminal == null) return;
         fieldTerminalMapView = fieldTerminal.GetComponentInChildren<IDungeonMapView>(true);
@@ -1472,9 +1456,8 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         roomStatus = DungeonUiPlacement.Instantiate(rules.roomStatusPrefab, DungeonUiPlacement.Slot.AfterScoreboard);
         if (roomStatus == null) return;
         roomStatusView = roomStatus.GetComponentInChildren<IDungeonCombatView>(true);
-        // 4차: 방 상태 띠도 목표(EXIT UNLOCKED)·난이도(THREAT ▲)·목표 대상 화면 요소를 구현하면 함께 연결한다.
-        BindExtraViews(roomStatus, ref roomStatusDetailView, ref roomStatusObjectiveView);
-        BindFourthViews(roomStatus);
+        if (roomStatus.GetComponentInChildren<DungeonRoomStatus>(true) is DungeonRoomStatus band)
+            band.ShowObjectiveAnnouncements = false;
         if (roomStatusView == null)
         {
             Debug.LogWarning("[DungeonManager] 방 상태 표시 Prefab에 IDungeonCombatView 컴포넌트가 없습니다.", roomStatus);
@@ -1493,7 +1476,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         objectiveMarkers = DungeonUiPlacement.Instantiate(rules.objectiveMarkersPrefab, DungeonUiPlacement.Slot.AfterScoreboard);
         if (objectiveMarkers == null) return;
         // 4차 검토: 같은 AfterScoreboard 자리는 나중에 만든 것이 형제 순서 앞(먼저 = 아래에 그려짐)에 끼므로, 목표 마커(화면 밖 화살·자물쇠)가
-        // 미니맵·방 상태 띠·목표 패널 판 밑에 묻힌다. 그 셋 중 가장 뒤 형제 바로 다음으로 옮겨 HUD 위에 그린다.
+        // 미니맵과 방 상태 띠 바로 위에서 목표 마커를 그린다.
         // 현장 단말기(BeforeFade 자리)는 그보다 뒤라 열면 여전히 마커를 덮는다.
         PlaceAboveDungeonHud(objectiveMarkers.transform);
         int before = targetsViews.Count;
@@ -1501,7 +1484,7 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         if (targetsViews.Count == before) Debug.LogWarning("[DungeonManager] 목표 마커 Prefab에 IDungeonObjectiveTargetsView 컴포넌트가 없습니다.", objectiveMarkers);
     }
 
-    // item을 같은 부모 아래 던전 HUD(미니맵·방 상태 띠·목표 패널) 중 가장 뒤 형제 바로 다음에 둔다(형제 순서 = 그리기 순서, 뒤가 위).
+    // item을 같은 부모 아래 던전 HUD(미니맵·방 상태 띠) 중 가장 뒤 형제 바로 다음에 둔다(형제 순서 = 그리기 순서, 뒤가 위).
     private void PlaceAboveDungeonHud(Transform item)
     {
         var parent = item != null ? item.parent : null;
@@ -1509,7 +1492,6 @@ public sealed class DungeonManager : MonoBehaviour, IDungeonMapSource, IDungeonC
         int last = -1;
         if (minimap != null && minimap.transform.parent == parent) last = Mathf.Max(last, minimap.transform.GetSiblingIndex());
         if (roomStatus != null && roomStatus.transform.parent == parent) last = Mathf.Max(last, roomStatus.transform.GetSiblingIndex());
-        if (objectivePanel != null && objectivePanel.transform.parent == parent) last = Mathf.Max(last, objectivePanel.transform.GetSiblingIndex());
         if (last < 0) return;
         // SetSiblingIndex는 자기 자리를 뺀 목록에 끼운다: 지금 자리가 last보다 앞이면 last로 옮겨야 그 HUD 바로 뒤에 선다.
         int index = item.GetSiblingIndex();

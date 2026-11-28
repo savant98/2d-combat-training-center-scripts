@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Reflection;
 using TMPro;
 using Unity.Cinemachine;
@@ -10,7 +9,6 @@ internal sealed class TutorialFocusPresentation
     private readonly RectTransform parent, proxy;
     private readonly Canvas canvas;
     private readonly Vector3[] corners = new Vector3[4];
-    private readonly List<(CanvasGroup group, float alpha)> shownGroups = new();
     private Transform cameraTarget;
     private CinemachineCamera roomCamera;
     private Transform originalFollow;
@@ -18,6 +16,8 @@ internal sealed class TutorialFocusPresentation
     private bool originalIgnoreTimeScale, cameraFocused;
     private PlayerHUD hud;
     private EnemyController enemy;
+    private EnemyUI previewHud;
+    private RectTransform previewTarget;
     private TutorialGoal goal;
     private TerminalEquipmentGlyph glyph;
     private RectTransform glyphRoot;
@@ -40,7 +40,7 @@ internal sealed class TutorialFocusPresentation
 
     public void BeginStep()
     {
-        RestoreGroups();
+        RestoreEnemyPreview();
         enemy = null;
         goal = null;
         cameraFocused = false;
@@ -62,23 +62,27 @@ internal sealed class TutorialFocusPresentation
             case TutorialFocusTarget.Player:
                 return player != null && ProjectWorld(ComponentBounds(player, new Vector2(2f, 3f)), owner);
             case TutorialFocusTarget.Goal:
-                if (goal == null || !goal.IsWaveGoalActive)
+                if (goal == null || !goal.IsPresented)
                     foreach (var candidate in Object.FindObjectsByType<TutorialGoal>(FindObjectsSortMode.None))
-                        if (candidate.IsWaveGoalActive) { goal = candidate; break; }
+                        if (candidate.IsPresented) { goal = candidate; break; }
                 return goal != null && ProjectWorld(ComponentBounds(goal, new Vector2(2f, 3f)), owner);
             case TutorialFocusTarget.Enemy:
             case TutorialFocusTarget.EnemyShield:
             case TutorialFocusTarget.EnemyBreak:
-                if (enemy == null || !enemy.gameObject.activeInHierarchy) enemy = NearestEnemy(origin + (Vector3)step.focusCenter);
+                bool requiresShield = step.target != TutorialFocusTarget.Enemy;
+                if (enemy == null || !enemy.gameObject.activeInHierarchy)
+                    enemy = NearestEnemy(owner, origin + (Vector3)step.focusCenter, requiresShield);
                 if (enemy == null) return false;
-                if (step.target == TutorialFocusTarget.Enemy) return ProjectWorld(ComponentBounds(enemy, new Vector2(3f, 3f)), owner);
-                var enemyUI = enemy.GetComponentInChildren<EnemyUI>(true);
-                string field = step.target == TutorialFocusTarget.EnemyShield ? "shieldGroup" : "knockDownGroup";
-                var group = ReadField(enemyUI, field) as CanvasGroup;
-                if (group == null) return false;
-                Reveal(group);
-                FocusCameraIfNeeded(group.transform.position, owner);
-                return ProjectRect(group.transform as RectTransform);
+                if (!requiresShield) return ProjectWorld(ComponentBounds(enemy, new Vector2(3f, 3f)), owner);
+                if (previewTarget == null || !previewTarget.gameObject.activeInHierarchy)
+                {
+                    RestoreEnemyPreview();
+                    previewHud = enemy.GetComponentInChildren<EnemyUI>();
+                    if (previewHud != null) previewTarget = previewHud.BeginTutorialPreview(step.target == TutorialFocusTarget.EnemyBreak);
+                }
+                if (previewTarget == null) return false;
+                FocusCameraIfNeeded(previewTarget.position, owner);
+                return ProjectRect(previewTarget);
             case TutorialFocusTarget.LessonIcon:
                 EnsureGlyph(action);
                 target = glyphRoot;
@@ -148,6 +152,7 @@ internal sealed class TutorialFocusPresentation
     {
         if (hud == null) hud = Object.FindFirstObjectByType<PlayerHUD>();
         if (hud == null) return null;
+        if (kind == TutorialFocusTarget.AutoAim) return hud.AutoAimWidget?.BadgeRect;
         if (kind == TutorialFocusTarget.SkillGauge) return (ReadField(hud, "skillGaugeBar") as UnityEngine.UI.Image)?.rectTransform;
         string name = kind switch
         {
@@ -212,27 +217,25 @@ internal sealed class TutorialFocusPresentation
     private static object ReadField(object value, string name) => value != null
         ? value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(value) : null;
 
-    private void Reveal(CanvasGroup group)
+    private void RestoreEnemyPreview()
     {
-        foreach (var item in shownGroups) if (item.group == group) return;
-        shownGroups.Add((group, group.alpha));
-        group.alpha = 1f;
+        if (previewHud != null) previewHud.EndTutorialPreview();
+        previewHud = null;
+        previewTarget = null;
     }
 
-    private void RestoreGroups()
-    {
-        foreach (var item in shownGroups) if (item.group != null) item.group.alpha = item.alpha;
-        shownGroups.Clear();
-    }
-
-    private static EnemyController NearestEnemy(Vector3 point)
+    private static EnemyController NearestEnemy(WaveManager owner, Vector3 point, bool requiresShield)
     {
         EnemyController nearest = null;
         float distance = float.PositiveInfinity;
-        foreach (var candidate in Object.FindObjectsByType<EnemyController>(FindObjectsSortMode.None))
+        foreach (var candidate in owner.EnemiesInCurrentWave)
         {
+            if (candidate == null || !candidate.gameObject.activeInHierarchy) continue;
+            if (requiresShield && candidate.Health?.enemyShieldSystem == null) continue;
             float value = (candidate.transform.position - point).sqrMagnitude;
-            if (candidate.gameObject.activeInHierarchy && value < distance) { nearest = candidate; distance = value; }
+            if (value >= distance) continue;
+            nearest = candidate;
+            distance = value;
         }
         return nearest;
     }
@@ -329,7 +332,7 @@ internal sealed class TutorialFocusPresentation
 
     public void End()
     {
-        RestoreGroups();
+        RestoreEnemyPreview();
         RestoreFollow();
         if (brain != null) brain.IgnoreTimeScale = originalIgnoreTimeScale;
         if (cameraTarget != null) Object.Destroy(cameraTarget.gameObject);

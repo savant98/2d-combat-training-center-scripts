@@ -27,9 +27,14 @@ public class TrainingMenu : SelectableMenuUI
         {
             bool on = i < used;
             if (buttons[i].gameObject.activeSelf != on) buttons[i].gameObject.SetActive(on);
-            if (on && i < texts.Length && texts[i] != null) texts[i].text = labels[i];
+            if (on) SetRowLabel(i, labels[i]);
         }
         return used;
+    }
+
+    internal void SetRowLabel(int index, string label)
+    {
+        if (index >= 0 && index < texts.Length && texts[index] != null) texts[index].text = label;
     }
 
     protected override void Awake()
@@ -119,7 +124,7 @@ public class TrainingMenu : SelectableMenuUI
     private void NotifySelection()
     {
         OnSelectionChanged?.Invoke(currentIndex);
-        EnsureSelectionVisible();
+        if (!InputSuppressed) EnsureSelectionVisible();
     }
 
     public void EnsureSelectionVisible()

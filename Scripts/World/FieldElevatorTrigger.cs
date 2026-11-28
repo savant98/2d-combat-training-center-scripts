@@ -2,7 +2,7 @@ using DG.Tweening;
 using UnityEngine;
 
 /// <summary>
-/// 각개 전투 엘리베이터의 탑승 입구(2026-11-20). 케이지 앞의 상호작용 영역(Layer 8 Interact, Trigger)이다.
+/// 전투 훈련 엘리베이터의 탑승 입구(2026-11-20). 케이지 앞의 상호작용 영역(Layer 8 Interact, Trigger)이다.
 /// - 상호작용 표시와 Lobby 잠금(LobbyInteractionLock)은 RoomTrigger와 같은 방식으로 다룬다. RoomTrigger가 아니므로
 ///   Lobby 안내(LobbyOnboarding.FindEntrance)가 훈련 입구를 고를 때 섞이지 않고, 훈련 메뉴도 열지 않는다.
 /// - 첫 입력은 문을 열고, 다 열린 뒤의 다음 입력은 탑승을 요청한다. 탑승 전에 멀어지면 문이 자동으로 닫힌다.

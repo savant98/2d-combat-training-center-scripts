@@ -210,6 +210,11 @@ public sealed class WaveCellTerrain : MonoBehaviour
 
     public void Configure(WaveDataSO source, WaveManager manager)
     {
+        foreach (var _ in ConfigureInSteps(source, manager, false)) { }
+    }
+
+    internal IEnumerable<object> ConfigureInSteps(WaveDataSO source, WaveManager manager, bool spreadOverFrames)
+    {
         data = source; waves = manager;
         var content = GetComponent<TrainingRoomContent>();
         roomConfiner = content != null && content.roomCamera != null ? content.roomCamera.GetComponent<CinemachineConfiner2D>() : null;
@@ -280,7 +285,8 @@ public sealed class WaveCellTerrain : MonoBehaviour
             foreach (var entry in wave.terrainEvents ?? Array.Empty<WaveTerrainEvent>())
                 foreach (var position in entry.cells) all.Add(new WaveMapCell { position = position, kind = entry.cellKind, style = entry.cellStyle });
         }
-        foreach (var cell in all.OrderBy(c => c.group).ThenBy(c => c.position.y).ThenBy(c => c.position.x)) Preload(cell);
+        foreach (var step in PreloadCells(all, spreadOverFrames)) yield return step;
+        if (spreadOverFrames) yield return null;
         IsPreloaded = true;
         waves.WavesReset += ResetMap; waves.WaveStarted += BeginEvents; waves.WaveEnded += EndEvents; waves.EnemySpawned += FaceCenter;
         ResetMap();
@@ -1037,8 +1043,25 @@ public sealed class WaveCellTerrain : MonoBehaviour
     /// <summary>앞으로 ShowRoom으로 켤 칸을 미리 만들어 둔다(Configure 뒤, 입장 로딩 전에 부른다). 이미 만든 칸은 건너뛴다.</summary>
     public void RegisterCells(IEnumerable<WaveMapCell> cells)
     {
-        if (!IsPreloaded || cells == null) return;
-        foreach (var cell in new HashSet<WaveMapCell>(cells).OrderBy(c => c.group).ThenBy(c => c.position.y).ThenBy(c => c.position.x)) Preload(cell);
+        foreach (var _ in RegisterCellsInSteps(cells, false)) { }
+    }
+
+    internal IEnumerable<object> RegisterCellsInSteps(IEnumerable<WaveMapCell> cells, bool spreadOverFrames)
+    {
+        if (!IsPreloaded || cells == null) yield break;
+        foreach (var step in PreloadCells(new HashSet<WaveMapCell>(cells), spreadOverFrames)) yield return step;
+    }
+
+    private IEnumerable<object> PreloadCells(IEnumerable<WaveMapCell> cells, bool spreadOverFrames)
+    {
+        double sliceStart = Time.realtimeSinceStartupAsDouble;
+        foreach (var cell in cells.OrderBy(c => c.group).ThenBy(c => c.position.y).ThenBy(c => c.position.x))
+        {
+            Preload(cell);
+            if (!spreadOverFrames || Time.realtimeSinceStartupAsDouble - sliceStart < WarmFrameBudget) continue;
+            yield return null;
+            sliceStart = Time.realtimeSinceStartupAsDouble;
+        }
     }
     /// <summary>입장 로딩(Warm)이 반복 배경 모듈을 미리 만들 공간(방 좌표)을 더한다. Warm 전에 부른다.</summary>
     public void AddPredictedSpaces(IEnumerable<Rect> spaces)
@@ -1053,10 +1076,21 @@ public sealed class WaveCellTerrain : MonoBehaviour
         foreach (var request in requests) if (request.kitPrefab != null && !predictedRoomKits.Contains(request)) predictedRoomKits.Add(request);
     }
 
-    public IEnumerator Prepare(int index)
+    // 문 전환으로 화면이 가려진 동안 새 지형과 배경을 한 번에 준비한다.
+    internal void PrepareCoveredRoom(int index)
     {
         roomSpaceReset = false;
-        shownRoomPoint = null;
+        ApplyBackground(index);
+        var layout = WaveRoomState.LayoutAt(data, index);
+        if (waves.SpawnRoot != null) waves.SpawnRoot.position = transform.TransformPoint(layout.spawnOffset);
+        ApplyRoomPresentation(layout);
+        ShowRoom(WaveCellState.Initial(data, index), WaveRoomState.PlayerStartAt(data, index));
+    }
+
+    public IEnumerator Prepare(int index, Vector2? arrivalPoint = null)
+    {
+        roomSpaceReset = false;
+        shownRoomPoint = arrivalPoint;
         ApplyBackground(index);
         var next = InitialFor(WaveCellState.Initial(data, index));
         if (index > 0 && (!initial.SetEquals(next.cells) || temporary.Count > 0 || eventAdded.Count > 0))

@@ -16,8 +16,8 @@ using UnityEngine;
 ///   끊기면(패배·재도전·퇴장) 레버 방을 되살리고 기록을 남기지 않는다 → 시작 방에 돌아왔을 때 4차 지연 재생이 대신한다.
 /// - 문 컷씬(<see cref="PlayExitEntry"/>): 흡입(문 실물 또는 직접) → 문틀·문짝을 Player 앞에 그리고 문짝 닫힘 → 맞물리면 Player 숨김 → 봉인 원위치 → '닫히고 불 켜진 문'.
 ///   그동안 SetFacilityBusy로 Wave 종료를 미룬다. 다음 Wave 시작 방에 도착 자리(DungeonArrivalSlot)가 있으면 실행 사본의 다음 Wave teleportAtStart = false(크레인 생략,
-///   WaveManager 무수정) — 출구 자리와 같은 방 좌표면 정렬안(닫힌 문을 화면에 둔 채 지형 패널 연출로 방이 바뀌고 같은 자리에 도착 문이 불 켜진 채 선다),
-///   다르면 암전안(암전 동안 도착 문 안쪽으로 순간이동). 'WAVE n' 판 끝 0.3초 전 도착 문이 열리고 Player가 걸어 나온 뒤 문은 닫히고 흐려진다(장식).
+///   문 좌표가 일치하면 정렬 전환을 쓰고, 좌표가 다르거나 다음 Wave에서 암전을 켜면 화면이 가려진 동안 방을 교체한다.
+///   도착 문이 열린 뒤 Player가 걸어 나오고 문은 닫히고 흐려진다.
 ///   도착 자리가 없거나 마지막 Wave면 Wave 전환까지 닫힌 문 안에 있다가 다시 보이고 기존 크레인 경로를 탄다.
 /// 시간은 게임 시간(성적 시계에 포함 — 구조 그대로). 물리 질의 없음(걸어 나올 자리 확인은 기존 모터 질의 IsBodyBlockedAt), 위치는 구속 영역 옮기기·기존 순간이동 경로로만 바꾼다.
 /// </summary>
@@ -68,6 +68,10 @@ public sealed class DungeonCutsceneDirector : MonoBehaviour
     public bool IsPlaying => Current != Kind.None;
     /// <summary>던전 진행(방 이동 감지·시설 사용)을 막아야 하는지 — 컷씬이 도는 동안 true.</summary>
     public bool BlocksDungeon => Current != Kind.None;
+
+    /// <summary>암전이 화면을 덮은 뒤 지정한 Wave의 준비를 기다리는 동안만 true다.</summary>
+    internal bool IsCoveredArrival(int waveIndex) => Current == Kind.ExitEntry && CurrentStep == Step.Waiting
+        && fading && LastPlan == ArrivalPlan.Blackout && nextWave == waveIndex;
     /// <summary>마지막 문 컷씬의 도착 방식(검사용).</summary>
     public ArrivalPlan LastPlan { get; private set; }
     /// <summary>끝까지 마친 레버 컷씬·문 닫힘·문 도착 수(검사용).</summary>
@@ -304,7 +308,7 @@ public sealed class DungeonCutsceneDirector : MonoBehaviour
             gate.SetLeavesFront(false);
             ExitClosures++;
             // 3) 다음 Wave 도착 방식.
-            LastPlan = PlanArrival(rules);
+            LastPlan = PlanArrival();
             if (LastPlan == ArrivalPlan.None)
             {
                 // 크레인 경로(다음 Wave가 없거나 그 시작 방에 도착 자리가 없음): Wave가 넘어가면(구속은 WaveManager 준비가 이어받는다) 다시 보이고 끝낸다.
@@ -335,10 +339,13 @@ public sealed class DungeonCutsceneDirector : MonoBehaviour
                     if (EntryBroken()) yield break;
                     yield return null;
                 }
+                // 페이드가 마지막 알파를 적용한 프레임까지 기다린 뒤 출발 방을 걷는다.
+                yield return null;
+                if (EntryBroken()) yield break;
                 WarpBody(player, (Vector2)dungeon.OriginWorld + arrivalBodyLocal);
                 ReleaseDetached(true);
             }
-            // 4) Wave 종료를 허락한다 → CompleteWave → 지형 패널(크레인 없음) → 다음 던전 시작(OnFloorStarted가 도착 문을 불 켠 채 맞춘다).
+            // 다음 Wave의 지형과 배치를 모두 준비하면 OnFloorStarted가 도착 문을 맞춘다.
             CurrentStep = Step.Waiting;
             arrivalReady = false;
             SetBusy(false);
@@ -347,9 +354,15 @@ public sealed class DungeonCutsceneDirector : MonoBehaviour
                 if (EntryBroken() || t > ArrivalWaitLimit) yield break;
                 yield return null;
             }
-            // 5) 도착: 'WAVE n' 판 끝 0.3초 전(시작 안내 + arrivalOpenDelay)에 문이 열린다. 암전안이면 먼저 걷는다.
+            // 새 방 개체의 첫 갱신과 카메라 배치를 암전 아래에서 마친 뒤 화면을 연다.
             CurrentStep = Step.ArrivalWait;
-            if (fading && UIManager.Instance != null) { UIManager.Instance.StartScreenFade(0f, rules.arrivalFadeTime); fading = false; }
+            if (fading)
+            {
+                yield return null;
+                if (EntryBroken()) yield break;
+                if (UIManager.Instance != null) UIManager.Instance.StartScreenFade(0f, rules.arrivalFadeTime);
+                fading = false;
+            }
             while (Time.time < floorStartedAt + rules.arrivalOpenDelay)
             {
                 if (EntryBroken()) yield break;
@@ -412,8 +425,8 @@ public sealed class DungeonCutsceneDirector : MonoBehaviour
         return ui != null && ui.IsDeathUIOpen;
     }
 
-    // 다음 Wave 도착 방식: 다음 Wave가 던전이고 그 시작 방에 도착 자리가 있으면 문 도착 — 출구 자리와 같은 방 좌표·회전이면 정렬안, 아니면 암전안.
-    private ArrivalPlan PlanArrival(DungeonRulesSO rules)
+    // 도착 자리가 있으면 다음 Wave 설정과 두 문의 좌표로 전환 방식을 고른다.
+    private ArrivalPlan PlanArrival()
     {
         var run = dungeon.Run;
         var floor = dungeon.Floor;
@@ -424,6 +437,8 @@ public sealed class DungeonCutsceneDirector : MonoBehaviour
         if (start == null || !start.HasArrival) return ArrivalPlan.None;
         Vector2 center = start.arrival.spawnPosition;
         arrivalBodyLocal = new Vector2(center.x, center.y - SlotHalfHeight + BodyAboveFeet);
+        if (nextFloor.settings != null && nextFloor.settings.blackoutOnDoorArrival) return ArrivalPlan.Blackout;
+
         var exitRoom = floor.Room(dungeon.Objectives.ExitRoom);
         bool aligned = exitRoom != null && exitRoom.HasExit && (exitRoom.exit.spawnPosition - center).sqrMagnitude < .0001f
             && (((exitRoom.exit.rotationSteps % 4) + 4) % 4) == (((start.arrival.rotationSteps % 4) + 4) % 4);

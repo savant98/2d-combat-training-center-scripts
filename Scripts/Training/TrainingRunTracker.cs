@@ -281,9 +281,8 @@ public class TrainingRunTracker : MonoBehaviour
         lastTimeSeconds = timeSeconds;
         Grade grade = cleared ? training.Evaluate(hitCount, timeSeconds) : Grade.Poor;
 
-        // 훈련 필증: 이 훈련의 필증을 아직 받지 않은 수료(최초 수료)에만 1개. 지급 대상과 중복은 DataManager가 가린다.
-        // 아래의 기록 갱신보다 먼저 판정한다. 수료(cleared)는 곧 통과 이상이다(미흡은 HandleClear가 패배로 돌린다).
-        int awardedCertificates = cleared && DataManager.Instance.TryAwardTrainingCertificate(training.trainingId) ? 1 : 0;
+        // 새 수료 기록을 쓰기 전에 지급한다. 결과 화면에는 실제로 받은 수량을 표시한다.
+        int awardedCertificates = cleared ? DataManager.Instance.AwardTrainingCertificates(training.trainingId) : 0;
 
         RunResult result = new RunResult()
         {

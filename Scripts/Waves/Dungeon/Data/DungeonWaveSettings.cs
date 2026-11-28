@@ -66,6 +66,8 @@ public sealed class DungeonWaveSettings
     [Range(0f, 1f)] public float loopChance = .25f;
     [Tooltip("방 사이를 옮기는 연출입니다. 비우면 던전 공통 규칙(DungeonRules)의 기본 연출을 씁니다.")]
     public DungeonPassageEffectSO passage;
+    [Tooltip("이 Wave의 도착 문으로 들어올 때, 출발 문과 좌표가 같아도 암전 중에 방을 교체합니다.")]
+    public bool blackoutOnDoorArrival;
     [Tooltip("훈련 테마별 Prop 교체표입니다. 비우면 템플릿에 놓인 Prop을 그대로 씁니다.")]
     public DungeonThemeSO theme;
     [Tooltip("0이면 입장할 때마다 새 구조를 만듭니다. 0이 아니면 이 값으로 고정합니다(검증·시연용).")]

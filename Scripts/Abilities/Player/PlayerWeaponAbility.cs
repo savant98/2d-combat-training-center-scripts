@@ -295,6 +295,19 @@ public class PlayerWeaponAbility : PlayerAbility
         }
     }
 
+    internal void ResetCombatState()
+    {
+        ResetSkillGauge();
+        Traits?.Reset();
+        weaponLastUseTimes.Clear();
+        lastWeaponSwapTime = -999f;
+        lastMeleeAttackTime = -999f;
+        meleeComboIndex = 0;
+        restartAfterHit = false;
+        normalWeaponBuffer.Reset();
+        secondaryWeaponBuffer.Reset();
+    }
+
     public void ResetSkillGauge(bool preserveExecutingAttack = false)
     {
         if (isStoringSkill || (!preserveExecutingAttack && executionSetIndex >= 0)) Interrupt();

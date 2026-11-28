@@ -19,7 +19,7 @@ public sealed class WaveGoalIndicator : UnityEngine.UI.MaskableGraphic
     {
         if (indicatorCanvas == null) return;
         if (viewCamera == null || !viewCamera.isActiveAndEnabled) viewCamera = Camera.main;
-        if (goal == null || !goal.IsWaveGoalActive || viewCamera == null)
+        if (goal == null || !goal.IsWaveGoalActive || !goal.IsPresented || viewCamera == null)
         {
             indicatorCanvas.enabled = false;
             return;

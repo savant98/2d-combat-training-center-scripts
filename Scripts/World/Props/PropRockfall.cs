@@ -22,7 +22,7 @@ using UnityEngine;
 //   일반 WaveData는 풀에서 다시 꺼내면 OnPropSpawned가 처음 상태(대기)로 되돌린다.
 // - 지속 흔들림(FeedbackPlayer.BeginHeldShake)은 낙하 시작·정지 신호·부서짐·풀 반환·비활성·파괴 모든 경로에서 EndHeldShake로 닫는다.
 // - 던전 컷씬(레버·문·도착 걸어 나오기 — DungeonCutsceneDirector.AnyPlaying) 동안에는 감지하지 않는다(자동 이동으로 발동하지 않게 — 판단값).
-// - 소리(새 음원 없음 — 기존 효과음, 사용자 청취 전 판단값): 진동 시작·볼트 튐·사슬 끊어짐·충돌 겹침음. 충돌은 Feedback(DungeonRockfallImpact)이 소리·흔들림을 같이 낸다(거리 감쇠).
+// - 소리(새 음원 없음 — 기존 효과음, 사용자 청취 전 판단값): 진동 시작·볼트 튐·사슬 끊어짐·충돌 겹침음. 충돌은 Bulwark 착지 Feedback의 소리와 파티클을 쓰고 카메라 흔들림을 더 강하게 낸다(거리 감쇠).
 // - 매 프레임 할당 없음: 감지·피해 질의는 미리 잡은 배열·HashSet을 다시 쓰고, 사슬 Mesh는 꺼낼 때(길이가 바뀔 때)만 다시 채운다.
 [DisallowMultipleComponent]
 public sealed class PropRockfall : MonoBehaviour, IDungeonPropPart, IDungeonPropSettings, IDungeonRoomHazard, IDungeonBreakable
@@ -104,6 +104,7 @@ public sealed class PropRockfall : MonoBehaviour, IDungeonPropPart, IDungeonProp
     [SerializeField] private SoundOptions releaseSound;
     [SerializeField] private SoundOptions impactLayerSound;
     [SerializeField] private FeedbackDataSO impactFeedback;
+    [SerializeField, Min(0f), Tooltip("바닥에 닿을 때의 카메라 흔들림 배율")] private float impactShakeMultiplier = 1.8f;
 
     private readonly WaveTrapDamage trapDamage = new WaveTrapDamage();
     private readonly HazardHalt halt = new HazardHalt();
@@ -717,8 +718,8 @@ public sealed class PropRockfall : MonoBehaviour, IDungeonPropPart, IDungeonProp
         Vector3 at = landed && landingKnown
             ? transform.TransformPoint(new Vector3(0f, -blockHalf.y, 0f)) - transform.up * dropDistance
             : block != null ? block.TransformPoint(new Vector3(0f, -(blockHomePosition.y + blockHalf.y), 0f)) : transform.position;   // 블록 부품 원점(윗변 가운데) 기준 아랫변
-        if (landed) PropHazardKit.PlayFeedback(impactFeedback, at);
-        PropHazardKit.PlayClip(impactLayerSound, at, landed ? 1f : .6f);
+        if (landed) DungeonPropFeedback.Play(impactFeedback, at, Quaternion.identity, impactShakeMultiplier);
+        else PropHazardKit.PlayClip(impactLayerSound, at, .6f);
         PropHazardKit.Burst(impactDebris, landed ? 40 : 24, at);
         PropHazardKit.Burst(impactDust, landed ? 16 : 10, at);
         PropHazardKit.Burst(impactSparks, landed ? 22 : 10, at);

@@ -31,7 +31,7 @@ public sealed class WaveGoalVisual : WorldEntityBase
 
     private void Update()
     {
-        opened = Mathf.MoveTowards(opened, !closing && goal != null && !goal.HasReached ? 1 : 0, Time.deltaTime * 3);
+        opened = Mathf.MoveTowards(opened, !closing && goal != null && goal.IsPresented ? 1 : 0, Time.deltaTime * 3);
         Apply();
         if (closing && opened <= 0) base.ForceReturnToPool();
     }

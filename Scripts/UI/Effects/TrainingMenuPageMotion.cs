@@ -12,7 +12,7 @@ public class TrainingMenuPageMotion : MonoBehaviour
     private float[] alphas;
     private float elapsed;
     private float duration;
-    private const float FadeDuration = .26f;
+    private const float FadeDuration = .14f;
 
     private void OnEnable() => Replay();
 
@@ -37,7 +37,7 @@ public class TrainingMenuPageMotion : MonoBehaviour
         Evaluate();
     }
 
-    private float Delay(int index) => index < delays.Length ? delays[index] : index * .04f;
+    private float Delay(int index) => index < delays.Length ? delays[index] * .5f : index * .02f;
 
     private void Update()
     {

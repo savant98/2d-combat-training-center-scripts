@@ -14,6 +14,8 @@ public sealed class TitlePanelMotion : MonoBehaviour
 {
     public const float OpenDuration = .34f;    // 판이 다 펼쳐지는 시간. 이때부터 입력을 받는다.
     public const float CloseDuration = .26f;
+    public const float FacilityDuration = OpenDuration + .20f;
+    public const float FacilityCameraBlend = .28f;
 
     [Header("판")]
     [SerializeField] private CanvasGroup group;
@@ -46,6 +48,7 @@ public sealed class TitlePanelMotion : MonoBehaviour
 
     private State state = State.Hidden;
     private float time, idleTime;
+    private float openDuration = OpenDuration, closeDuration = CloseDuration;
     private bool cached;
     private Vector2[] sectionHomes;
     private CanvasGroup[] sectionGroups;
@@ -60,11 +63,14 @@ public sealed class TitlePanelMotion : MonoBehaviour
     /// <summary>보이고 있는가(열리는 중·열림·닫히는 중).</summary>
     public bool IsVisible => state != State.Hidden;
     /// <summary>다 펼쳐져 입력을 받아도 되는가.</summary>
-    public bool IsReady => state == State.Opening && time >= OpenDuration;
+    public bool IsReady => state == State.Opening && time >= openDuration;
     /// <summary>열리거나 닫히는 도중인가.</summary>
-    public bool IsBusy => state == State.Closing || (state == State.Opening && time < OpenDuration);
+    public bool IsBusy => state == State.Closing || (state == State.Opening && time < openDuration);
     /// <summary>열린 뒤 흐른 시간(초). 닫혀 있으면 0.</summary>
     public float OpenTime => state == State.Opening ? time : 0f;
+
+    /// <summary>Lobby 설비 메뉴의 펼침과 접힘을 같은 시간으로 맞춘다.</summary>
+    public void UseFacilityTiming() => openDuration = closeDuration = FacilityDuration;
 
     private void Awake()
     {
@@ -171,7 +177,7 @@ public sealed class TitlePanelMotion : MonoBehaviour
         if (state == State.Hidden) return;
         time += delta;
         idleTime += delta;
-        if (state == State.Closing && time >= CloseDuration)
+        if (state == State.Closing && time >= closeDuration)
         {
             state = State.Hidden;
             time = 0f;
@@ -214,7 +220,7 @@ public sealed class TitlePanelMotion : MonoBehaviour
     private void Apply()
     {
         bool hidden = state == State.Hidden, closing = state == State.Closing;
-        float t = time;
+        float t = closing ? time * CloseDuration / closeDuration : time * OpenDuration / openDuration;
 
         if (group != null)
         {

@@ -332,6 +332,8 @@ public sealed class DungeonEncounter
             spawned = Object.Instantiate(info.prefab, position, info.Rotation, looseParent);
             loose.Add(spawned);
         }
+        if (spawned.GetComponentInChildren<IDungeonRoomHazard>(true) != null)
+            DungeonHazardSorting.MoveInFrontOfProps(spawned);
         Arm(spawned, info.lifetime);
     }
 

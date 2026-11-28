@@ -120,10 +120,18 @@ public class RoomTrigger : MonoBehaviour, IInteractable
     public void HandleEnterRoom()
     {
         menuController.OnConfirmEnterRoom -= HandleEnterRoom;
+        var waveData = menuController.SelectedWaveData;
+        var elevatorTraining = TrainingCatalogSO.Load()?.ElevatorTraining;
+        if (waveData != null && elevatorTraining?.waveData == waveData)
+        {
+            if (GameEventManager.Instance == null || !GameEventManager.Instance.RequestTrainingElevator(waveData))
+                Debug.LogWarning("[RoomTrigger] 전투 훈련 엘리베이터를 호출할 수 없습니다.", this);
+            return;
+        }
         RoomTransitionManager.Instance.RequestTransition(new RoomTransitionRequest
         {
             targetRoom = room,
-            waveData = menuController.SelectedWaveData,
+            waveData = waveData,
             teleportPoint = MenuArrivalPoint(),
             transitionEffect = transitionEffect
         });

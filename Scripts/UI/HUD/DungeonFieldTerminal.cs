@@ -123,8 +123,6 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     [SerializeField] private RectTransform mapPanelRoot;
     [SerializeField] private RectTransform infoPanelRoot;
     [SerializeField] private DungeonTerminalGaugeGraphic mapActiveFrame;
-    [SerializeField] private RectTransform mapButtonRoot;
-    [SerializeField] private DungeonTerminalGaugeGraphic mapButtonGraphic;
     [SerializeField] private TMP_Text mapButtonLabel;
     [SerializeField] private RectTransform restartButtonRoot;
     [SerializeField] private DungeonTerminalGaugeGraphic restartButtonGraphic;
@@ -186,6 +184,8 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private IDungeonMapSource source;
     private IDungeonDetailSource detailSource;
     private IDungeonObjectiveSource objectiveSource;
+    private IDungeonObjectiveGate objectiveGate;
+    private bool exitWasUnlocked;
     private IDungeonThreatSource threatSource;
     private IDungeonExitSource exitSource;
     private IDungeonPlayerHeadingSource headingSource;
@@ -242,11 +242,16 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     public IDungeonExitSource ExitSource => exitSource;
     /// <summary>열려 있는지(닫기 연출 중 포함). IUIInputReceiver.</summary>
     public bool IsActive => isOpen;
+    public bool HasObjectiveUpdate { get; private set; }
     public bool IsClosing => isClosing;
     public bool IsTransitioning => transitioning;
     public float Progress => progress;
     /// <summary>Tab 입력이 켜져 있는지(던전 진행 중에만).</summary>
     public bool IsInputEnabled => actionEnabled;
+    public static DungeonFieldTerminal ActiveInput { get; private set; }
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetActiveInput() => ActiveInput = null;
     public bool OwnsPause => ownsPause;
     public bool PlayerVisible => playerVisible;
     public Vector2 Pan => pan;
@@ -306,7 +311,6 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         && (GameManager.Instance == null || !GameManager.Instance.IsRetrying)
         && (RoomTransitionManager.Instance == null || !RoomTransitionManager.Instance.IsTransitioning);
     public DungeonTerminalGaugeGraphic MapActiveFrame => mapActiveFrame;
-    public DungeonTerminalGaugeGraphic MapButtonGraphic => mapButtonGraphic;
     public TMP_Text MapButtonLabel => mapButtonLabel;
     public DungeonTerminalGaugeGraphic RestartButtonGraphic => restartButtonGraphic;
     public TMP_Text RestartButtonLabel => restartButtonLabel;
@@ -334,7 +338,6 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         initialized = true;
         if (mapPanelRoot == null && mapGraphic != null) mapPanelRoot = mapGraphic.transform.parent as RectTransform;
         if (infoPanelRoot == null && statusPanel != null) infoPanelRoot = statusPanel.transform as RectTransform;
-        if (mapButtonRoot == null && mapButtonGraphic != null) mapButtonRoot = mapButtonGraphic.rectTransform;
         if (restartButtonRoot == null && restartButtonGraphic != null) restartButtonRoot = restartButtonGraphic.rectTransform;
         if (giveUpButtonRoot == null && giveUpButtonGraphic != null) giveUpButtonRoot = giveUpButtonGraphic.rectTransform;
         if (mapButtonLabel != null) mapButtonLabel.text = DungeonUiText.Static(mapLabel);
@@ -427,9 +430,10 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     {
         EnsureInit();
         if (ReferenceEquals(exitSource, exits)) return;
-        if (exitSource != null) exitSource.ExitChanged -= MarkDirty;
+        if (exitSource != null) exitSource.ExitChanged -= OnExitChanged;
         exitSource = exits;
-        if (exitSource != null) exitSource.ExitChanged += MarkDirty;
+        exitWasUnlocked = exitSource != null && exitSource.HasExit && exitSource.ExitUnlocked;
+        if (exitSource != null) exitSource.ExitChanged += OnExitChanged;
         MarkDirty();
     }
 
@@ -451,9 +455,48 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     {
         EnsureInit();
         if (ReferenceEquals(objectiveSource, objectives)) return;
-        if (objectiveSource != null) objectiveSource.ObjectiveChanged -= MarkDirty;
+        if (objectiveSource != null)
+        {
+            objectiveSource.ObjectiveChanged -= OnObjectiveChanged;
+            objectiveSource.ObjectiveCompleted -= OnObjectiveCompleted;
+        }
+        if (objectiveGate != null) objectiveGate.ObjectiveGateChanged -= OnObjectiveGateChanged;
         objectiveSource = objectives;
-        if (objectiveSource != null) objectiveSource.ObjectiveChanged += MarkDirty;
+        objectiveGate = objectives as IDungeonObjectiveGate;
+        HasObjectiveUpdate = false;
+        if (objectiveSource != null)
+        {
+            objectiveSource.ObjectiveChanged += OnObjectiveChanged;
+            objectiveSource.ObjectiveCompleted += OnObjectiveCompleted;
+        }
+        if (objectiveGate != null) objectiveGate.ObjectiveGateChanged += OnObjectiveGateChanged;
+        MarkDirty();
+    }
+
+    private void OnObjectiveChanged()
+    {
+        if (!objectiveSource.HasObjective) HasObjectiveUpdate = false;
+        MarkDirty();
+    }
+
+    private void OnObjectiveCompleted(int index) => NotifyObjectiveUpdate();
+
+    private void OnObjectiveGateChanged(int room, bool awaiting)
+    {
+        if (awaiting) NotifyObjectiveUpdate();
+    }
+
+    private void OnExitChanged()
+    {
+        bool unlocked = exitSource.HasExit && exitSource.ExitUnlocked;
+        if (unlocked && !exitWasUnlocked) NotifyObjectiveUpdate();
+        exitWasUnlocked = unlocked;
+        MarkDirty();
+    }
+
+    private void NotifyObjectiveUpdate()
+    {
+        if (!isOpen || isClosing) HasObjectiveUpdate = true;
         MarkDirty();
     }
 
@@ -482,15 +525,14 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (initialized && isOpen) CloseImmediately(isActiveAndEnabled);
         if (source != null) source.MapChanged -= MarkDirty;
         if (detailSource != null) detailSource.DetailChanged -= MarkDirty;
-        if (objectiveSource != null) objectiveSource.ObjectiveChanged -= MarkDirty;
+        BindObjectives(null);
         if (threatSource != null) threatSource.ThreatChanged -= OnThreatChanged;
-        if (exitSource != null) exitSource.ExitChanged -= MarkDirty;
+        BindExit(null);
         if (waveSource != null) waveSource.WaveStateChanged -= MarkDirty;
         source = null;
         detailSource = null;
-        objectiveSource = null;
         threatSource = null;
-        exitSource = null;
+        HasObjectiveUpdate = false;
         headingSource = null;
         waveSource = null;
         silhouettes.Clear();
@@ -525,8 +567,16 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     {
         if (toggleAction == null || actionEnabled == on) return;
         actionEnabled = on;
-        if (on) toggleAction.Enable();
-        else toggleAction.Disable();
+        if (on)
+        {
+            ActiveInput = this;
+            toggleAction.Enable();
+        }
+        else
+        {
+            if (ActiveInput == this) ActiveInput = null;
+            toggleAction.Disable();
+        }
     }
 
     public void OnMove(Vector2 dir)
@@ -992,8 +1042,6 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
             if (frameMode == DungeonTerminalGaugeGraphic.MapFrameHidden)
                 mapActiveFrame.canvasRenderer.SetAlpha(0f);
         }
-        if (mapButtonGraphic != null)
-            mapButtonGraphic.SetButtonStyle(mapReady, mapHovered, mapFocused, DungeonTerminalGaugeGraphic.ToneCyan, DungeonTerminalGaugeGraphic.IconMap);
         if (mapButtonLabel != null)
         {
             string tag = mapDetail ? (mapLabel + " 이동") : (mapSelected || mapHovered ? (mapLabel + " [Z]") : mapLabel);
@@ -1136,6 +1184,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private void Open(bool liveOpen)
     {
         live = liveOpen;
+        if (live) HasObjectiveUpdate = false;
         isOpen = true;
         isClosing = false;
         pan = Vector2.zero;
@@ -1371,8 +1420,6 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (waveBriefing != null) waveBriefing.gameObject.SetActive(waveMode);
         FitContent(waveMode);
         if (waveMode) RefreshBriefing();
-        if (mapButtonRoot != null && mapButtonRoot.gameObject.activeSelf == waveMode)
-            mapButtonRoot.gameObject.SetActive(!waveMode);
         if (restartButtonRoot != null)
         {
             const float rx = 20f, rw = 230f;

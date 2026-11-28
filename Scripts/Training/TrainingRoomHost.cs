@@ -30,7 +30,7 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
     public DungeonRun Dungeon { get; private set; }
     /// <summary>방 내용이 실제로 진행하는 WaveData(던전이면 실행 사본, 아니면 Data).</summary>
     public WaveDataSO PlayData => Dungeon != null && Dungeon.Data != null ? Dungeon.Data : Data;
-    // Stage(엘리베이터 출발 때 미리 구성)로 만든 던전 내용을 아직 입장(Load)에 쓰지 않았는지. 같은 원본으로 Load하면 그대로 쓴다.
+    // 엘리베이터 고속 이동 중에 Stage로 만든 던전을 Load에서 한 번 사용한다.
     private bool stagedDungeon;
     // 지금 방 내용을 만들 때 WaveData가 고른 방 배경(WaveDataSO.roomBackdrop). Tool에서 바꾼 뒤 같은 WaveData로 다시 들어오면 방 내용을 새로 만든다.
     private GameObject contentBackdrop;
@@ -43,6 +43,7 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
     // 방 전환 연출은 이 동안 암전을 유지하고(RoomTransitionContext.WaitForLoading), Wave는 로딩이 끝난 뒤 시작한다(Room.ActivateRoom).
     // 같은 WaveData로 다시 들어오거나 재도전할 때는 이미 만들어 둔 것을 그대로 쓰므로 다시 하지 않는다.
     public bool IsLoading { get; private set; }
+    internal bool PrepareArrivalOnLoad { get; set; }
     /// <summary>입장 로딩 진행률(0~1).</summary>
     public float LoadingProgress { get; private set; }
     /// <summary>지금 하고 있는 로딩 단계 이름(TERRAIN·BACKDROP·UNITS).</summary>
@@ -73,8 +74,11 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
     private IEnumerator LoadingRoutine(WaveCellTerrain terrain, WaveDataSO data)
     {
         // 표시를 켜지 못해도 로딩은 진행한다. 여기서 예외가 나가면 이 코루틴만 끝나고 로딩 중 상태가 남아 화면 전환이 끝나지 않는다.
-        try { TrainingRoomLoadingPanel.Show(this); }
-        catch (Exception exception) { Debug.LogException(exception); }
+        if (!PrepareArrivalOnLoad)
+        {
+            try { TrainingRoomLoadingPanel.Show(this); }
+            catch (Exception exception) { Debug.LogException(exception); }
+        }
         // 도중에 문제가 생겨도 로딩 상태에 갇히지 않게 단계 전체를 감싸서 돌린다(Wave 시작과 화면 전환이 이 상태를 기다린다).
         yield return RunGuarded(LoadingSteps(terrain, data));
         LoadingProgress = 1f;
@@ -89,6 +93,12 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         var dungeon = Dungeon != null && Dungeon.Data == data ? Dungeon : null;
         yield return WarmPools(data, value => { LoadingProgress = TerrainShare + (1f - TerrainShare) * value; LoadingStep = "UNITS"; }, dungeon);
         WavePlayerStart.Prewarm();
+        if (PrepareArrivalOnLoad && dungeon?.FloorFor(0) != null
+            && Content.waves.TryGetComponent(out DungeonManager dungeonManager))
+        {
+            LoadingStep = "ROOM";
+            yield return Content.waves.PrepareDungeonArrival(terrain, dungeonManager);
+        }
     }
     // 중첩된 단계까지 직접 진행시키며 예외를 받아 낸다. 예외가 나면 남은 로딩을 건너뛴다(로딩 없이도 동작은 같다).
     private static IEnumerator RunGuarded(IEnumerator root)
@@ -185,19 +195,22 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         report?.Invoke(1f);
     }
 
-    public void Load(WaveDataSO data) => LoadContent(data, true);
+    public void Load(WaveDataSO data)
+    {
+        foreach (var _ in LoadContent(data, true)) { }
+    }
 
-    // 다른 방에 있는 동안 교장 개체만 만들어 두고, 실제 입장 시 Room이 활성화한다.
-    internal void Stage(WaveDataSO data) => LoadContent(data, false);
+    // 갱도가 화면을 가린 동안 교장 개체를 여러 프레임에 걸쳐 만든다. 실제 입장 때 Room이 활성화한다.
+    internal IEnumerator<object> Stage(WaveDataSO data) => LoadContent(data, false).GetEnumerator();
 
-    private void LoadContent(WaveDataSO data, bool activateContent)
+    private IEnumerable<object> LoadContent(WaveDataSO data, bool activateContent)
     {
         if (data == null) data = defaultData;
         // 기본 WaveData까지 비어 있으면(삭제·참조 끊김) 방을 만들 수 없다. 예외로 Room 초기화를 끊지 않고 알리기만 한다.
         if (data == null)
         {
             Debug.LogError("[TrainingRoomHost] 불러올 WaveData가 없습니다(요청과 defaultData가 모두 비어 있음).", this);
-            return;
+            yield break;
         }
         // 던전 Wave가 있으면 입장마다 원본의 실행 사본에 새 구조를 펼친다(원본 에셋은 바꾸지 않는다).
         // 부팅 로드(Room.Awake: 이 Host에 아직 방 내용이 없는 첫 로드)는 펼치지 않는다. 그때는 원본으로 방만 만들어 둔다.
@@ -209,91 +222,123 @@ public sealed class TrainingRoomHost : MonoBehaviour, ILoadingSource
         }
         if (dungeon)
         {
-            // 엘리베이터가 출발 때 미리 구성(Stage)해 둔 같은 훈련의 던전이면 그대로 입장한다. 그 밖에는 재사용하지 않고 새로 만든다(매 입장 새 구조).
+            // 엘리베이터가 고속 이동 중에 준비한 던전을 사용한다. 그 밖의 입장에서는 새로 생성한다.
             if (stagedDungeon && Dungeon != null && Data == data && contentBackdrop == data.roomBackdrop)
             {
                 if (activateContent) stagedDungeon = false;
                 entryPoint.localPosition = WaveRoomState.EntryPoint(PlayData);
-                return;
+                yield break;
             }
         }
         else if (Content != null && Data == data && Dungeon == null && contentBackdrop == data.roomBackdrop)
         {
             // Tool에서 첫 Wave 좌표를 바꾼 뒤 같은 데이터로 다시 입장하는 경우도 갱신한다.
             entryPoint.localPosition = WaveRoomState.EntryPoint(data);
-            return;
+            yield break;
         }
-        // 이전 내용의 입장 로딩이 진행 중이었으면 멈춘다(그 내용은 곧 없어진다).
-        CancelLoading();
-        var owner = GetComponent<Room>();
-        owner.ReleaseContent();
-        if (Content != null)
+        bool spreadOverFrames = !activateContent;
+        DungeonRun run = null;
+        GameObject staging = null;
+        AsyncInstantiateOperation<TrainingRoomContent> instantiation = null;
+        try
         {
-            Content.gameObject.SetActive(false);
-            Destroy(Content.gameObject);
-        }
-        ReleaseDungeon();
-        var run = dungeon ? DungeonRunBuilder.Build(data, 0) : null;
-        // 실제로 진행할 데이터. 던전이면 실행 사본이고, 만들지 못했으면 원본 그대로 진행한다.
-        var play = run != null ? run.Data : data;
-        Data = data;
-        Dungeon = run;
-        stagedDungeon = run != null && !activateContent;
-        var template = play.roomTemplate != null ? play.roomTemplate : defaultTemplate;
-        // 초기화 전에 참조와 WaveData를 복구하기 위해 비활성 부모에서 만든다.
-        var staging = new GameObject("ContentStaging");
-        staging.SetActive(false);
-        staging.transform.SetParent(transform, false);
-        Content = Instantiate(template, staging.transform);
-        Content.name = "TrainingContent";
-        Content.transform.localPosition = Vector3.zero;
-        contentBackdrop = data.roomBackdrop;
-        if (contentBackdrop != null) ReplaceBackdrop(Content.transform, contentBackdrop, staging.transform);
-        foreach (var binding in bindings)
-        {
-            if (binding.template != template) continue;
-            var node = string.IsNullOrEmpty(binding.path) ? Content.transform : Content.transform.Find(binding.path);
-            if (node == null) continue;
-            var type = Type.GetType(binding.componentType);
-            if (type == null) continue;
-            var components = node.GetComponents(type);
-            if (binding.componentIndex >= components.Length) continue;
-            // 직렬화 필드 경로는 Editor 이관 시 생성한 바인딩으로 런타임에 복구한다.
-            WaveRoomBinding.Apply(components[binding.componentIndex], binding.property, binding.target);
-        }
-        Content.waves.Configure(play, Content.spawnRoot, play.training);
-        if (!play.customRoom)
-        {
-            foreach (var stage in Content.GetComponentsInChildren<TrainingCourseStage>(true)) stage.enabled = false;
-            foreach (var layout in Content.GetComponentsInChildren<TrainingRoomLayoutController>(true)) layout.enabled = false;
-        }
-        if (play.cellMap.enabled)
-        {
-            foreach (var layout in Content.GetComponentsInChildren<TrainingRoomLayoutController>(true)) layout.enabled = false;
-            var terrain = Content.gameObject.AddComponent<WaveCellTerrain>();
-            terrain.Configure(play, Content.waves);
-            if (run != null)
+            if (dungeon)
             {
-                // 모든 던전 방의 셀을 미리 만들고(방 이동 때 즉시 교체), 입장 로딩이 방마다의 배경 모듈도 미리 만들게 한다.
-                terrain.RegisterCells(run.AllCells());
-                terrain.AddPredictedSpaces(DungeonManager.PredictRoomSpaces(run));
-                terrain.AddPredictedRoomKits(DungeonManager.PredictRoomKits(run));
-                // 던전 진행은 WaveManager 이벤트를 듣는 별도 구성요소가 맡는다(지형이 먼저 이벤트를 받도록 지형 뒤에 붙인다).
-                Content.waves.gameObject.AddComponent<DungeonManager>().Configure(run, Content.waves, terrain);
+                foreach (var step in DungeonRunBuilder.BuildInSteps(data, 0, ready => run = ready))
+                    if (spreadOverFrames) yield return step;
             }
+
+            var play = run != null ? run.Data : data;
+            var template = play.roomTemplate != null ? play.roomTemplate : defaultTemplate;
+            // 참조와 WaveData를 복구하고 나서 활성화하도록 비활성 부모 안에서 만든다.
+            staging = new GameObject("ContentStaging");
+            staging.SetActive(false);
+            staging.transform.SetParent(transform, false);
+            TrainingRoomContent content;
+            if (spreadOverFrames)
+            {
+                instantiation = InstantiateAsync(template, staging.transform);
+                while (!instantiation.isDone) yield return null;
+                content = instantiation.Result[0];
+            }
+            else content = Instantiate(template, staging.transform);
+
+            content.name = "TrainingContent";
+            content.transform.localPosition = Vector3.zero;
+            var backdrop = data.roomBackdrop;
+            if (backdrop != null) ReplaceBackdrop(content.transform, backdrop, staging.transform);
+            foreach (var binding in bindings)
+            {
+                if (binding.template != template) continue;
+                var node = string.IsNullOrEmpty(binding.path) ? content.transform : content.transform.Find(binding.path);
+                if (node == null) continue;
+                var type = Type.GetType(binding.componentType);
+                if (type == null) continue;
+                var components = node.GetComponents(type);
+                if (binding.componentIndex >= components.Length) continue;
+                // 직렬화 필드 경로는 Editor 이관 시 생성한 바인딩으로 런타임에 복구한다.
+                WaveRoomBinding.Apply(components[binding.componentIndex], binding.property, binding.target);
+            }
+
+            if (spreadOverFrames) yield return null;
+            content.waves.Configure(play, content.spawnRoot, play.training);
+            if (!play.customRoom)
+            {
+                foreach (var stage in content.GetComponentsInChildren<TrainingCourseStage>(true)) stage.enabled = false;
+                foreach (var layout in content.GetComponentsInChildren<TrainingRoomLayoutController>(true)) layout.enabled = false;
+            }
+            if (play.cellMap.enabled)
+            {
+                foreach (var layout in content.GetComponentsInChildren<TrainingRoomLayoutController>(true)) layout.enabled = false;
+                var terrain = content.gameObject.AddComponent<WaveCellTerrain>();
+                foreach (var step in terrain.ConfigureInSteps(play, content.waves, spreadOverFrames)) yield return step;
+                if (run != null)
+                {
+                    // 지형 셀과 배경 키트를 미리 준비하면 방이 바뀔 때 바로 교체할 수 있다.
+                    foreach (var step in terrain.RegisterCellsInSteps(run.AllCells(), spreadOverFrames)) yield return step;
+                    if (spreadOverFrames) yield return null;
+                    terrain.AddPredictedSpaces(DungeonManager.PredictRoomSpaces(run));
+                    terrain.AddPredictedRoomKits(DungeonManager.PredictRoomKits(run));
+                    // 지형이 먼저 Wave 이벤트를 받은 뒤 던전 진행을 시작한다.
+                    content.waves.gameObject.AddComponent<DungeonManager>().Configure(run, content.waves, terrain);
+                }
+            }
+            else
+            {
+                var builder = content.gameObject.AddComponent<WaveRoomBuilder>();
+                builder.Configure(content, play);
+            }
+            if (run == null && play.waves != null && play.waves.Length > 0)
+                content.waves.gameObject.AddComponent<WaveFieldTerminalHost>().Configure(content.waves);
+            if (spreadOverFrames) yield return null;
+
+            // 새 내용이 준비된 뒤 교체한다. 준비 도중 중단되면 이전 방을 계속 쓸 수 있다.
+            CancelLoading();
+            var owner = GetComponent<Room>();
+            owner.ReleaseContent();
+            if (Content != null)
+            {
+                Content.gameObject.SetActive(false);
+                Destroy(Content.gameObject);
+            }
+            ReleaseDungeon();
+            Content = content;
+            Data = data;
+            Dungeon = run;
+            contentBackdrop = backdrop;
+            stagedDungeon = run != null && !activateContent;
+            owner.BindContent(content);
+            entryPoint.localPosition = WaveRoomState.EntryPoint(play);
+            if (!activateContent) content.gameObject.SetActive(false);
+            content.transform.SetParent(transform, false);
         }
-        else
+        finally
         {
-            var builder = Content.gameObject.AddComponent<WaveRoomBuilder>();
-            builder.Configure(Content, play);
+            if (instantiation != null && !instantiation.isDone) instantiation.Cancel();
+            if (staging != null) Destroy(staging);
+            if (run != null && run != Dungeon) Destroy(run.Data);
         }
-        if (run == null && play.waves != null && play.waves.Length > 0)
-            Content.waves.gameObject.AddComponent<WaveFieldTerminalHost>().Configure(Content.waves);
-        owner.BindContent(Content);
-        entryPoint.localPosition = WaveRoomState.EntryPoint(play);
-        if (!activateContent) Content.gameObject.SetActive(false);
-        Content.transform.SetParent(transform, false);
-        Destroy(staging);
+        if (spreadOverFrames) yield return null;
     }
 
     // 던전 실행 사본은 이 Host가 만든 런타임 데이터라 방 내용을 버릴 때(또는 Host가 없어질 때) 함께 없앤다(DontSave라 저절로 내려가지 않는다).

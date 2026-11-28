@@ -41,10 +41,11 @@ public class UpgradeMenu : SelectableMenuUI
     private Vector3 authoredBoardPosition;
     private float fittedAspect;
     private Coroutine waitingForCamera;
+    private bool closing;
 
-    public bool BoardReady => boardMotion == null || boardMotion.IsReady;
+    public bool BoardReady => !closing && (boardMotion == null || boardMotion.IsReady);
 
-    private bool CanReceiveInput => IsActive && isActiveAndEnabled
+    private bool CanReceiveInput => IsActive && isActiveAndEnabled && BoardReady
         && (purchaseDialog == null || !purchaseDialog.IsActive)
         && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked
         && UIManager.Instance.IsCurrentInputTarget(this);
@@ -52,6 +53,7 @@ public class UpgradeMenu : SelectableMenuUI
     protected override void Awake()
     {
         base.Awake();
+        boardMotion?.UseFacilityTiming();
         boardRoot = transform.Find("Root");
         if (boardRoot != null)
         {
@@ -133,10 +135,15 @@ public class UpgradeMenu : SelectableMenuUI
 
         SizeBoardToViewport();
         animator.SetBool("Open", true);
+        CinemachineCore.GetBlendOverride += BlendToMenu;
         virtualCamera.Priority = 999;
         UIManager.Instance.HUDVisible(false);
 
-        if (boardMotion != null) waitingForCamera = StartCoroutine(OpenBoardAfterCamera());
+        if (boardMotion != null)
+        {
+            boardMotion.Open();
+            waitingForCamera = StartCoroutine(FitAfterCameraBlend());
+        }
         ApplyCertificateLabels();
         UpdateCertificateText();
         Open();
@@ -149,16 +156,18 @@ public class UpgradeMenu : SelectableMenuUI
         }
     }
 
-    private IEnumerator OpenBoardAfterCamera()
+    private CinemachineBlendDefinition BlendToMenu(ICinemachineCamera from, ICinemachineCamera to,
+        CinemachineBlendDefinition blend, UnityEngine.Object owner)
+    {
+        if (ReferenceEquals(to, virtualCamera)) blend.Time = Mathf.Min(blend.Time, TitlePanelMotion.FacilityCameraBlend);
+        return blend;
+    }
+
+    private IEnumerator FitAfterCameraBlend()
     {
         yield return TitlePanelMotion.WaitForCamera(virtualCamera);
         waitingForCamera = null;
-        if (IsActive)
-        {
-            SizeBoardToViewport(true);
-            UIManager.Instance.HUDVisible(false);
-            boardMotion.Open();
-        }
+        if (IsActive && !closing) SizeBoardToViewport(true);
     }
 
     private void LateUpdate()
@@ -189,10 +198,9 @@ public class UpgradeMenu : SelectableMenuUI
     {
         StopWaitingForCamera();
         if (boardMotion != null) boardMotion.SnapHidden();
-        if (boardRoot != null) boardRoot.localPosition = authoredBoardPosition;
         if (overviewPage != null) overviewPage.CloseAllPages();
         if (purchaseDialog != null) purchaseDialog.Close();
-        if (IsActive && UIManager.Instance != null) base.Close();
+        FinishClose();
     }
 
     private void HandleCanceled()
@@ -204,28 +212,33 @@ public class UpgradeMenu : SelectableMenuUI
     // 기존 X 닫기 처리. 개요 페이지에서 X로 닫을 때도 이 경로를 쓴다.
     private void CloseMenu()
     {
-        if (!IsActive) return;
+        if (!IsActive || closing) return;
         GameManager.Instance.Player.AbilityManager.InterruptAllAbilities();
-
-        animator.SetBool("Open", false);
-        virtualCamera.Priority = -1;
-        UIManager.Instance.HUDVisible(true);
-        // 나중에 QuitConfirmPopup을 열도록 확장 가능.
-
         Close();
     }
 
-    private void RestoreBoardPosition()
+    private void FinishClose()
     {
-        if (!IsActive && boardRoot != null) boardRoot.localPosition = authoredBoardPosition;
+        closing = false;
+        CinemachineCore.GetBlendOverride -= BlendToMenu;
+        if (virtualCamera != null) virtualCamera.Priority = -1;
+        if (boardRoot != null) boardRoot.localPosition = authoredBoardPosition;
+        if (IsActive && UIManager.Instance != null)
+        {
+            base.Close();
+            UIManager.Instance.HUDVisible(true);
+        }
     }
 
     public override void Close()
     {
+        if (!IsActive || closing) return;
+        closing = true;
         StopWaitingForCamera();
-        base.Close();
-        if (boardMotion != null) boardMotion.Close(RestoreBoardPosition);
+        animator.SetBool("Open", false);
         if (overviewPage != null) overviewPage.CloseAllPages();
         if (purchaseDialog != null) purchaseDialog.Close();
+        if (boardMotion != null) boardMotion.Close(FinishClose);
+        else FinishClose();
     }
 }

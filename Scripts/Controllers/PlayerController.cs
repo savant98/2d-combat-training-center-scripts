@@ -66,6 +66,15 @@ public class PlayerController : CharacterController2D
         motor.RefitConfinement();
         Velocity = Vector2.zero;
     }
+    public void ResetCombatState()
+    {
+        abilityManager?.InterruptAllAbilities();
+        abilityManager?.AttackAbility?.ResetCombatState();
+        playerCounterState?.EndCounter();
+        playerCounterState?.EndInvulnerability();
+        WorldEntityPool.Instance?.DespawnOwnedBy(this);
+    }
+
     public void ResetPlayerStatus(bool preserveExecutingAttack = false)
     {
         if (abilityManager != null && abilityManager.Grab != null) abilityManager.Grab.Abort(true);

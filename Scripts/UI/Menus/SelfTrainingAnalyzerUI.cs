@@ -24,7 +24,7 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     [SerializeField] private RectTransform sourceContent;
     [SerializeField] private SelfTrainingDamageRowUI sourceTemplate;
     [SerializeField] private UnityEngine.UI.ScrollRect sourceScroll;
-    [SerializeField] private CanvasGroup countdownGroup, timerGroup;
+    [SerializeField] private CanvasGroup countdownGroup, timerGroup, completionGroup;
     [SerializeField] private TextMeshProUGUI countdownText, timerText;
     [SerializeField] private UnityEngine.UI.Image countdownFill, timerFill;
     [SerializeField] private TextMeshProUGUI hudTotalText, hudDpsText, hudMaximumText, hudSummaryText, hudEmptyText;
@@ -37,6 +37,9 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     [SerializeField] private TextMeshProUGUI hudScrollHint;
     [SerializeField] private CanvasGroup projectionGroup;
     [SerializeField] private FeedbackDataSO moveFeedback, confirmFeedback;
+    [SerializeField] private FeedbackDataSO countdownFeedback;
+    [SerializeField] private AudioClip completionClip;
+    private const float CompletionNoticeSeconds = 1.6f;
     private readonly List<SelfTrainingDamageRowUI> rows = new List<SelfTrainingDamageRowUI>();
     private readonly List<SelfTrainingDamageRowUI> hudRows = new List<SelfTrainingDamageRowUI>();
     private readonly List<UnityEngine.Events.UnityAction> handlers = new List<UnityEngine.Events.UnityAction>();
@@ -46,6 +49,9 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     private int selection, previousCount = -1, previousHudCount = -1;
     private SelfTrainingPhase previousPhase;
     private float lastRefresh;
+    private int lastCountdownNumber;
+    private float completionNoticeUntil;
+    private SelfTrainingPhase overlayPhase;
     private bool playerNearby;
     private Canvas promptCanvas;
     private int scrollDirection;
@@ -94,6 +100,7 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
         SetBoardVisibility(false, true);
         SetOverlay(countdownGroup, false);
         SetOverlay(timerGroup, false);
+        ResetAnnouncement();
         Refresh();
     }
 
@@ -356,14 +363,36 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
 
     private void UpdateOverlays()
     {
-        bool counting = !controlsOpen && !HasOtherInput && controller.Phase == SelfTrainingPhase.Countdown;
-        bool measuring = !controlsOpen && !HasOtherInput && controller.Phase != SelfTrainingPhase.Free;
-        SetOverlay(countdownGroup, counting);
-        SetOverlay(timerGroup, measuring, true);
-        if (countdownText != null && counting) countdownText.text = Mathf.Max(1, Mathf.CeilToInt(controller.CountdownRemaining)).ToString();
-        if (countdownFill != null && counting) countdownFill.fillAmount = Mathf.Clamp01(controller.CountdownRemaining / 3f);
-        if (timerText != null && measuring) timerText.text = controller.Phase == SelfTrainingPhase.Results ? "전투 분석 완료" : counting ? "전투 분석 준비  " + Mathf.CeilToInt(controller.CountdownRemaining) : "전투 분석  " + controller.Remaining.ToString("0.0") + " s";
-        if (timerFill != null && measuring) timerFill.fillAmount = controller.Phase == SelfTrainingPhase.Results ? 1f : controller.Phase == SelfTrainingPhase.Countdown ? 0f : Mathf.Clamp01(controller.Elapsed / 10f);
+        var phase = controller.Phase;
+        bool overlaysVisible = !controlsOpen && !HasOtherInput;
+        bool counting = phase == SelfTrainingPhase.Countdown;
+        int number = counting ? Mathf.Max(1, Mathf.CeilToInt(controller.CountdownRemaining)) : 0;
+        if (number > 0 && number != lastCountdownNumber) Play(countdownFeedback);
+        lastCountdownNumber = number;
+
+        if (phase == SelfTrainingPhase.Results && overlayPhase == SelfTrainingPhase.Measuring)
+        {
+            completionNoticeUntil = Time.unscaledTime + CompletionNoticeSeconds;
+            if (completionClip != null && SoundManager.Instance != null)
+                SoundManager.Instance.PlaySound(new SoundOptions { clip = completionClip, volume = .6f, spatialBlend = 0f }, transform.position);
+        }
+        overlayPhase = phase;
+
+        bool showTimer = overlaysVisible && phase != SelfTrainingPhase.Free;
+        SetOverlay(countdownGroup, overlaysVisible && counting);
+        SetOverlay(completionGroup, overlaysVisible && phase == SelfTrainingPhase.Results && Time.unscaledTime < completionNoticeUntil);
+        SetOverlay(timerGroup, showTimer, true);
+        if (countdownText != null && counting)
+        {
+            string label = number.ToString();
+            if (countdownText.text != label) countdownText.text = label;
+        }
+        if (countdownFill != null && counting)
+            countdownFill.fillAmount = Mathf.Clamp01(controller.CountdownRemaining / SelfTrainingController.CountdownSeconds);
+        if (timerText != null && showTimer)
+            timerText.text = phase == SelfTrainingPhase.Results ? "전투 분석 완료" : counting ? "전투 분석 준비  " + number : "전투 분석  " + controller.Remaining.ToString("0.0") + " s";
+        if (timerFill != null && showTimer)
+            timerFill.fillAmount = phase == SelfTrainingPhase.Results ? 1f : counting ? 0f : Mathf.Clamp01(controller.Elapsed / SelfTrainingController.MeasurementSeconds);
         var stats = controller.Statistics;
         if (hudTotalText != null) hudTotalText.text = Number(stats.TotalDamage);
         if (hudDpsText != null) hudDpsText.text = Number(controller.Phase == SelfTrainingPhase.Results ? stats.Dps : stats.CurrentDps);
@@ -442,7 +471,25 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     private void OnTriggerExit2D(Collider2D other) { if (other.GetComponent<PlayerController>() != null) SetNearby(false); }
     private void Play(FeedbackDataSO data) { if (data != null && FeedbackPlayer.Instance != null) FeedbackPlayer.Instance.Play(data, transform); }
     private static string Number(float value) => value.ToString(value >= 10000f ? "N0" : "N1");
-    private void OnDisable() { Canvas.willRenderCanvases -= UpdateInteractionPrompt; scrollDirection = 0; CloseControls(); SetBoardVisibility(false, true); SetOverlay(countdownGroup, false); SetOverlay(timerGroup, false); if (interactionPrompt != null) interactionPrompt.alpha = 0f; }
+    private void ResetAnnouncement()
+    {
+        lastCountdownNumber = 0;
+        completionNoticeUntil = 0f;
+        overlayPhase = SelfTrainingPhase.Free;
+        SetOverlay(completionGroup, false);
+    }
+
+    private void OnDisable()
+    {
+        Canvas.willRenderCanvases -= UpdateInteractionPrompt;
+        scrollDirection = 0;
+        CloseControls();
+        SetBoardVisibility(false, true);
+        SetOverlay(countdownGroup, false);
+        SetOverlay(timerGroup, false);
+        ResetAnnouncement();
+        if (interactionPrompt != null) interactionPrompt.alpha = 0f;
+    }
     private void OnDestroy()
     {
         if (!listenersReady) return;

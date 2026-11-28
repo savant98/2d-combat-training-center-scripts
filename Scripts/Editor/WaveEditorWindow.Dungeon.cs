@@ -189,6 +189,7 @@ public partial class WaveEditorWindow
             DungeonObjectiveGui(settings, clear.enumValueIndex == (int)DungeonClearCondition.Objective);
             EditorGUILayout.PropertyField(settings.FindPropertyRelative("loopChance"), new GUIContent("고리 확률", "이미 놓인 방끼리 마주 보는 빈 출입구를 이어 고리를 만들 확률입니다."));
             EditorGUILayout.PropertyField(settings.FindPropertyRelative("passage"), new GUIContent("방 이동 연출", "비우면 던전 공통 규칙(DungeonRules)의 기본 연출(관 통과)을 씁니다."));
+            EditorGUILayout.PropertyField(settings.FindPropertyRelative("blackoutOnDoorArrival"), new GUIContent("도착 문 전환 암전"));
             EditorGUILayout.PropertyField(settings.FindPropertyRelative("theme"), new GUIContent("테마 (Prop 교체표)", "비우면 템플릿에 놓인 Prop을 그대로 씁니다."));
             EditorGUILayout.PropertyField(settings.FindPropertyRelative("seed"), new GUIContent("고정 시드", "0이면 입장할 때마다 새 구조를 만듭니다. 0이 아니면 이 값으로 고정합니다(검증·시연용)."));
             DungeonGenerationRules(settings);

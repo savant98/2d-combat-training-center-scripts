@@ -58,6 +58,7 @@ public sealed class ArmamentLockOverlay : MonoBehaviour
     private bool[] partIsJaw = Array.Empty<bool>();
 
     private Material ringCopy, ringFrom, ringTo;
+    private Canvas ringLayer, iconLayer, lockLayer;
     private float ringSpinApplied;
     private bool releasedCue, engagedCue, finishPending;
 
@@ -90,6 +91,7 @@ public sealed class ArmamentLockOverlay : MonoBehaviour
     {
         // 꺼지는 동안에는 자식 오브젝트를 켜고 끄지 않는다. 재질만 정리하고 켜질 때 마무리한다.
         ReleaseRingCopy(true);
+        RestoreUnlockLayers();
         if (IsPlaying)
         {
             IsPlaying = false;
@@ -97,7 +99,11 @@ public sealed class ArmamentLockOverlay : MonoBehaviour
         }
     }
 
-    private void OnDestroy() => ReleaseRingCopy(false);
+    private void OnDestroy()
+    {
+        ReleaseRingCopy(false);
+        RestoreUnlockLayers();
+    }
 
     /// <summary>즉시 자세: 잠김이면 부품을 제자리에 불투명하게 두고 아이콘을 흐리게, 해제면 부품을 끄고 아이콘을 원래대로.</summary>
     public void SetLocked(bool locked)
@@ -108,6 +114,7 @@ public sealed class ArmamentLockOverlay : MonoBehaviour
             IsPlaying = false;
             ReleaseRingCopy(true);
         }
+        RestoreUnlockLayers();
         finishPending = false;
         IsLocked = locked;
         SetPartsActive(locked);
@@ -127,6 +134,7 @@ public sealed class ArmamentLockOverlay : MonoBehaviour
         SetPartsActive(true);
         ResetParts();
         BeginRing(from, to);
+        RaiseUnlockLayers();
         IsPlaying = true;
         finishPending = false;
         releasedCue = engagedCue = false;
@@ -267,6 +275,41 @@ public sealed class ArmamentLockOverlay : MonoBehaviour
     {
         if (sound == null || sound.clip == null || SoundManager.Instance == null) return;
         SoundManager.Instance.PlaySFX(sound, transform.position);
+    }
+
+    // 움직이는 부품을 메뉴보다 위에서 그린 뒤, 연출이 끝나면 원래 그리기 순서로 돌린다.
+    private void RaiseUnlockLayers()
+    {
+        var parent = transform.parent;
+        var menu = parent != null ? parent.GetComponentInParent<Canvas>() : null;
+        if (menu == null) return;
+        lockLayer = RaiseVisual(gameObject, menu, 3);
+        if (icon != null) iconLayer = RaiseVisual(icon.gameObject, menu, 2);
+        if (ring != null) ringLayer = RaiseVisual(ring.gameObject, menu, 1);
+    }
+
+    private static Canvas RaiseVisual(GameObject part, Canvas menu, int offset)
+    {
+        var layer = part.AddComponent<Canvas>();
+        layer.overrideSorting = true;
+        layer.sortingLayerID = menu.sortingLayerID;
+        layer.sortingOrder = menu.sortingOrder + offset;
+        return layer;
+    }
+
+    private void RestoreUnlockLayers()
+    {
+        Restore(ref lockLayer);
+        Restore(ref iconLayer);
+        Restore(ref ringLayer);
+    }
+
+    private static void Restore(ref Canvas layer)
+    {
+        if (layer == null) return;
+        layer.overrideSorting = false;
+        Destroy(layer);
+        layer = null;
     }
 
     // 처음 쓸 때 부품·아이콘의 제자리와 투명도를 기억한다(Prefab에 저장된 자세가 기준).

@@ -75,6 +75,7 @@ public class UpgradeTrigger : MonoBehaviour, IInteractable
         // Menu를 연다면
         if (menu != null)
         {
+            player?.ResetCombatState();
             menu.OpenMenu();
         }
     }

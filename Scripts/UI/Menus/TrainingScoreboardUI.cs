@@ -6,8 +6,7 @@ using UnityEngine;
 // 이 Prefab(MainScene의 TrainingScoreboard 인스턴스, UIManager.trainingScoreboardUI)이 훈련 중 화면 연출을 함께 맡는다.
 // - 오른쪽 위 코너판(TrainingStatusView): 현재 성적·남은 시간·남은 피격·Wave 진행. 켜질 때 오른쪽에서 밀려 들어온다.
 //   보스 HP 바가 켜진 동안에는 오른쪽 위 구석의 간략판(등급·시간·피격 숫자)으로 접힌다(SetBossBarArea, 2026-11-15).
-//   던전형 Wave가 진행 중인 동안에도 늘 간략판으로 접는다(2026-11-24 던전 3차, DESIGN_V3 '평소 HUD' — 그 아래 목표 패널·지금 방 미니맵 자리).
-//   던전 진행 여부는 계약 정적 값 DungeonFacilityHost.Current(+ IDungeonMapSource.HasFloor)로만 읽는다(DungeonManager 직접 참조 없음, Prefab 무수정).
+//   던전 진행 기록은 현장 단말기에서 확인한다.
 // - 등급 하락 알림(TrainingGradeAlertUI): TrainingRunTracker의 읽기 전용 예상 등급이 떨어지면 띄운다(게임 상태는 바꾸지 않는다).
 // - 한도 경고(TrainingLimitWarningUI): 곧 미흡이 될 때(남은 시간 1분·30초·10초 카운트, 남은 피격 5 이하) 화면에 크게 알린다.
 // - 위험 빛(DangerVignetteUI): 남은 피격이 1 이하이거나 체력 30% 이하일 때 화면 네 변이 붉게 숨 쉰다. 훈련 기록이 없는 방에서도 체력 조건으로 뜬다.
@@ -45,7 +44,7 @@ public class TrainingScoreboardUI : MonoBehaviour
     private float avoidTime = -1f;
     private const float BossWarningDuration = 3f;      // 보스 등장 경고(WarningLineEffect) 길이, 게임 시간
     private float bossWarningUntil = -1f;
-    private bool dungeonCompact;                       // 던전 진행 중이라 간략판으로 접었는지
+    private bool dungeonHidden;
 
     public bool IsRunActive => scoreBoardOn && !hideRunInformation && tracker != null && tracker.IsRunActive;
     public TrainingGradeAlertUI GradeAlert => gradeAlert;
@@ -74,6 +73,7 @@ public class TrainingScoreboardUI : MonoBehaviour
         // 튜토리얼은 실습 안내에 집중하도록 실시간 성적·제한 알림만 숨깁니다. 저장 ID는 기존 Intro를 유지합니다.
         // Show 때마다 다시 판정하므로 다음 일반 훈련에서는 기존 상황판이 자동으로 돌아옵니다.
         hideRunInformation = training != null && training.trainingId == "Intro";
+        dungeonHidden = IsDungeonActive();
         if (hideRunInformation)
         {
             if (limitWarning != null) limitWarning.Stop();
@@ -91,12 +91,25 @@ public class TrainingScoreboardUI : MonoBehaviour
         var snapshot = BuildSnapshot();
         lastGrade = snapshot.grade;
         cornerView.Refresh(snapshot);
-        if (limitWarning != null) limitWarning.Begin();
         bossWarningUntil = -1f;
+        ShowCorner(!dungeonHidden);
+    }
 
-        bootTime = 0f;
+    private void ShowCorner(bool show)
+    {
         scoreBoardCanvasGroup.DOKill();
-        scoreBoardCanvasGroup.DOFade(1f, fadeDuration).SetUpdate(true);
+        if (show)
+        {
+            bootTime = 0f;
+            if (limitWarning != null) limitWarning.Begin();
+            scoreBoardCanvasGroup.DOFade(1f, fadeDuration).SetUpdate(true);
+            return;
+        }
+
+        bootTime = -1f;
+        scoreBoardCanvasGroup.alpha = 0f;
+        if (limitWarning != null) limitWarning.Stop();
+        if (gradeAlert != null) gradeAlert.Stop();
     }
 
     public void HideTrainingScoreboard()
@@ -107,7 +120,7 @@ public class TrainingScoreboardUI : MonoBehaviour
         if (waveTransition != null && tracker != null && tracker.LastFailReason != TrainingFailReason.None)
             waveTransition.Stop();
         // 성적이 미흡이 되어 판이 끝났으면(자동 사망) 그 순간을 등급 하락 알림으로 알려 왜 패배했는지 보이게 한다.
-        if (!hideRunInformation && gradeAlert != null && tracker != null && lastGrade > Grade.Poor
+        if (!hideRunInformation && !dungeonHidden && gradeAlert != null && tracker != null && lastGrade > Grade.Poor
             && (tracker.LastFailReason == TrainingFailReason.HitLimit || tracker.LastFailReason == TrainingFailReason.TimeLimit))
         {
             gradeAlert.Play(lastGrade, Grade.Poor);
@@ -124,12 +137,12 @@ public class TrainingScoreboardUI : MonoBehaviour
     public void SetBossBarArea(RectTransform bar)
     {
         bossBar = bar;
-        if (cornerView != null) cornerView.SetCompact(bar != null || dungeonCompact, !IsBoardVisible);
+        if (cornerView != null) cornerView.SetCompact(bar != null, !IsBoardVisible);
         Retarget(AvoidTarget());
     }
 
     // 코너판이 화면에 보이는지(켜져 있고 루트 알파가 남아 있다)
-    private bool IsBoardVisible => scoreBoardOn && !hideRunInformation && scoreBoardCanvasGroup != null && scoreBoardCanvasGroup.alpha > 0.001f;
+    private bool IsBoardVisible => scoreBoardOn && !hideRunInformation && !dungeonHidden && scoreBoardCanvasGroup != null && scoreBoardCanvasGroup.alpha > 0.001f;
 
     // 보스 등장 경고(UIManager.ShowWarningLine)가 시작될 때 부른다. 경고 글자판이 한도 경고와 같은 자리라 그동안 한도 경고를 흐리게 한다.
     public void NotifyBossWarning()
@@ -146,20 +159,22 @@ public class TrainingScoreboardUI : MonoBehaviour
         var manager = WaveManager.ActiveInstance;
         if (manager != null && manager.Data != null && manager.Data.waves != null) total = manager.Data.waves.Length;
 
-        bool board = IsRunActive;
+        bool board = IsRunActive && !IsDungeonActive();
         waveTransition.Play(waveNumber, total, board, board ? tracker.CurrentPredictedGrade : Grade.Poor);
         return true;
     }
 
     private void Update()
     {
-        // 던전 진행 중에는 늘 간략판. 시작·끝이 바뀐 프레임에만 접기·펼치기를 요청한다(보스 바 규칙과 함께 본다).
         bool dungeon = IsDungeonActive();
-        if (dungeon != dungeonCompact)
+        if (dungeon != dungeonHidden)
         {
-            dungeonCompact = dungeon;
-            if (cornerView != null) cornerView.SetCompact(bossBar != null || dungeonCompact, !IsBoardVisible);
-            Retarget(AvoidTarget());
+            dungeonHidden = dungeon;
+            if (IsRunActive)
+            {
+                lastGrade = tracker.CurrentPredictedGrade;
+                ShowCorner(!dungeon);
+            }
         }
 
         if (cornerView != null)
@@ -183,7 +198,7 @@ public class TrainingScoreboardUI : MonoBehaviour
             cornerView.Rect.anchoredPosition = cornerBase + new Vector2(slide, avoidOffset);
         }
 
-        if (!IsRunActive) return;
+        if (!IsRunActive || dungeonHidden) return;
 
         var snapshot = BuildSnapshot();
         cornerView.Refresh(snapshot);
@@ -245,8 +260,17 @@ public class TrainingScoreboardUI : MonoBehaviour
     // 던전형 Wave가 진행 중인지(던전 시작부터 끝까지 DungeonFacilityHost.Current가 있다). 파괴된 원본은 진행 중이 아닌 것으로 본다.
     public static bool IsDungeonActive()
     {
-        // 던전 훈련 중이면 층 사이(Wave 클리어 → 다음 던전 준비)·재도전 동안에도 간략판을 유지한다(펼쳤다가 다시 접히지 않게).
-        if (DungeonRunState.Active) return true;
+        // 층 사이와 재도전 중에도 던전 진행 상태를 유지한다.
+        if (DungeonRunState.Active)
+        {
+            var manager = WaveManager.ActiveInstance;
+            var waves = manager != null && manager.Data != null ? manager.Data.waves : null;
+            int index = manager != null ? manager.currentWaveIndex : -1;
+            if (waves != null && index >= 0 && index < waves.Length && waves[index] != null)
+                return waves[index].flowMode == WaveFlowMode.Dungeon;
+
+            return true;
+        }
         var host = DungeonFacilityHost.Current;
         if (host == null) return false;
         if (host is UnityEngine.Object unityObject && unityObject == null) return false;

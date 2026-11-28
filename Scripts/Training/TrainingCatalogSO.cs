@@ -6,8 +6,8 @@ using UnityEngine;
 /// 훈련 목록의 원본(2026-11-19 훈련 개편). 목록의 순서가 곧 진행 순서다.
 /// - 훈련 메뉴는 여기서 listed 항목을 순서대로 읽고, 아직 열리지 않은 훈련은 목록에 내지 않는다.
 /// - 진행 사슬: alwaysAvailable(테스트 훈련)을 뺀 항목들의 순서. 사슬의 첫 항목은 처음부터 열려 있고, 그 뒤는 앞선 과정을 모두 수료하면 열린다.
-///   훈련 메뉴에 나오지 않는 항목(listed 꺼짐, 각개 전투)도 사슬에는 들어간다.
-/// - 훈련 필증: grantsCertificate 항목을 처음 수료하면 1개. 지급과 기록은 DataManager가 하고, 여기서는 대상인지와 표시 이름·아이콘만 정한다.
+///   훈련 메뉴에 나오지 않는 항목도 사슬에는 들어간다.
+/// - 훈련 필증: 지급 대상 항목의 최초 수료 보상은 certificateCount개. 지급과 기록은 DataManager가 하고, 여기서는 대상인지와 표시 이름·아이콘만 정한다.
 /// Resources/Training/TrainingCatalog 에 한 벌만 둔다(WaveRoomRules와 같은 방식). 읽기 전용 데이터이며 실행 중에 바꾸지 않는다.
 /// </summary>
 [CreateAssetMenu(menuName = "Training/TrainingCatalog", fileName = "TrainingCatalog")]
@@ -26,12 +26,16 @@ public sealed class TrainingCatalogSO : ScriptableObject
         [Tooltip("훈련 메뉴의 제목. 비우면 definition.displayName을 쓴다")]
         public string title;
         [TextArea] public string summary;
-        [Tooltip("훈련 메뉴에 나오는가. 끄면 다른 경로(Lobby 엘리베이터)로만 입장한다")]
+        [Tooltip("훈련 메뉴에 나오는가. 끄면 훈련 메뉴에서 선택할 수 없다")]
         public bool listed = true;
         [Tooltip("선행 조건 없이 항상 열려 있는가(테스트 훈련). 진행 사슬에 들어가지 않는다")]
         public bool alwaysAvailable;
-        [Tooltip("처음 수료하면 훈련 필증 1개를 주는가")]
+        [Tooltip("처음 수료하면 훈련 필증을 주는가")]
         public bool grantsCertificate = true;
+        [Min(1), Tooltip("최초 수료 시 지급하는 필증 수")]
+        public int certificateCount = 1;
+        [Tooltip("훈련을 선택하면 Lobby 엘리베이터를 호출한다")]
+        public bool arrivalByElevator;
 
         /// <summary>세이브 키. 정의가 비어 있으면 빈 문자열이다.</summary>
         public string TrainingId => definition != null && definition.trainingId != null ? definition.trainingId : "";
@@ -43,6 +47,10 @@ public sealed class TrainingCatalogSO : ScriptableObject
 
     [Tooltip("테스트를 위해 등록한 모든 과정을 바로 선택합니다. 수료 기록·과정 번호·필증은 실제 진행 기준을 따릅니다.")]
     public bool openAllForTesting;
+
+    [Header("Lobby 시설 선행 훈련")]
+    public TrainingDefinitionSO upgradeRequiredTraining;
+    public TrainingDefinitionSO selfTrainingRequiredTraining;
 
     [Header("재화(훈련 필증) 표시")]
     public string certificateName = DefaultCertificateName;
@@ -116,11 +124,23 @@ public sealed class TrainingCatalogSO : ScriptableObject
     /// <summary>trainingId의 항목. 없으면 null.</summary>
     public Entry Find(string trainingId) => GetEntry(IndexOf(trainingId));
 
-    /// <summary>처음 수료하면 훈련 필증을 주는 훈련인가. 목록에 없는 훈련은 대상이 아니다.</summary>
-    public bool GrantsCertificate(string trainingId)
+    public Entry ElevatorTraining
+    {
+        get
+        {
+            for (int i = 0; i < Count; i++)
+                if (IsValid(entries[i]) && entries[i].arrivalByElevator) return entries[i];
+            return null;
+        }
+    }
+
+    public bool GrantsCertificate(string trainingId) => CertificateReward(trainingId) > 0;
+
+    /// <summary>최초 수료 보상. 지급 대상이 아니면 0이다.</summary>
+    public int CertificateReward(string trainingId)
     {
         var entry = Find(trainingId);
-        return entry != null && entry.grantsCertificate;
+        return entry != null && entry.grantsCertificate ? Mathf.Max(1, entry.certificateCount) : 0;
     }
 
     /// <summary>
@@ -138,7 +158,7 @@ public sealed class TrainingCatalogSO : ScriptableObject
     public bool IsUnlocked(string trainingId, DataManager data) => IsUnlocked(IndexOf(trainingId), data);
 
     /// <summary>
-    /// 진행 사슬에서 untilTrainingId보다 앞선 훈련을 모두 수료했는가(Lobby 엘리베이터 조건: 각개 전투 앞의 훈련 전부).
+    /// 진행 사슬에서 untilTrainingId보다 앞선 훈련을 모두 수료했는가(Lobby 엘리베이터 조건: 전투 훈련 앞의 훈련 전부).
     /// untilTrainingId를 비우면 사슬 전체를 본다. 목록에 없는 ID이거나 사슬이 비어 있으면 false.
     /// </summary>
     public bool AllProgressionCleared(string untilTrainingId, DataManager data)

@@ -1033,7 +1033,7 @@ public sealed class DungeonTerminalGaugeGraphic : MaskableGraphic
     {
         if (r.width < 20f || r.height < 20f || mapFrameMode == MapFrameHidden) return;
         bool selected = mapFrameMode == MapFrameSelected;
-        Draw.ChamferOutline(vh, r, 12f, selected ? 2.4f : 1.6f, selected ? LineBright : Line);
+        Draw.ChamferOutline(vh, r, 12f, selected ? 3.5f : 2f, selected ? LineBright : Line);
         Draw.Rect(vh, new Rect(r.xMin + 6f, r.yMax - 76f, 3f, 48f), selected ? LineBright : Line);
     }
 

@@ -3,7 +3,7 @@ using TMPro;
 using UnityEngine;
 
 /// <summary>
-/// 던전 미니맵(오른쪽 위, 훈련 코너판 아래). 게임플레이(DungeonManager)가 <see cref="IDungeonMapSource"/>로 내주는 읽기 전용 상태·이벤트를 구독해 그리기만 한다
+/// 던전 미니맵(오른쪽 위). 게임플레이(DungeonManager)가 <see cref="IDungeonMapSource"/>로 내주는 읽기 전용 상태·이벤트를 구독해 그리기만 한다
 /// (AGENTS.md UI 접점 규칙). DungeonManager가 Resources/UI/DungeonMinimap Prefab을 UI Canvas의 TrainingScoreboard 바로 다음 형제로 만들고 Bind한다(MainScene 무수정).
 /// - 그림: <see cref="DungeonMinimapGraphic"/> 세 층(판·배치도·현재 방 강조). 방 상태·현재 방이 바뀔 때만 배치도 Mesh를 다시 만든다.
 ///   2차(2026-11-24): 넷째 층 ClearPulse — 방을 클리어한 순간 그 방이 녹색으로 한 번 번쩍인다(clearPulseTime, 실제 시간).
@@ -26,14 +26,16 @@ using UnityEngine;
 /// - 5차(2026-11-25, DESIGN_V5 §1 S9): 표식은 고정 크기 배지형 픽토그램(점프대·출구 램프·출입구 이웃 방 정보 점 — 표식 층에 방 목록 사본을 넘긴다).
 ///   7차(2026-11-26, DESIGN_V7 V2): 경로 크레인·고정 크레인 표식은 그리지 않는다(DungeonMapMesh가 빈 case로 건너뜀 — 데이터는 계약대로 남는다).
 ///   Player 표식 = 반대각선 8 + 빛 고리 + 바라보는 쪽 꼬리(원본이 <see cref="IDungeonPlayerHeadingSource"/>도 구현하면 — 선택 인터페이스 — 바뀔 때만 localScale.x를 ±1로,
-///   Mesh 재생성 없음) + 1.6초마다 퍼지는 핑 고리(PlayerPing 층, localScale·알파만). 판 아래 구역 띠(판 300×276): 왼쪽 = 던전 전체 단위 칸 배치도(SectorArea·지금 방 맥동,
-///   MapChanged·RoomEntered 등 Refresh 때만 다시 만듦), 오른쪽 = 지금 방 이름(START ROOM·COMBAT ROOM·BOSS ROOM)·상태(CLEAR·HOSTILE). 구역 띠 부품이 없으면(4차 Prefab) 건너뛴다.
+///   Mesh 재생성 없음) + 1.6초마다 퍼지는 핑 고리(PlayerPing 층, localScale·알파만).
 /// Prefab은 tools/Unity/DungeonMinimapSetup.cs가 만든다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDetailView, IDungeonObjectiveView
 {
     public const string ResourcePath = "UI/DungeonMinimap";
+    public static readonly Vector2 HudSize = new Vector2(300f, 210f);
+    public static Vector2 HudPosition(bool bossBarVisible) => new Vector2(-28f, bossBarVisible ? -188f : -28f);
+    public static Vector2 TerminalHintPosition(bool bossBarVisible) => HudPosition(bossBarVisible) - new Vector2(14f, 5f);
 
     [Header("Parts")]
     [SerializeField] private CanvasGroup group;
@@ -43,7 +45,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
     [Tooltip("방 클리어 녹색 펄스 층(비어 있으면 실행 중 MapArea 아래에 만든다)")]
     [SerializeField] private DungeonMinimapGraphic clearPulse;
     [SerializeField] private TMP_Text titleText;
-    [SerializeField] private TMP_Text floorText;
 
     [Header("지금 방 자세히(3차 — 비어 있으면 실행 중 MapArea 아래에 만든다)")]
     [SerializeField] private DungeonMinimapDetailGraphic roomLayer;
@@ -55,31 +56,10 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
     [Tooltip("5차 Player 핑 고리 층(비어 있으면 핑 없음)")]
     [SerializeField] private DungeonMinimapDetailGraphic pingLayer;
 
-    [Header("5차 구역 띠(판 아래 — 비어 있으면 없음)")]
-    [Tooltip("던전 전체 단위 칸 배치도(DungeonMinimapGraphic Map)")]
-    [SerializeField] private DungeonMinimapGraphic sectorMap;
-    [Tooltip("구역 띠의 지금 방 맥동(DungeonMinimapGraphic Highlight)")]
-    [SerializeField] private DungeonMinimapGraphic sectorHighlight;
-    [SerializeField] private TMP_Text zoneText;
-    [SerializeField] private TMP_Text zoneStateText;
-    [SerializeField] private string startRoomLabel = "START ROOM";
-    [SerializeField] private string combatRoomLabel = "COMBAT ROOM";
-    [SerializeField] private string bossRoomLabel = "BOSS ROOM";
-    [SerializeField] private string clearStateLabel = "CLEAR";
-    [SerializeField] private string hostileStateLabel = "HOSTILE";
-    [SerializeField] private Color zoneClearColor = new Color32(51, 242, 89, 255);
-    [SerializeField] private Color zoneHostileColor = new Color32(255, 179, 71, 255);
-    [SerializeField, Min(1f)] private float sectorMaxCell = 12f;
-    [SerializeField, Min(1f)] private float sectorMinCell = 3f;
-
     [Header("Labels (정적 글꼴 — 영문 대문자·숫자만)")]
     [SerializeField] private string title = "SECTOR MAP";
     [Tooltip("지금 방 자세히 모드의 제목")]
     [SerializeField] private string detailTitle = "ROOM SCAN";
-    [Tooltip("층 표시 형식: {0} = 던전 번호, {1} = 던전 수")]
-    [SerializeField] private string floorFormat = "F{0}/{1}";
-    [SerializeField] private string clearedSuffix = " CLEAR";
-
     [Header("Layout")]
     [SerializeField, Min(4f)] private float maxCell = 26f;
     [SerializeField, Min(2f)] private float minCell = 12f;
@@ -121,7 +101,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
     private float clock;
     private float alpha;
     private int floorKey;             // 0 = 던전 없음, 그 밖 = 던전 번호(바뀌면 화면 이동 없이 바로 맞춘다)
-    private bool floorCleared;
     private DungeonMapMesh.View shownView, fromView, targetView;
     private bool hasView, panning;
     private float panStart;
@@ -136,11 +115,11 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
     private int detailPulseRoom = -1;
     private float detailPulseStart;
     private bool playerVisible;
-    // 5차: Player 방향·핑·구역 띠
+    // Player 방향·핑
     private int facing = 1;
     private float pingScale = 1f;
-    private string zoneStart, zoneCombat, zoneBoss;
-    private bool sectorShown;
+    private RectTransform hudRect;
+    private StageHUD stageHud;
 
     // ===== 검증·디버그가 읽는 값 =====
     public IDungeonMapSource Source => source;
@@ -162,7 +141,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
     public int PulseRoom => pulseRoom;
     public float ClearPulseTime => clearPulseTime;
     public TMP_Text TitleText => titleText;
-    public TMP_Text FloorText => floorText;
     public float PanTime => panTime;
     public DungeonMapMesh.FitOptions FitOptions => new DungeonMapMesh.FitOptions { maxCell = maxCell, minCell = minCell, gapRatio = gapRatio, padding = padding };
     /// <summary>지금 방 자세히 모드인지(방 상세가 있을 때).</summary>
@@ -189,17 +167,15 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
     /// <summary>지금 핑 고리 배율(0.6~1.8).</summary>
     public float PingScale => pingScale;
     public float PingPeriod => pingPeriod;
-    public DungeonMinimapGraphic SectorMapGraphic => sectorMap;
-    public DungeonMinimapGraphic SectorHighlightGraphic => sectorHighlight;
-    public TMP_Text ZoneText => zoneText;
-    public TMP_Text ZoneStateText => zoneStateText;
-    /// <summary>구역 띠 배치도를 그리고 있는지(지금 방 자세히 모드일 때).</summary>
-    public bool SectorShown => sectorShown;
-
     /// <summary>HUD 숨김을 따를 CanvasGroup을 직접 지정한다(검증용). null이면 장면의 PlayerHUD CanvasGroup을 찾는다.</summary>
     public CanvasGroup HudGroupOverride { get; set; }
 
-    private void Awake() => EnsureInit();
+    private void Awake()
+    {
+        EnsureInit();
+        hudRect = (RectTransform)transform;
+        stageHud = FindFirstObjectByType<StageHUD>(FindObjectsInactive.Include);
+    }
 
     private void EnsureInit()
     {
@@ -214,13 +190,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         }
         // 정적 글꼴에 공백이 없어 여백 태그를 쓴다 — 옛 Prefab(richText 꺼짐)에서도 태그가 글자로 보이지 않게 켠다.
         if (titleText != null) { titleText.richText = true; titleText.text = DungeonUiText.Static(title); }
-        if (floorText != null) floorText.richText = true;
-        // 5차 구역 띠 글자(공백 여백 태그 변환은 한 번만 — Refresh 때 할당 없음)
-        zoneStart = DungeonUiText.Static(startRoomLabel);
-        zoneCombat = DungeonUiText.Static(combatRoomLabel);
-        zoneBoss = DungeonUiText.Static(bossRoomLabel);
-        if (zoneText != null) zoneText.richText = true;
-        if (zoneStateText != null) zoneStateText.richText = true;
         if (clearPulse == null && map != null) clearPulse = CreatePulseLayer(map);
         if (map != null)
         {
@@ -240,17 +209,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         if (highlight != null) highlight.ClearMap();
         ResetPulseLayer();
         ClearDetailLayers();
-        ClearSector();
-    }
-
-    // 5차 구역 띠를 비운다(글자도 지운다).
-    private void ClearSector()
-    {
-        sectorShown = false;
-        if (sectorMap != null) sectorMap.ClearMap();
-        if (sectorHighlight != null) sectorHighlight.ClearMap();
-        if (zoneText != null && !string.IsNullOrEmpty(zoneText.text)) zoneText.text = string.Empty;
-        if (zoneStateText != null && !string.IsNullOrEmpty(zoneStateText.text)) zoneStateText.text = string.Empty;
     }
 
     // 1차 Prefab에는 펄스 층이 없다: MapArea와 같은 사각형의 마지막 자식으로 만든다(Highlight 위에 그린다).
@@ -344,9 +302,7 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         source.MapChanged += OnMapChanged;
         source.RoomEntered += OnRoomEntered;
         source.RoomCleared += OnRoomCleared;
-        source.FloorCleared += OnFloorCleared;
         floorKey = 0;
-        floorCleared = false;
         // 원본이 방 상세·목표도 내주면(DungeonManager) 함께 연결한다 — DungeonManager가 IDungeonDetailView·IDungeonObjectiveView로 따로 Bind해도 같은 결과다.
         if (mapSource is IDungeonDetailSource details) BindDetail(details, false);
         if (mapSource is IDungeonObjectiveSource objectives) BindObjectives(objectives, false);
@@ -363,7 +319,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
             source.MapChanged -= OnMapChanged;
             source.RoomEntered -= OnRoomEntered;
             source.RoomCleared -= OnRoomCleared;
-            source.FloorCleared -= OnFloorCleared;
         }
         UnbindDetail();
         UnbindObjectives();
@@ -371,7 +326,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         headingSource = null;
         source = null;
         floorKey = 0;
-        floorCleared = false;
         hasView = panning = false;
         shownRooms.Clear();
         shownCurrent = -1;
@@ -383,7 +337,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
             if (highlight != null) highlight.ClearMap();
             ResetPulseLayer();
             ClearDetailLayers();
-            ClearSector();
         }
     }
 
@@ -491,12 +444,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         float u = t * .9f / Mathf.Max(.1f, duration);
         return Mathf.Max(TrainingBoardMotion.Pulse(u, 0f, .45f), .55f * TrainingBoardMotion.Pulse(u, .4f, .9f));
     }
-    private void OnFloorCleared()
-    {
-        floorCleared = true;
-        UpdateFloorLabel();
-    }
-
     // ===== 갱신 =====
 
     /// <summary>원본 상태를 다시 읽어 그림을 갱신한다. snap이면 화면 이동 없이 바로 맞춘다(새 던전이면 언제나 바로).</summary>
@@ -512,7 +459,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
             {
                 if (map != null) map.ClearMap();
                 if (highlight != null) highlight.ClearMap();
-                ClearSector();
             }
             return;
         }
@@ -521,7 +467,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         if (key != floorKey)
         {
             floorKey = key;
-            floorCleared = false;
             snap = true;
             // 새 던전: 방 상세가 새로 만들어지므로 실루엣 캐시를 비운다.
             silhouettes.Clear();
@@ -535,9 +480,7 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
             panning = false;
             hasView = false;
             PushMap();
-            UpdateFloorLabel();
             UpdateTitle();
-            RefreshSector();
             return;
         }
         var area = map != null ? map.rectTransform.rect : new Rect(0f, 0f, 272f, 152f);
@@ -556,47 +499,7 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
             panning = true;
         }
         PushMap();
-        UpdateFloorLabel();
         UpdateTitle();
-        RefreshSector();
-    }
-
-    // 5차 구역 띠: 지금 방 자세히 모드면 던전 전체 단위 칸 배치도(지금 방 맥동)를 왼쪽에, 지금 방 이름·상태를 오른쪽에 둔다.
-    // 배치도 모드(방 상세 없음)에서는 위 판이 이미 던전 전체를 그리므로 배치도는 비우고 글자만 둔다. Refresh 때만 불린다(매 프레임 아님).
-    private void RefreshSector()
-    {
-        if (sectorMap != null)
-        {
-            if (detailMode && shownRooms.Count > 0)
-            {
-                var area = sectorMap.rectTransform.rect;
-                var options = new DungeonMapMesh.FitOptions { maxCell = sectorMaxCell, minCell = sectorMinCell, gapRatio = gapRatio, padding = 3f };
-                var sectorView = DungeonMapMesh.Fit(shownRooms, shownCurrent, area, options);
-                sectorMap.SetMap(shownRooms, shownCurrent, sectorView);
-                if (sectorHighlight != null) sectorHighlight.SetMap(shownRooms, shownCurrent, sectorView);
-                sectorShown = true;
-            }
-            else
-            {
-                sectorShown = false;
-                sectorMap.ClearMap();
-                if (sectorHighlight != null) sectorHighlight.ClearMap();
-            }
-        }
-        DungeonMapRoom current = null;
-        for (int i = 0; i < shownRooms.Count; i++) if (shownRooms[i] != null && shownRooms[i].id == shownCurrent) { current = shownRooms[i]; break; }
-        if (zoneText != null)
-        {
-            string name = current == null ? string.Empty : current.kind == DungeonRoomKind.Start ? zoneStart : current.kind == DungeonRoomKind.Boss ? zoneBoss : zoneCombat;
-            if (zoneText.text != name) zoneText.text = name;
-        }
-        if (zoneStateText != null)
-        {
-            string state = current == null ? string.Empty : current.cleared ? clearStateLabel : hostileStateLabel;
-            if (zoneStateText.text != state) zoneStateText.text = state;
-            var color = current != null && current.cleared ? zoneClearColor : zoneHostileColor;
-            if (zoneStateText.color != color) zoneStateText.color = color;
-        }
     }
 
     // 지금 방 상세가 있으면 그 방을 그리고 true. 방이 바뀌었을 때만 실루엣·Room·Pulse 층을 다시 만들고, 표식 층은 늘 다시 만든다.
@@ -703,17 +606,6 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         shownCurrent = source.CurrentRoom;
     }
 
-    private void UpdateFloorLabel()
-    {
-        if (floorText == null) return;
-        if (!SourceAlive() || !source.HasFloor) return;   // 던전이 끝나면 페이드아웃 동안 마지막 표시를 유지한다
-        string label = string.Format(floorFormat, Mathf.Max(1, source.FloorNumber), Mathf.Max(1, source.FloorCount));
-        if (floorCleared) label += clearedSuffix;
-        // esamanru 정적 글꼴에는 공백 글자가 없다 → TMP 여백 태그(방 상태 띠와 같은 방식).
-        string shown = DungeonUiText.Static(label);
-        if (floorText.text != shown) floorText.text = shown;
-    }
-
     private void UpdateTitle()
     {
         if (titleText == null) return;
@@ -754,9 +646,15 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
         return true;
     }
 
-    private void Update() => Advance(Time.unscaledDeltaTime);
+    private void LateUpdate()
+    {
+        if (hudRect.anchorMin == Vector2.one && hudRect.anchorMax == Vector2.one)
+            hudRect.anchoredPosition = HudPosition(stageHud != null && stageHud.IsBossBarVisible);
 
-    /// <summary>실제 시간 dt만큼 페이드·화면 이동·맥동·Player 점을 진행한다(Update가 부른다. 검증은 직접 부른다). 할당하지 않는다.</summary>
+        Advance(Time.unscaledDeltaTime);
+    }
+
+    /// <summary>실제 시간 dt만큼 페이드·화면 이동·맥동·Player 점을 진행한다(LateUpdate가 부른다. 검증은 직접 부른다). 할당하지 않는다.</summary>
     public void Advance(float deltaTime)
     {
         EnsureInit();
@@ -784,12 +682,11 @@ public sealed class DungeonMinimap : MonoBehaviour, IDungeonMapView, IDungeonDet
             PushMap();
         }
 
-        // 현재 방 맥동(Mesh는 그대로, CanvasRenderer 알파만) — 5차 구역 띠도 같은 박자
+        // 현재 방 맥동(Mesh는 그대로, CanvasRenderer 알파만)
         {
             float wave = .5f - .5f * Mathf.Cos(clock * Mathf.PI * 2f / pulsePeriod);
             float pulse = Mathf.Lerp(pulseMin, pulseMax, wave);
             if (highlight != null) highlight.canvasRenderer.SetAlpha(pulse);
-            if (sectorHighlight != null) sectorHighlight.canvasRenderer.SetAlpha(sectorShown ? pulse : 0f);
         }
 
         // 방 클리어 녹색 펄스(Mesh는 그대로, CanvasRenderer 알파만). 끝나면 층을 비운다.

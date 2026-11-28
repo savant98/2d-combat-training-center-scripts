@@ -169,6 +169,7 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
     private float densityShown = 1f, alertFromDensity = 1f;
 
     // ===== 검증·디버그가 읽는 값 =====
+    public bool ShowObjectiveAnnouncements { get; set; } = true;
     public IDungeonCombatSource Source => source;
     public IDungeonExitSource ExitSource => exitSource;
     public IDungeonThreatSource ThreatSource => threatSource;
@@ -272,11 +273,12 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
             markers.Threshold = rules.markerThreshold;
             markers.RevealDelay = rules.offscreenRevealDelay;
         }
-        // 4차 선택 인터페이스: 원본(DungeonManager)이 출구·난이도도 내주면 함께 구독한다(DungeonManager가 따로 Bind해도 같은 결과).
-        if (combatSource is IDungeonExitSource exits) BindExit(exits);
         if (combatSource is IDungeonThreatSource threats) BindThreat(threats);
-        // 7차 V5: 레버 대기 접점(선택).
-        if (combatSource is IDungeonObjectiveGate gate) BindGate(gate);
+        if (ShowObjectiveAnnouncements)
+        {
+            if (combatSource is IDungeonExitSource exits) BindExit(exits);
+            if (combatSource is IDungeonObjectiveGate gate) BindGate(gate);
+        }
         SyncFromSource();
     }
 
@@ -715,7 +717,11 @@ public sealed class DungeonRoomStatus : MonoBehaviour, IDungeonCombatView, IDung
             else if (phase == DungeonRoomPhase.Cleared && (state == BandState.Hostile || state == BandState.Objective)) OnRoomCleared(-1);
             else if (phase == DungeonRoomPhase.None && (state == BandState.Hostile || state == BandState.Objective)) BeginFade();
             // 7차 V5: 레버 대기(이벤트를 놓쳤을 때 — 마지막 처치 뒤 'HOSTILES 0'이 남지 않게).
-            else if (phase == DungeonRoomPhase.Objective && (state == BandState.Hostile || state == BandState.Hidden) && !source.IsHalted) EnterObjective();
+            else if (phase == DungeonRoomPhase.Objective && !source.IsHalted)
+            {
+                if (ShowObjectiveAnnouncements && (state == BandState.Hostile || state == BandState.Hidden)) EnterObjective();
+                else if (state == BandState.Hostile) BeginFade();
+            }
             // 4차 순찰: 방문마다 한 번(단계가 Patrol에서 벗어나면 다음 방문에 다시)
             if (phase == DungeonRoomPhase.Patrol) TryEnterPatrol();
             else

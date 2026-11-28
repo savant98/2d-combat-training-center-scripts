@@ -1,6 +1,5 @@
 using DG.Tweening;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using Unity.Cinemachine;
@@ -38,6 +37,8 @@ public class TrainingMenuController : MonoBehaviour
 
     // 테스트 훈련(진행 순서에 들지 않는 항목)의 줄 앞에 번호 대신 붙이는 표시.
     private const string TestRowMark = "TEST";
+    private const float PageSlideTime = .24f;
+    private const float StationAnimationSpeed = 2.25f * TitlePanelMotion.OpenDuration / TitlePanelMotion.FacilityDuration;
 
     // 지금 목록 줄에 올라 있는 훈련. 줄의 순서가 이 목록의 순서다. 메뉴를 열 때마다 훈련 목록에서 다시 채운다.
     private readonly List<TrainingCatalogSO.Entry> shownEntries = new List<TrainingCatalogSO.Entry>();
@@ -61,6 +62,7 @@ public class TrainingMenuController : MonoBehaviour
     private bool isOpen;
     private bool isTransitioning;
     private DG.Tweening.Sequence presentation;
+    private float animatorHomeSpeed;
     private float leftRayAlpha;
     private float rightRayAlpha;
     private Vector3 leftRayScale;
@@ -79,6 +81,7 @@ public class TrainingMenuController : MonoBehaviour
 
     private void Awake()
     {
+        projectionMotion?.UseFacilityTiming();
         CacheProjectorRays();
         CacheScreenLayout();
         InputBindingHint.Bind(listPanel != null ? listPanel.transform : null, "NavigationHint",
@@ -159,7 +162,10 @@ public class TrainingMenuController : MonoBehaviour
             listMenu.OnSelectionChanged += RefreshList;
         }
 
+        animatorHomeSpeed = animator.speed;
+        if (HasPresentation) animator.speed = animatorHomeSpeed * StationAnimationSpeed;
         animator.SetBool("Open", true);
+        CinemachineCore.GetBlendOverride += BlendToMenu;
         virtualCamera.Priority = 999;
         UIManager.Instance.HUDVisible(false);
         if (HasList)
@@ -176,9 +182,15 @@ public class TrainingMenuController : MonoBehaviour
                 projectionMotion.Open();
             }
             menu.Open();
+            RefreshUI();
         }
+    }
 
-        RefreshUI();
+    private CinemachineBlendDefinition BlendToMenu(ICinemachineCamera from, ICinemachineCamera to,
+        CinemachineBlendDefinition blend, UnityEngine.Object owner)
+    {
+        if (ReferenceEquals(to, virtualCamera)) blend.Time = Mathf.Min(blend.Time, TitlePanelMotion.FacilityCameraBlend);
+        return blend;
     }
 
     private void RefreshUI()
@@ -262,35 +274,24 @@ public class TrainingMenuController : MonoBehaviour
         RestoreScreenLayout();
         listPanel.SetActive(true);
         detailPanel.SetActive(false);
-        var pageMotion = listPanel.GetComponent<TrainingMenuPageMotion>();
         listPanelGroup.alpha = 0f;
-        listMenu.Open();
         listMenu.InputSuppressed = true;
+        listMenu.Open();
         SetProjectorStart(projectorRayLeft, leftRayScale);
         SetProjectorStart(projectorRayRight, rightRayScale);
-        presentation = DOTween.Sequence().SetUpdate(true).Pause();
+        presentation = DOTween.Sequence().SetUpdate(true);
         AddProjectorTween(presentation, projectorRayLeft, leftRayAlpha, leftRayScale, true);
         AddProjectorTween(presentation, projectorRayRight, rightRayAlpha, rightRayScale, true);
-        // 빔 위에서 세이브 선택과 같은 판을 펼치고 목록을 차례로 드러낸다.
-        presentation.InsertCallback(.12f, () =>
-        {
-            if (projectionMotion != null) projectionMotion.Open();
-            if (pageMotion != null) pageMotion.Replay();
-        });
-        presentation.Insert(.24f, listPanelGroup.DOFade(1f, .26f));
+        // 카메라가 단말기에 다가가는 동안 투사판을 함께 펼친다.
+        if (projectionMotion != null) projectionMotion.Open();
+        const float fadeDelay = .03f;
+        presentation.Insert(fadeDelay, listPanelGroup.DOFade(1f, TitlePanelMotion.FacilityDuration - fadeDelay).SetEase(Ease.OutQuad));
         presentation.OnComplete(() =>
         {
-            listMenu.EnsureSelectionVisible();
             isTransitioning = false;
             listMenu.InputSuppressed = false;
+            listMenu.EnsureSelectionVisible();
         });
-        StartCoroutine(PlayAfterCameraBlend(presentation));
-    }
-
-    private IEnumerator PlayAfterCameraBlend(DG.Tweening.Sequence opening)
-    {
-        yield return TitlePanelMotion.WaitForCamera(virtualCamera, () => presentation == opening);
-        if (presentation == opening) opening.Play();
     }
 
     private void HandleListSelect(int index)
@@ -301,6 +302,8 @@ public class TrainingMenuController : MonoBehaviour
         if (entry == null) return;
         currentTraining = entry.definition;
         SelectedWaveData = entry.waveData;
+        if (menu is TrainingMenu detailMenu)
+            detailMenu.SetRowLabel(1, entry.arrivalByElevator ? "엘리베이터 호출" : "훈련 시작");
         if (detailTitleText != null) detailTitleText.text = entry.Title;
         if (detailDescriptionText != null) SetSummary(detailDescriptionText, entry.summary);
         RefreshUI();
@@ -320,8 +323,8 @@ public class TrainingMenuController : MonoBehaviour
         detailScreen.anchoredPosition = detailHome + Vector2.right * distance;
         presentation = DOTween.Sequence().SetUpdate(true);
         // 제목·미리보기를 포함한 한 장의 투사 화면을 왼쪽으로 넘긴다.
-        presentation.Join(listScreen.DOAnchorPos(listHome + Vector2.left * distance, .52f).SetEase(Ease.InOutCubic));
-        presentation.Join(detailScreen.DOAnchorPos(detailHome, .52f).SetEase(Ease.InOutCubic));
+        presentation.Join(listScreen.DOAnchorPos(listHome + Vector2.left * distance, PageSlideTime).SetEase(Ease.InOutCubic));
+        presentation.Join(detailScreen.DOAnchorPos(detailHome, PageSlideTime).SetEase(Ease.InOutCubic));
         presentation.OnComplete(() =>
         {
             listMenu.Close(); listPanel.SetActive(false); listMenu.InputSuppressed = false;
@@ -341,8 +344,8 @@ public class TrainingMenuController : MonoBehaviour
         float distance = SlideDistance();
         listScreen.anchoredPosition = listHome + Vector2.left * distance;
         presentation = DOTween.Sequence().SetUpdate(true);
-        presentation.Join(detailScreen.DOAnchorPos(detailHome + Vector2.right * distance, .52f).SetEase(Ease.InOutCubic));
-        presentation.Join(listScreen.DOAnchorPos(listHome, .52f).SetEase(Ease.InOutCubic));
+        presentation.Join(detailScreen.DOAnchorPos(detailHome + Vector2.right * distance, PageSlideTime).SetEase(Ease.InOutCubic));
+        presentation.Join(listScreen.DOAnchorPos(listHome, PageSlideTime).SetEase(Ease.InOutCubic));
         presentation.OnComplete(() =>
         {
             menu.Close();
@@ -363,8 +366,9 @@ public class TrainingMenuController : MonoBehaviour
     {
         if (ray == null) return;
         var target = opening ? originalScale : new Vector3(originalScale.x, originalScale.y * .04f, originalScale.z);
-        sequence.Insert(delay, ray.DOFade(opening ? alpha : 0f, opening ? .24f : .32f));
-        sequence.Insert(delay, ray.rectTransform.DOScale(target, opening ? .38f : .4f).SetEase(Ease.InOutSine));
+        float remaining = TitlePanelMotion.FacilityDuration - delay;
+        sequence.Insert(delay, ray.DOFade(opening ? alpha : 0f, remaining * (opening ? .53f : .8f)));
+        sequence.Insert(delay, ray.rectTransform.DOScale(target, remaining).SetEase(Ease.InOutSine));
     }
 
     private void HandleListCancel()
@@ -379,7 +383,8 @@ public class TrainingMenuController : MonoBehaviour
         TrainingCatalogSO source = Catalog;
         shownEntries.Clear();
         rowLabels.Clear();
-        if (source != null) source.CollectListed(DataManager.Instance, shownEntries);
+        var data = DataManager.Instance;
+        if (source != null) source.CollectListed(data, shownEntries);
         if (shownEntries.Count > listMenu.RowCount)
         {
             Debug.LogWarning($"[{name}] 훈련 {shownEntries.Count}개 가운데 목록 줄 {listMenu.RowCount}개만 표시합니다. Prefab의 줄을 늘려야 합니다.", this);
@@ -390,12 +395,17 @@ public class TrainingMenuController : MonoBehaviour
             var entry = shownEntries[i];
             int number = source.ProgressionNumber(entry);
             string code = number > 0 ? number.ToString("00") : TestRowMark;
-            if (i < rowCodes.Length && rowCodes[i] != null)
+            string label = entry.Title;
+            if (i < rowCodes.Length && rowCodes[i] != null) rowCodes[i].text = code;
+            else label = code + "  " + label;
+
+            var record = data.GetTrainingRoomRecord(entry.TrainingId);
+            if (DataManager.IsCleared(record))
             {
-                rowCodes[i].text = code;
-                rowLabels.Add(entry.Title);
+                string gradeColor = ColorUtility.ToHtmlStringRGB(TrainingBoardStyle.GradeColor(record.bestGrade));
+                label += $"  <size=76%><color=#{gradeColor}>수료 · {TrainingBoardStyle.GradeLabel(record.bestGrade)}</color></size>";
             }
-            else rowLabels.Add(code + "  " + entry.Title);
+            rowLabels.Add(label);
         }
         listMenu.SetRows(rowLabels);
     }
@@ -458,15 +468,16 @@ public class TrainingMenuController : MonoBehaviour
         presentation = DOTween.Sequence().SetUpdate(true);
         var group = listPanel.activeSelf ? listPanelGroup : detailPanelGroup;
         if (projectionMotion != null) projectionMotion.Close();
-        presentation.Insert(0f, group.DOFade(0f, .16f));
-        // 화면을 먼저 거둔 뒤 단말로 연결되는 빔을 끈다.
+        presentation.Insert(0f, group.DOFade(0f, TitlePanelMotion.FacilityDuration).SetEase(Ease.InQuad));
+        // 투사판이 접히는 동안 빔도 같은 시점에 사라진다.
         AddProjectorTween(presentation, projectorRayLeft, leftRayAlpha, leftRayScale, false, .16f);
         AddProjectorTween(presentation, projectorRayRight, rightRayAlpha, rightRayScale, false, .16f);
-        presentation.OnComplete(FinishCleanup);
+        presentation.InsertCallback(TitlePanelMotion.FacilityDuration, FinishCleanup);
     }
 
     private void FinishCleanup()
     {
+        CinemachineCore.GetBlendOverride -= BlendToMenu;
         presentation?.Kill();
         presentation = null;
         if (projectionMotion != null) projectionMotion.SnapHidden();
@@ -487,7 +498,11 @@ public class TrainingMenuController : MonoBehaviour
             if (listMenu.IsActive && UIManager.Instance != null) listMenu.Close();
         }
 
-        if (animator != null) animator.SetBool("Open", false);
+        if (animator != null)
+        {
+            animator.speed = animatorHomeSpeed;
+            animator.SetBool("Open", false);
+        }
         if (virtualCamera != null) virtualCamera.Priority = -1;
         if (UIManager.Instance != null) UIManager.Instance.HUDVisible(true);
         if (menu.IsActive && UIManager.Instance != null) menu.Close();

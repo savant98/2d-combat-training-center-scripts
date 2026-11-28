@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using TMPro;
 using Unity.Cinemachine;
 using UnityEngine;
@@ -24,12 +23,13 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
     private bool open;
     private int selection;
     private float shownAt;
-    private Coroutine cameraReveal;
+    private bool closing;
+    private Action afterClose;
+    private float closingAt;
     private Vector3 restScale = Vector3.one;
     public bool IsActive => open && isActiveAndEnabled;
-    private const float OpeningDuration = TitlePanelMotion.OpenDuration;
-    private bool IsReady => CanAct && Time.unscaledTime - shownAt >= OpeningDuration;
-    private bool CanAct => IsActive && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked && UIManager.Instance.IsCurrentInputTarget(this);
+    private bool IsReady => IsActive && !closing && Time.unscaledTime - shownAt >= TitlePanelMotion.FacilityDuration
+        && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked && UIManager.Instance.IsCurrentInputTarget(this);
 
     private void Awake()
     {
@@ -58,23 +58,31 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
         UIManager.Instance.HUDVisible(false);
         if (menuCamera != null)
         {
+            CinemachineCore.GetBlendOverride += BlendToMenu;
             menuCamera.enabled = true;
             menuCamera.Priority = 999;
-            shownAt = float.PositiveInfinity;
-            cameraReveal = StartCoroutine(RevealAtEntrance());
         }
         Highlight();
     }
-    private IEnumerator RevealAtEntrance()
+    private CinemachineBlendDefinition BlendToMenu(ICinemachineCamera from, ICinemachineCamera to,
+        CinemachineBlendDefinition blend, UnityEngine.Object owner)
     {
-        yield return TitlePanelMotion.WaitForCamera(menuCamera);
-        shownAt = Time.unscaledTime;
-        cameraReveal = null;
+        if (ReferenceEquals(to, menuCamera)) blend.Time = Mathf.Min(blend.Time, TitlePanelMotion.FacilityCameraBlend);
+        return blend;
+    }
+
+    private void BeginClose(Action onClosed = null)
+    {
+        closing = true;
+        closingAt = Time.unscaledTime;
+        afterClose = onClosed;
     }
 
     public void Hide()
     {
-        bool wasOpen = open; open = false; enter = null;
+        bool wasOpen = open;
+        open = closing = false;
+        enter = afterClose = null;
         var previousPlayer = player; player = null;
         HideVisuals();
         if (wasOpen && UIManager.Instance != null) { UIManager.Instance.RemoveInputTarget(this); UIManager.Instance.HUDVisible(true); }
@@ -82,7 +90,7 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
     }
     private void HideVisuals()
     {
-        if (cameraReveal != null) { StopCoroutine(cameraReveal); cameraReveal = null; }
+        CinemachineCore.GetBlendOverride -= BlendToMenu;
         if (panelGroup != null) { panelGroup.alpha = 0f; panelGroup.interactable = panelGroup.blocksRaycasts = false; }
         if (beamGroup != null) { beamGroup.alpha = 0f; beamGroup.blocksRaycasts = beamGroup.interactable = false; }
         if (presentation != null) presentation.localScale = restScale;
@@ -91,14 +99,22 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
     private void Update()
     {
         if (!open) return;
-        float t = Mathf.Clamp01((Time.unscaledTime - shownAt) / OpeningDuration);
-        if (panelGroup != null) { panelGroup.alpha = t; panelGroup.interactable = panelGroup.blocksRaycasts = CanAct && t >= 1f; }
+        float elapsed = Time.unscaledTime - (closing ? closingAt : shownAt);
+        float t = Mathf.Clamp01(elapsed / TitlePanelMotion.FacilityDuration);
+        if (closing) t = 1f - t;
+        if (panelGroup != null) { panelGroup.alpha = t; panelGroup.interactable = panelGroup.blocksRaycasts = IsReady; }
         if (beamGroup != null) beamGroup.alpha = Mathf.Clamp01(t * 2f);
         if (presentation != null) presentation.localScale = Vector3.Scale(restScale, TitlePanelMotion.UnfoldScale(t));
+        if (closing && t <= 0f)
+        {
+            var action = afterClose;
+            Hide();
+            action?.Invoke();
+        }
     }
     public void OnMove(Vector2 direction)
     {
-        if (!CanAct || buttons == null || buttons.Length == 0) return;
+        if (!IsReady || buttons == null || buttons.Length == 0) return;
         Vector3 origin = ((RectTransform)buttons[selection].transform).position;
         int closest = selection; float distance = float.PositiveInfinity;
         for (int i = 0; i < buttons.Length; i++)
@@ -118,14 +134,20 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
         Play(moveFeedback);
     }
 
-    public void OnConfirm() { if (CanAct) Click(selection); }
-    public void OnCancel() { if (CanAct) Hide(); }
+    public void OnConfirm() => Click(selection);
+
+    public void OnCancel()
+    {
+        if (IsReady) BeginClose();
+    }
+
     public void Click(int index)
     {
-        if (!IsReady || !buttons[index].IsInteractable()) return;
-        selection = index; Highlight(); Play(confirmFeedback);
-        var action = enter; Hide();
-        if (index == 1) action?.Invoke();
+        if (!IsReady || buttons == null || index < 0 || index >= buttons.Length || !buttons[index].IsInteractable()) return;
+        selection = index;
+        Highlight();
+        Play(confirmFeedback);
+        BeginClose(index == 1 ? enter : null);
     }
     private void Highlight()
     {

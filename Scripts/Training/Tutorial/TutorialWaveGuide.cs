@@ -499,8 +499,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
             if (practiceJump != null) practiceJump.Jumped += OnPracticeJump;
         }
 
-        if (lesson.action == TutorialAction.None || lesson.action == TutorialAction.Shield || lesson.action == TutorialAction.Break
-            || lesson.action == TutorialAction.Platforms || lesson.action == TutorialAction.Trap)
+        if (!lesson.RequiresPractice)
         {
             Complete();
             return;
@@ -740,6 +739,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
         }
         switch (step.target)
         {
+            case TutorialFocusTarget.AutoAim: return "자동 조준 전환 [ " + BindingLabel("ToggleAutoAim") + " ]";
             case TutorialFocusTarget.WeaponSet: return SwapKeys();
             case TutorialFocusTarget.GearOne:
             case TutorialFocusTarget.GearTwo:
@@ -786,6 +786,7 @@ public sealed class TutorialWaveGuide : MonoBehaviour, IUIInputReceiver
         bool alreadyComplete = phase == GuidePhase.Complete;
         ReleaseFocus();
         phase = GuidePhase.Complete;
+        owner?.RevealPracticeGoals();
         ApplyCardTheme(TutorialGuideTheme.CompleteGreen, true);
         UpdateHeaderChrome(false, true);
         SetPanelLayout(false);

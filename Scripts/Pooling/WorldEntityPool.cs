@@ -109,6 +109,14 @@ public class WorldEntityPool : MonoBehaviour
     {
         return activeWorldEntities.ToArray();
     }
+    public void DespawnOwnedBy(CharacterController2D owner)
+    {
+        if (owner == null) return;
+        foreach (var entity in activeWorldEntities.ToArray())
+            if (entity != null && entity.IsOwnedBy(owner) && activeWorldEntities.Contains(entity))
+                entity.ForceReturnToPool();
+    }
+
     public void DespawnAll(bool preservePlayerAttacks = false)
     {
         List<(WorldEntityBase entity, uint lease)> preserved = null;
