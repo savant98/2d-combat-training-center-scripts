@@ -24,6 +24,12 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
 
     [Header("Weapon")]
     [SerializeField] private Image iconImage;
+    [SerializeField] private RectTransform guideMount;
+    [SerializeField] private ArmamentBranchGraphic stageLink;
+    [SerializeField] private TrainingMenuPageMotion pageMotion;
+    [SerializeField] private RectTransform backButton;
+    [SerializeField] private Image backFocus;
+    [SerializeField] private TextMeshProUGUI actionLabel;
     private WeaponGuidePanel guidePanel;
     [Tooltip("무기 아이콘 뒤의 HUD 기어 모양 원(GlowMultiply 재질)")]
     [SerializeField] private Image iconRing;
@@ -69,7 +75,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
     [SerializeField] private Color mutedColor = new Color(.51f, .62f, .71f, 1f);
     [SerializeField] private Color costColor = new Color(.914f, .71f, .42f, 1f);
 
-    private readonly int[] rowNodes = new int[3];   // 선택 순서 → 노드 종류
+    private readonly List<int> rowNodes = new(3);   // 구매 버튼의 선택 순서에 대응하는 노드 종류
     private ArmamentOverviewPage host;
     private WeaponBaseSO weapon;
     private int stage;
@@ -89,8 +95,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
     {
         var rects = new List<RectTransform>();
         var marks = new List<Image>();
-        int count = 0;
-        for (int i = 0; i < rows.Length && count < rowNodes.Length; i++)
+        for (int i = 0; i < rows.Length && i <= RightNode; i++)
         {
             var row = rows[i];
             if (row == null || row.HitArea == null || row.Highlight == null)
@@ -100,7 +105,12 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             }
             rects.Add(row.HitArea);
             marks.Add(row.Highlight);
-            rowNodes[count++] = i;
+            rowNodes.Add(i);
+        }
+        if (backButton != null && backFocus != null)
+        {
+            rects.Add(backButton);
+            marks.Add(backFocus);
         }
         buttons = rects.ToArray();
         images = marks.ToArray();
@@ -124,7 +134,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
     /// <summary>개요 페이지가 부른다. gearStage는 Gear 단계(1~3), armamentName·category는 머리글 표시용이다.</summary>
     public bool OpenFor(ArmamentOverviewPage owner, WeaponBaseSO target, int gearStage, string armamentName, ArmamentCategory category, int focusBack)
     {
-        if (target == null || buttons.Length == 0 || UIManager.Instance == null) return false;
+        if (target == null || rowNodes.Count == 0 || UIManager.Instance == null) return false;
         host = owner;
         weapon = target;
         stage = gearStage;
@@ -156,6 +166,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
         Refresh();
         if (lockOverlay != null) lockOverlay.SetLocked(!IsUnlocked(weapon));
 
+        if (pageMotion != null) pageMotion.Replay();
         ShowPage();
         Open();
         FocusSilently(DefaultIndex());
@@ -164,22 +175,33 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
 
     private void ShowWeaponGuide()
     {
-        if (showModuleRows || rows.Length <= RightNode || rows[LeftNode] == null || rows[RightNode] == null) return;
+        if (showModuleRows) return;
         if (guidePanel == null)
         {
             var prefab = Resources.Load<GameObject>("UI/WeaponGuidePanel");
             if (prefab == null) return;
-            var top = (RectTransform)rows[LeftNode].transform;
-            var bottom = (RectTransform)rows[RightNode].transform;
-            guidePanel = Instantiate(prefab, top.parent).GetComponent<WeaponGuidePanel>();
-            var rect = (RectTransform)guidePanel.transform;
-            rect.anchorMin = top.anchorMin;
-            rect.anchorMax = top.anchorMax;
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = (top.anchoredPosition + bottom.anchoredPosition) * 0.5f;
-            rect.sizeDelta = new Vector2(top.rect.width,
-                Mathf.Abs(top.anchoredPosition.y - bottom.anchoredPosition.y) + (top.rect.height + bottom.rect.height) * 0.5f);
-            guidePanel.Configure(stageCaptionText != null ? stageCaptionText.font : null);
+            if (guideMount != null)
+            {
+                guidePanel = Instantiate(prefab, guideMount, false).GetComponent<WeaponGuidePanel>();
+                var rect = (RectTransform)guidePanel.transform;
+                rect.anchorMin = Vector2.zero;
+                rect.anchorMax = Vector2.one;
+                rect.offsetMin = rect.offsetMax = Vector2.zero;
+            }
+            else
+            {
+                // 이전 배치의 상세 페이지는 숨겨진 두 모듈이 차지하던 영역을 사용한다.
+                if (rows.Length <= RightNode || rows[LeftNode] == null || rows[RightNode] == null) return;
+                var top = (RectTransform)rows[LeftNode].transform;
+                var bottom = (RectTransform)rows[RightNode].transform;
+                guidePanel = Instantiate(prefab, top.parent, false).GetComponent<WeaponGuidePanel>();
+                var rect = (RectTransform)guidePanel.transform;
+                rect.anchorMin = top.anchorMin;
+                rect.anchorMax = top.anchorMax;
+                rect.anchoredPosition = (top.anchoredPosition + bottom.anchoredPosition) * .5f;
+                rect.sizeDelta = new Vector2(top.rect.width,
+                    Mathf.Abs(top.anchoredPosition.y - bottom.anchoredPosition.y) + (top.rect.height + bottom.rect.height) * .5f);
+            }
         }
         guidePanel.Show(weapon, StageColor());
     }
@@ -209,6 +231,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
     private void HandleSelected(int index)
     {
         if (!CanReceiveInput || purchaseInProgress || index < 0 || index >= buttons.Length) return;
+        if (index == rowNodes.Count) { HandleCanceled(); return; }
         int nodeType = rowNodes[index];
         if (!TryResolvePurchase(nodeType, out string purchaseName, out int price, out string warning))
         {
@@ -238,8 +261,8 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             if (IsUnlocked(weapon)) { warning = "이미 사용할 수 있는 기술입니다."; return false; }
             var entry = ArmamentUnlocks.PurchasableEntry(weapon);
             if (entry == null) { warning = LockedByArmamentMessage(); return false; }
-            if (entry.includedWeapon != null) purchaseName = entry.Title + " · 해금";
-            price = entry.price;
+            if (entry.HasIncludedSkill) purchaseName = BundleUnlockLabel(entry);
+            price = entry.CertificateCost;
             if (data.TrainingCertificates < price)
             { warning = UpgradePurchaseDialog.CertificateShortage(data.TrainingCertificates, price); return false; }
             warning = null;
@@ -471,6 +494,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
         bool hasId = !string.IsNullOrWhiteSpace(id);
         bool unlocked = hasId && IsUnlocked(weapon);
         int held = data.TrainingCertificates;
+        if (stageLink != null) stageLink.SetAvailable(unlocked);
         if (ring && iconRing != null)
         {
             Material material = StageMaterial(unlocked ? stageMaterials : stageDimMaterials);
@@ -478,7 +502,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
         }
         if (stateValueText != null)
         {
-            stateValueText.text = UpgradeSummary(weapon);
+            stateValueText.text = unlocked ? "사용 가능" : "잠김";
             stateValueText.color = unlocked ? readyColor : mutedColor;
         }
         if (rows.Length > UnlockNode && rows[UnlockNode] != null) ShowUnlockRow(rows[UnlockNode], unlocked, held);
@@ -520,17 +544,16 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             status = source == UnlockSource.Default ? "기본 지급" : source == UnlockSource.ViaArmament ? "무장과 함께 해금"
                 : source == UnlockSource.Purchased ? "해금 완료" : "사용 가능";
             statusColor = activeColor;
-            description = source == UnlockSource.Purchased ? "훈련 필증으로 해금한 기술입니다. 지금 전투에서 쓸 수 있습니다."
-                : source == UnlockSource.ViaArmament ? ArmamentName() + " 무장과 함께 해금된 기술입니다."
-                : "처음부터 쓸 수 있는 기술입니다.";
+            description = source == UnlockSource.ViaArmament ? $"{ArmamentName()} 장착 시 Gear {stage}로 발동합니다."
+                : $"전투에서 Gear {stage} 기술로 사용할 수 있습니다.";
         }
         else if (entry != null)
         {
-            bool affordable = held >= entry.price;
+            bool affordable = held >= entry.CertificateCost;
             status = affordable ? "구매 가능" : "필증 부족";
             statusColor = affordable ? readyColor : inactiveColor;
-            description = TrainingCatalogSO.CertificateName + " " + entry.price.ToString(CultureInfo.InvariantCulture)
-                + "개로 이 기술을 해금합니다. 해금하면 바로 전투에서 쓸 수 있습니다.";
+            description = affordable ? "해금하면 전투에서 바로 사용할 수 있습니다."
+                : $"해금하려면 훈련 필증 {entry.CertificateCost - held:N0}개가 더 필요합니다.";
         }
         else
         {
@@ -538,10 +561,18 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
             statusColor = mutedColor;
             description = LockedByArmamentMessage();
         }
-        if (own != null && !string.IsNullOrWhiteSpace(own.description)) description = own.description;
-        string cost = entry != null ? $"비용 {entry.price:N0}개" : string.Empty;
+        if (entry != null && entry.HasIncludedSkill)
+            description = BundleUnlockLabel(entry);
+        else if (!unlocked && own != null && !string.IsNullOrWhiteSpace(own.description))
+            description = own.description;
+        if (actionLabel != null)
+            actionLabel.text = unlocked ? "상태 확인" : entry == null ? "조건 확인" : held >= entry.CertificateCost ? "해금하기" : "비용 확인";
+        string cost = entry != null ? $"비용 {entry.CertificateCost:N0}개" : string.Empty;
         row.Show("기술 해금", EvenLines(description), readyColor, cost, costColor, status, statusColor, unlocked ? activeColor : inactiveColor, unlocked);
     }
+
+    private static string BundleUnlockLabel(ArmamentUnlockCatalogSO.Entry entry) =>
+        $"{entry.includedWeapon.DisplayName} · {entry.weapon.DisplayName} 동시 해금";
 
     private string ArmamentName()
     {
@@ -558,7 +589,7 @@ public sealed class WeaponDetailPage : UpgradeMenuPage, ILobbyStationActivity, I
         int want = !showModuleRows || !IsUnlocked(weapon) ? UnlockNode
             : !data.IsWeaponNodeUpgraded(id, false) ? LeftNode
             : !data.IsWeaponNodeUpgraded(id, true) ? RightNode : LeftNode;
-        for (int i = 0; i < buttons.Length; i++) if (rowNodes[i] == want) return i;
+        for (int i = 0; i < rowNodes.Count; i++) if (rowNodes[i] == want) return i;
         return 0;
     }
 

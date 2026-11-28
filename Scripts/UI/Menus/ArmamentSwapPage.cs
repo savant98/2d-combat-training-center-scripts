@@ -9,7 +9,7 @@ using UnityEngine;
 /// 사용자 지시: "근접무기와 원거리 무기끼리만 교체 가능하도록" → 그 자리와 같은 분류의 무장만 카드로 보여 준다(목록과 개수는 Player_Weapon_Data.armaments에서 읽는다).
 /// - 확인하면 확인 창 없이 바로 장착한다(교체는 무료이고 언제든 되돌릴 수 있다). 성공하면 짧은 연출 뒤 개요로 돌아간다.
 /// - 이미 장착한 카드를 고르면 그대로 개요로 돌아간다. 장착할 수 없으면(준비 중·공격 중 등) 경고 창을 띄운다.
-/// - 카드는 Prefab에 최대 개수만큼 미리 두고, 남는 카드는 숨긴다. 보이는 카드는 개수에 맞춰 한 줄에 columnsPerRow개씩 가운데 정렬한다.
+/// - 같은 자리의 후보 노드를 왼쪽에 세로로 표시하고, 선택한 후보의 정보만 오른쪽에 펼친다.
 /// - 장착 연출을 시작할 때 ILobbyStationActivity.Performed를 낸다. 업그레이드 장치(LobbyStation)가 이를 받아 작업 동작을 재생한다(2026-11-18 2차).
 /// - 2026-11-20 훈련 개편(훈련 필증 해금): 해금하지 않은 무장·보조 무기 카드는 잠김 배지·잠금 부품을 보인다. 고르면 확인 창 → 필증 차감·해금 기록(저장 1번)
 ///   → 해금 연출(ILobbyStationUnlockActivity.UnlockPerformed로 장치의 해금 동작). 무장은 해금만 하고 이 페이지에 머물며(다음 Z로 장착),
@@ -20,11 +20,10 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
 {
     [Header("Cards")]
     [SerializeField] private ArmamentSwapCard[] cards = new ArmamentSwapCard[0];
-    [SerializeField] private Vector2 cardSize = new Vector2(660f, 330f);
-    [SerializeField] private Vector2 cardGap = new Vector2(30f, 15f);
-    [Min(1)] [SerializeField] private int columnsPerRow = 2;
-    [Tooltip("카드 영역의 가운데(페이지 좌표). 줄 수에 맞춰 이 점을 중심으로 쌓는다")]
-    [SerializeField] private Vector2 cardAreaCenter = new Vector2(0f, -48f);
+    [SerializeField] private RectTransform candidateRail;
+    [SerializeField] private RectTransform backButton;
+    [SerializeField] private UnityEngine.UI.Image backFocus;
+    private int inspectedIndex = -1;
 
     [Header("Texts")]
     [SerializeField] private TextMeshProUGUI titleText;
@@ -85,6 +84,11 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
             valid.Add(card);
         }
         cards = valid.ToArray();
+        if (backButton != null && backFocus != null)
+        {
+            rects.Add(backButton);
+            marks.Add(backFocus);
+        }
         buttons = rects.ToArray();
         images = marks.ToArray();
         base.Awake();
@@ -121,32 +125,40 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
         setIndex = slot;
         returnIndex = focusBack;
         if (titleText != null) titleText.text = CategoryName(category) + " 무장 교체";
-        if (captionText != null) captionText.text = CategoryName(category) + " 자리에는 " + CategoryName(category) + " 무장만 장착할 수 있습니다. 바꾼 무장은 바로 적용됩니다.";
-        RefreshCards();
-        LayoutCards();
-
-        ShowPage();
-        Open();
-        int equipped = shown.IndexOf(ability.GetEquippedArmament(setIndex));
-        FocusSilently(equipped >= 0 ? equipped : 0);
+        OpenCandidates(shown.IndexOf(ability.GetEquippedArmament(setIndex)));
         return true;
     }
 
-    /// <summary>입력 스택에서 내리고 숨긴다. 진행 중인 장착 연출과 입력 차단도 정리한다.</summary>
+    /// <summary>지정된 자리에서 보조 무기를 고른다. 빈 자리는 첫 후보부터 보여 준다.</summary>
     public bool OpenSecondaryFor(ArmamentOverviewPage owner, PlayerWeaponAbility weaponAbility, int slot, int focusBack)
     {
-        if (weaponAbility == null || cards.Length == 0 || UIManager.Instance == null) return false;
+        if (weaponAbility == null || weaponAbility.GetWeaponSet(slot) == null || cards.Length == 0 || UIManager.Instance == null) return false;
         secondaryMode = true; secondaryShown.Clear();
         foreach (var candidate in weaponAbility.SecondaryWeapons)
             if (candidate != null && !secondaryShown.Contains(candidate)) secondaryShown.Add(candidate);
         if (secondaryShown.Count == 0 || secondaryShown.Count > cards.Length) return false;
         host = owner; ability = weaponAbility; setIndex = slot; returnIndex = focusBack;
-        if (titleText != null) titleText.text = "보조 무기 교체";
-        if (captionText != null) captionText.text = "";
-        RefreshCards(); LayoutCards(); ShowPage(); Open();
-        // 처음 선택: 지금 장착한 카드(빈 자리면 첫 카드)
-        FocusSilently(Mathf.Max(0, secondaryShown.IndexOf(weaponAbility.GetWeaponSet(slot)?.secondary)));
+        if (titleText != null) titleText.text = CategoryName(CategoryOf(ability, slot)) + " 보조 무기 교체";
+        OpenCandidates(secondaryShown.IndexOf(weaponAbility.GetWeaponSet(slot).secondary));
         return true;
+    }
+
+    private void OpenCandidates(int equippedIndex)
+    {
+        if (captionText != null) captionText.text = $"장착 후보   {ShownCount:D2}";
+        RefreshCards();
+        if (candidateRail != null)
+        {
+            candidateRail.gameObject.SetActive(ShownCount > 1);
+            float first = ((RectTransform)cards[0].transform).anchoredPosition.y;
+            float last = ((RectTransform)cards[ShownCount - 1].transform).anchoredPosition.y;
+            candidateRail.anchoredPosition = new Vector2(candidateRail.anchoredPosition.x, (first + last) * .5f);
+            candidateRail.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, Mathf.Abs(first - last));
+        }
+        ShowPage();
+        Open();
+        FocusSilently(Mathf.Max(0, equippedIndex));
+        InspectSelection(false);
     }
 
     public void ClosePage(bool instant)
@@ -158,7 +170,21 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
         ability = null;
     }
 
-    protected override bool IsNavigable(int index) => index < ShownCount && base.IsNavigable(index);
+    protected override bool IsNavigable(int index) =>
+        (index < ShownCount || (index == cards.Length && backButton != null)) && base.IsNavigable(index);
+
+    protected override void LateUpdate()
+    {
+        base.LateUpdate();
+        if (IsActive && IsVisible && currentIndex != inspectedIndex) InspectSelection(true);
+    }
+
+    private void InspectSelection(bool animate)
+    {
+        inspectedIndex = currentIndex;
+        for (int i = 0; i < cards.Length; i++)
+            cards[i].Inspect(i == currentIndex, currentIndex < ShownCount, animate);
+    }
 
     private void RefreshCards()
     {
@@ -174,7 +200,7 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
                     cards[i].BindSecondary(weapon, current == weapon, !ArmamentUnlocks.IsWeaponUnlocked(weapon), PriceText(ArmamentUnlocks.PurchasableEntry(weapon)));
                 }
             }
-            if (equippedText != null) equippedText.text = "현재 보조 무기  " + (current != null ? current.DisplayName : "없음");
+            if (equippedText != null) equippedText.text = "현재 보조 무기  " + (current != null ? current.DisplayName : "미장착");
             return;
         }
         var equipped = ability != null ? ability.GetEquippedArmament(setIndex) : null;
@@ -192,28 +218,11 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
             equippedText.text = "현재 장착  " + (equipped != null ? equipped.DisplayName : "없음");
     }
 
-    private void LayoutCards()
-    {
-        int count = ShownCount;
-        int perRow = Mathf.Max(1, columnsPerRow);
-        int rows = Mathf.CeilToInt(count / (float)perRow);
-        float pitchY = cardSize.y + cardGap.y;
-        float pitchX = cardSize.x + cardGap.x;
-        float topY = cardAreaCenter.y + (rows - 1) * pitchY * .5f;
-        for (int i = 0; i < count; i++)
-        {
-            int row = i / perRow;
-            int inRow = Mathf.Min(perRow, count - row * perRow);
-            int col = i % perRow;
-            float x = cardAreaCenter.x + (col - (inRow - 1) * .5f) * pitchX;
-            var rect = (RectTransform)cards[i].transform;
-            rect.anchoredPosition = new Vector2(x, topY - row * pitchY);
-        }
-    }
-
     private void HandleSelected(int index)
     {
-        if (!CanReceiveInput || ability == null || index < 0 || index >= ShownCount) return;
+        if (!CanReceiveInput || ability == null) return;
+        if (backButton != null && index == cards.Length) { ReturnToOverview(); return; }
+        if (index < 0 || index >= ShownCount) return;
         // 해금하지 않은 카드: 장착 대신 훈련 필증 해금(확인 창 → 거래 → 연출)
         if (secondaryMode ? !ArmamentUnlocks.IsWeaponUnlocked(secondaryShown[index]) : !ArmamentUnlocks.IsArmamentUnlocked(shown[index]))
         {
@@ -320,9 +329,9 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
         var entry = UnlockEntry(index);
         if (entry == null) { Warn("해금 정보를 찾을 수 없습니다.", index, "무장 해금"); return; }
         var data = DataManager.Instance;
-        if (data.TrainingCertificates < entry.price)
+        if (data.TrainingCertificates < entry.CertificateCost)
         {
-            Warn(UpgradePurchaseDialog.CertificateShortage(data.TrainingCertificates, entry.price), index, "무장 해금");
+            Warn(UpgradePurchaseDialog.CertificateShortage(data.TrainingCertificates, entry.CertificateCost), index, "무장 해금");
             return;
         }
         if (dialog == null)
@@ -332,7 +341,7 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
         }
         ArmamentUnlockKind kind = entry.kind;
         string key = entry.Key;
-        int price = entry.price;
+        int price = entry.CertificateCost;
         dialog.ShowConfirmation(entry.Title + " 해금", price, () => ConfirmUnlock(index, kind, key, price), RestoreFocus);
     }
 
@@ -348,7 +357,7 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
     {
         if (!CanReceiveInput || sequenceRunning || ability == null) return;
         var entry = UnlockEntry(index);
-        if (entry == null || entry.kind != kind || entry.Key != key || entry.price != price)
+        if (entry == null || entry.kind != kind || entry.Key != key || entry.CertificateCost != price)
         {
             Warn("해금 정보가 변경되었습니다. 다시 확인해 주세요.", index, "무장 해금");
             return;
@@ -440,7 +449,7 @@ public sealed class ArmamentSwapPage : UpgradeMenuPage, ILobbyStationActivity, I
         engagedHandler = null;
     }
 
-    private static string PriceText(ArmamentUnlockCatalogSO.Entry entry) => entry != null ? ArmamentUnlocks.PriceLabel(entry.price) : null;
+    private static string PriceText(ArmamentUnlockCatalogSO.Entry entry) => entry != null ? ArmamentUnlocks.PriceLabel(entry.CertificateCost) : null;
 
     private void RaiseUnlockPerformed()
     {

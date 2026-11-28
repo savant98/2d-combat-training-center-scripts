@@ -12,7 +12,7 @@ public sealed class TerminalMailDocumentView : MonoBehaviour
     [SerializeField] private bool fitWholeForm;
     [Tooltip("문서 틀의 너비(화면 너비에 대한 비율). 입소 환영 문서는 2단 양식을 한 화면에 크게 담으려고 넓힌다(2026-11-15). 소집 통지서는 0.5")]
     [SerializeField, Range(.3f, .95f)] private float widthRatio = .5f;
-    private RectTransform frame, canvasRect;
+    private RectTransform frame, viewportRect;
     private Vector2 lastViewport;
     private float lastFormHeight, lastFormWidth;
     public bool FitWholeForm => fitWholeForm;
@@ -22,8 +22,10 @@ public sealed class TerminalMailDocumentView : MonoBehaviour
         InputBindingHint.Bind(transform, "DocumentHint", fitWholeForm
             ? "{Cancel}  닫기" : "{MenuVertical} · 휠  문서 읽기     {Cancel}  닫기");
         frame = (RectTransform)transform;
-        var canvas = GetComponentInParent<Canvas>();
-        canvasRect = canvas != null ? (RectTransform)canvas.rootCanvas.transform : null;
+        var terminal = GetComponentInParent<InventoryTerminalMenu>();
+        viewportRect = terminal != null ? terminal.Viewport : null;
+        if (viewportRect == null && GetComponentInParent<Canvas>() is Canvas canvas)
+            viewportRect = (RectTransform)canvas.rootCanvas.transform;
         lastViewport = Vector2.zero;
         Fit();
         if (scroll != null) { scroll.StopMovement(); scroll.verticalNormalizedPosition = 1; }
@@ -33,10 +35,11 @@ public sealed class TerminalMailDocumentView : MonoBehaviour
     private void LateUpdate() { Fit(); }
     private void Fit()
     {
-        if (frame == null || canvasRect == null || scroll == null || form == null) return;
-        float x = canvasRect.InverseTransformVector(frame.TransformVector(Vector3.right)).magnitude;
-        float y = canvasRect.InverseTransformVector(frame.TransformVector(Vector3.up)).magnitude;
-        Vector2 size = new Vector2(canvasRect.rect.width * widthRatio / Mathf.Max(.001f, x), canvasRect.rect.height * .9f / Mathf.Max(.001f, y));
+        if (frame == null || viewportRect == null || scroll == null || form == null) return;
+        // 문서의 완성 크기는 팝업 무대 기준으로 잡아 펼침 애니메이션의 배율과 독립시킨다.
+        float x = viewportRect.InverseTransformVector(frame.parent.TransformVector(Vector3.right)).magnitude;
+        float y = viewportRect.InverseTransformVector(frame.parent.TransformVector(Vector3.up)).magnitude;
+        Vector2 size = new Vector2(viewportRect.rect.width * widthRatio / Mathf.Max(.001f, x), viewportRect.rect.height * .9f / Mathf.Max(.001f, y));
         bool resized = (frame.sizeDelta - size).sqrMagnitude > .1f;
         if (resized) frame.sizeDelta = size;
         if (!resized && lastViewport == scroll.viewport.rect.size && Mathf.Approximately(lastFormHeight, form.rect.height)

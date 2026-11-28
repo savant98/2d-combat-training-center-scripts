@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.Serialization;
 using UnityEngine.UI;
@@ -15,6 +16,7 @@ public class UpgradeMenu : SelectableMenuUI
 {
     [Header("UpgradeMenu Components")]
     [SerializeField] private Animator animator;
+    [SerializeField] private TitlePanelMotion boardMotion;
     [SerializeField] private CinemachineCamera virtualCamera;
     // 보드의 재화 칸(보유한 훈련 필증 수). UpgradePanel.prefab에는 옛 재화의 아이콘과 이름 글자가 남아 있어,
     // 열 때마다 훈련 목록(TrainingCatalogSO)의 아이콘과 이름으로 바꿔 끼운다.
@@ -36,6 +38,11 @@ public class UpgradeMenu : SelectableMenuUI
     private Transform boardRoot;
     private RectTransform boardSurface;
     private Vector3 authoredBoardScale;
+    private Vector3 authoredBoardPosition;
+    private float fittedAspect;
+    private Coroutine waitingForCamera;
+
+    public bool BoardReady => boardMotion == null || boardMotion.IsReady;
 
     private bool CanReceiveInput => IsActive && isActiveAndEnabled
         && (purchaseDialog == null || !purchaseDialog.IsActive)
@@ -49,6 +56,7 @@ public class UpgradeMenu : SelectableMenuUI
         if (boardRoot != null)
         {
             authoredBoardScale = boardRoot.localScale;
+            authoredBoardPosition = boardRoot.localPosition;
             boardSurface = boardRoot.Find("UpgradePanel/HologramBoardStyle/HologramDisplaySurface") as RectTransform;
         }
         if (purchaseDialog == null) purchaseDialog = GetComponentInChildren<UpgradePurchaseDialog>(true);
@@ -92,7 +100,7 @@ public class UpgradeMenu : SelectableMenuUI
         if (certificateIconImage != null && sprite != null) certificateIconImage.sprite = sprite;
         if (certificateNameText != null) certificateNameText.text = TrainingCatalogSO.CertificateName;
     }
-    private void SizeBoardToViewport()
+    private void SizeBoardToViewport(bool cameraSettled = false)
     {
         Camera camera = Camera.main;
         if (boardRoot == null || boardSurface == null || virtualCamera == null || camera == null) return;
@@ -104,9 +112,18 @@ public class UpgradeMenu : SelectableMenuUI
         float viewWidth = viewHeight * camera.aspect;
         if (width <= 0f || height <= 0f || viewWidth <= 0f || viewHeight <= 0f) return;
 
-        float scale = Mathf.Sqrt(.5f * viewWidth * viewHeight / (width * height));
-        scale = Mathf.Min(scale, .82f * viewWidth / width, .88f * viewHeight / height);
+        boardRoot.localPosition = authoredBoardPosition;
+        fittedAspect = camera.aspect;
+        float scale = Mathf.Sqrt(.47f * viewWidth * viewHeight / (width * height));
+        scale = Mathf.Min(scale, .69f * viewWidth / width, .88f * viewHeight / height);
         boardRoot.localScale = new Vector3(authoredBoardScale.x * scale, authoredBoardScale.y * scale, authoredBoardScale.z);
+        if (!cameraSettled) return;
+
+        // 좁은 화면에서도 제목과 선택 행 전체를 보이게 하고, 오른쪽에 작업대 자리를 둔다.
+        Vector3 center = camera.WorldToViewportPoint(boardRoot.position);
+        float halfWidth = width * scale / (2f * viewWidth);
+        center.x = Mathf.Clamp(center.x, .025f + halfWidth, .975f - halfWidth);
+        boardRoot.position = camera.ViewportToWorldPoint(center);
     }
 
     public void OpenMenu()
@@ -119,6 +136,7 @@ public class UpgradeMenu : SelectableMenuUI
         virtualCamera.Priority = 999;
         UIManager.Instance.HUDVisible(false);
 
+        if (boardMotion != null) waitingForCamera = StartCoroutine(OpenBoardAfterCamera());
         ApplyCertificateLabels();
         UpdateCertificateText();
         Open();
@@ -129,6 +147,32 @@ public class UpgradeMenu : SelectableMenuUI
             Debug.LogError($"[{name}] 무장 개요 페이지를 열 수 없어 업그레이드 메뉴를 닫습니다.", this);
             CloseMenu();
         }
+    }
+
+    private IEnumerator OpenBoardAfterCamera()
+    {
+        yield return TitlePanelMotion.WaitForCamera(virtualCamera);
+        waitingForCamera = null;
+        if (IsActive)
+        {
+            SizeBoardToViewport(true);
+            UIManager.Instance.HUDVisible(false);
+            boardMotion.Open();
+        }
+    }
+
+    private void LateUpdate()
+    {
+        if (!IsActive || !BoardReady) return;
+        var camera = Camera.main;
+        if (camera != null && !Mathf.Approximately(fittedAspect, camera.aspect)) SizeBoardToViewport(true);
+    }
+
+    private void StopWaitingForCamera()
+    {
+        if (waitingForCamera == null) return;
+        StopCoroutine(waitingForCamera);
+        waitingForCamera = null;
     }
 
     // 선택 대상이 빈 앵커 하나뿐이라 이동·마우스·확인은 할 일이 없다. 입력은 위에 쌓인 페이지가 받는다.
@@ -143,6 +187,9 @@ public class UpgradeMenu : SelectableMenuUI
 
     private void OnDisable()
     {
+        StopWaitingForCamera();
+        if (boardMotion != null) boardMotion.SnapHidden();
+        if (boardRoot != null) boardRoot.localPosition = authoredBoardPosition;
         if (overviewPage != null) overviewPage.CloseAllPages();
         if (purchaseDialog != null) purchaseDialog.Close();
         if (IsActive && UIManager.Instance != null) base.Close();
@@ -168,9 +215,16 @@ public class UpgradeMenu : SelectableMenuUI
         Close();
     }
 
+    private void RestoreBoardPosition()
+    {
+        if (!IsActive && boardRoot != null) boardRoot.localPosition = authoredBoardPosition;
+    }
+
     public override void Close()
     {
+        StopWaitingForCamera();
         base.Close();
+        if (boardMotion != null) boardMotion.Close(RestoreBoardPosition);
         if (overviewPage != null) overviewPage.CloseAllPages();
         if (purchaseDialog != null) purchaseDialog.Close();
     }

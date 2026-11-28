@@ -6,12 +6,9 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// 무장 교체 페이지의 카드 하나(2026-11-18). 무장 아이콘·이름·설명과, 기본 무기 + Gear 1~3 무기의 미리보기, '장착 중' 표시를 보여 준다.
-/// 선택 대상(hitArea)은 카드보다 1/1.15 작게 두어, 선택되어 1.15배로 커지면 외곽선이 카드 바로 바깥에 맞는다(카드 본문은 커지지 않는다).
-/// 원은 PlayerHUD 무기 칸과 같은 톱니 모양이다(2026-11-18 2차). 톱니 재질(GlowMultiply)은 Image.color를 쓰지 않으므로 상태는 재질로 바꾼다:
-/// 기본 무기 원은 HUD 기본 칸 재질, Gear 1~3 원은 해금한 무기면 단계 색 밝은 재질, 해금 전·비어 있으면 어두운 재질.
-/// 2026-11-20 훈련 개편: 훈련 필증으로 해금하지 않은 무장·보조 무기 카드는 아이콘 원을 회색 잠금 링으로 바꾸고 잠금 부품(ArmamentLockOverlay)과
-/// '잠김 · 필증 n' 배지를 보인다. 해금하면 잠금 부품이 풀리고, 무장 카드는 체결 뒤 Gear 미리보기 원이 차례로 밝아진다(연쇄 체결).
+/// 왼쪽의 무기 후보 노드와 오른쪽에 펼쳐지는 해당 후보의 정보를 연결한다.
+/// 장착 및 해금 판정은 페이지가 맡고 이 컴포넌트는 아이콘, 상태, 효과와 Gear 구성을 표시한다.
+/// 잠금 해제 시 아이콘의 부품이 풀린 뒤 해당 무장의 Gear 원이 차례로 밝아진다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class ArmamentSwapCard : MonoBehaviour
@@ -26,6 +23,14 @@ public sealed class ArmamentSwapCard : MonoBehaviour
         public Image icon;
         public TextMeshProUGUI stageText;
         public TextMeshProUGUI nameText;
+        public ArmamentBranchGraphic branch;
+        public GameObject lockMark;
+
+        public void ShowAvailability(bool available, bool hasWeapon)
+        {
+            if (branch != null) branch.SetAvailable(available);
+            if (lockMark != null) lockMark.SetActive(hasWeapon && !available);
+        }
     }
 
     [Header("Selection")]
@@ -41,6 +46,14 @@ public sealed class ArmamentSwapCard : MonoBehaviour
     [SerializeField] private GameObject badge;
     [SerializeField] private Graphic badgeFrame;
     [SerializeField] private TextMeshProUGUI badgeText;
+
+    [Header("Inspection")]
+    [SerializeField] private RectTransform inspection;
+    [SerializeField] private Image inspectionIcon;
+    [SerializeField] private TextMeshProUGUI inspectionName, actionText;
+    [SerializeField] private GameObject gearGroup, secondaryGroup;
+    [SerializeField] private TextMeshProUGUI gaugeValue, windupValue;
+    [SerializeField] private ArmamentBranchGraphic route;
 
     [Header("Weapons")]
     [Tooltip("[0] 기본 무기, [1~3] Gear 1~3단계")]
@@ -79,30 +92,37 @@ public sealed class ArmamentSwapCard : MonoBehaviour
     public ArmamentLockOverlay LockOverlay => lockOverlay;
     public Image IconRing => iconRing;
 
+    public void Inspect(bool selected, bool showingCandidate, bool animate)
+    {
+        if (route != null) route.SetFocused(selected);
+        // '트리로' 버튼 위에서도 마지막 무기의 정보를 계속 읽을 수 있다.
+        if (inspection == null || !showingCandidate) return;
+        if (inspection.gameObject.activeSelf == selected) return;
+        inspection.DOKill();
+        inspection.gameObject.SetActive(selected);
+        inspection.anchoredPosition = selected && animate ? new Vector2(15f, 0f) : Vector2.zero;
+        if (selected && animate) inspection.DOAnchorPosX(0f, .16f).SetEase(Ease.OutCubic).SetUpdate(true);
+    }
+
     public void Bind(PlayerArmamentSO armament, bool equipped) => Bind(armament, equipped, false, null);
 
     /// <summary>무장 카드. locked면 잠금 링·잠금 부품과 '잠김 · lockLabel' 배지를 보인다(장착 중 배지가 우선).</summary>
     public void Bind(PlayerArmamentSO armament, bool equipped, bool locked, string lockLabel)
     {
         if (armament == null) return;
-        SetArmamentDetailsVisible(true);
         bool ready = armament.normal != null;
-        if (portText != null) portText.text = UpgradeMenuPage.CategoryCode(armament.category) + " ARMAMENT";
-        if (nameText != null) nameText.text = armament.DisplayName;
+        string trait = ArmamentMenuGuide.TraitName(armament);
+        BindInspection(armament.DisplayName, armament.Icon, false, equipped, locked, lockLabel, ready);
+        if (portText != null) portText.text = string.IsNullOrEmpty(trait) ? "주무기" : "무장 특성  /  " + trait;
         if (descriptionText != null)
             descriptionText.text = UpgradeMenuPage.EvenLines(ArmamentMenuGuide.CardDescription(armament));
-        if (icon != null)
-        {
-            icon.sprite = armament.Icon;
-            icon.enabled = icon.sprite != null;
-        }
 
         ShowBadge(equipped, locked, lockLabel, !ready);
         if (contact != null) contact.color = equipped ? contactColor : idleContactColor;
         ShowLock(locked);
 
         for (int i = 0; previews != null && i < previews.Length; i++)
-            ShowWeapon(previews[i], i == 0 ? armament.normal : armament.GetGearWeapon(i), i);
+            ShowWeapon(previews[i], i == 0 ? armament.normal : armament.GetGearWeapon(i), i, locked);
     }
 
     public void BindSecondary(WeaponBaseSO weapon, bool equipped) => BindSecondary(weapon, equipped, false, null);
@@ -111,24 +131,30 @@ public sealed class ArmamentSwapCard : MonoBehaviour
     public void BindSecondary(WeaponBaseSO weapon, bool equipped, bool locked, string lockLabel)
     {
         if (weapon == null) return;
-        SetArmamentDetailsVisible(false);
-        if (nameText != null) nameText.text = weapon.DisplayName;
-        if (icon != null) { icon.sprite = weapon.weaponSprite; icon.enabled = icon.sprite != null; }
+        BindInspection(weapon.DisplayName, weapon.weaponSprite, true, equipped, locked, lockLabel, true);
+        if (portText != null) portText.text = "보조 무기  /  효과";
+        if (descriptionText != null) descriptionText.text = UpgradeMenuPage.EvenLines(ArmamentMenuGuide.SecondaryDescription(weapon));
+        if (gaugeValue != null) gaugeValue.text = weapon.skillGauge.ToString("0.##");
+        if (windupValue != null) windupValue.text = weapon.windupTime.ToString("0.##") + "초";
         ShowBadge(equipped, locked, lockLabel, false);
         if (contact != null) contact.color = equipped ? contactColor : idleContactColor;
         ShowLock(locked);
     }
 
-    private void SetArmamentDetailsVisible(bool visible)
+    private void BindInspection(string label, Sprite sprite, bool secondary, bool equipped, bool locked, string price, bool ready)
     {
-        if (portText != null) portText.gameObject.SetActive(visible);
-        if (descriptionText != null) descriptionText.gameObject.SetActive(visible);
-        var rule = transform.Find("Rule");
-        if (rule != null) rule.gameObject.SetActive(visible);
-        foreach (var preview in previews)
-        {
-            if (preview?.node != null) preview.node.transform.parent.gameObject.SetActive(visible);
-        }
+        if (nameText != null) nameText.text = label;
+        if (inspectionName != null) inspectionName.text = label;
+        if (icon != null) { icon.sprite = sprite; icon.enabled = sprite != null; }
+        if (inspectionIcon != null) { inspectionIcon.sprite = sprite; inspectionIcon.enabled = sprite != null; }
+        if (gearGroup != null) gearGroup.SetActive(!secondary);
+        if (secondaryGroup != null) secondaryGroup.SetActive(secondary);
+        if (route != null) route.SetAvailable(!locked);
+        if (actionText == null) return;
+        actionText.color = locked ? TrainingBoardStyle.Gold : TrainingBoardStyle.Line;
+        if (equipped) actionText.text = "이 자리에 장착 중";
+        else if (locked) actionText.text = (string.IsNullOrEmpty(price) ? "잠김" : price) + (secondary ? "   ·   해금하면 이 자리에 장착" : "   ·   해금 후 장착 가능");
+        else actionText.text = ready ? "선택하면 이 자리에 장착" : "준비 중";
     }
 
     /// <summary>
@@ -164,8 +190,9 @@ public sealed class ArmamentSwapCard : MonoBehaviour
         {
             int stage = lit + 1;
             var preview = previews != null && stage < previews.Length ? previews[stage] : null;
-            if (preview != null && preview.node != null && armament.GetGearWeapon(stage) != null)
+            if (preview != null && preview.node != null && UpgradeMenuPage.IsUnlocked(armament.GetGearWeapon(stage)))
             {
+                preview.ShowAvailability(true, true);
                 Material material = Pick(stageMaterials, stage);
                 if (material != null && preview.node.material != material) preview.node.material = material;
             }
@@ -174,15 +201,14 @@ public sealed class ArmamentSwapCard : MonoBehaviour
         return lit;
     }
 
-    // 배지: 장착 중 > 잠김 · 가격 > 준비 중.
+    // 후보의 현재 상태와 해금에 필요한 필증을 같은 자리에 표시한다.
     private void ShowBadge(bool equipped, bool locked, string lockLabel, bool pending)
     {
-        bool show = equipped || locked || pending;
-        if (badge != null) badge.SetActive(show);
-        Color badgeColor = equipped ? equippedColor : pendingColor;
+        if (badge != null) badge.SetActive(true);
+        Color badgeColor = equipped ? equippedColor : locked || pending ? pendingColor : TrainingBoardStyle.SecondaryText;
         if (badgeText != null)
         {
-            badgeText.text = equipped ? "장착 중" : locked ? (string.IsNullOrEmpty(lockLabel) ? "잠김" : "잠김 · " + lockLabel) : "준비 중";
+            badgeText.text = equipped ? "장착 중" : locked ? (string.IsNullOrEmpty(lockLabel) ? "잠김" : "잠김 · " + lockLabel) : pending ? "준비 중" : "장착 가능";
             badgeText.color = badgeColor;
         }
         if (badgeFrame != null) badgeFrame.color = badgeColor;
@@ -208,9 +234,11 @@ public sealed class ArmamentSwapCard : MonoBehaviour
         rect.DOPunchScale(Vector3.one * .2f, .35f, 6, .6f).SetUpdate(true);
     }
 
-    private void ShowWeapon(WeaponPreview preview, WeaponBaseSO weapon, int stage)
+    private void ShowWeapon(WeaponPreview preview, WeaponBaseSO weapon, int stage, bool armamentLocked)
     {
         if (preview == null) return;
+        bool available = stage == 0 ? weapon != null && !armamentLocked : UpgradeMenuPage.IsUnlocked(weapon);
+        preview.ShowAvailability(available, weapon != null);
         if (preview.stageText != null)
         {
             // 글꼴(esamanru)에 공백 글자가 없어 간격은 <space> 태그로 둔다.
@@ -220,7 +248,7 @@ public sealed class ArmamentSwapCard : MonoBehaviour
         if (preview.node != null)
         {
             Material material = stage == 0 ? normalMaterial
-                : Pick(weapon != null && UpgradeMenuPage.IsUnlocked(weapon) ? stageMaterials : stageDimMaterials, stage);
+                : Pick(available ? stageMaterials : stageDimMaterials, stage);
             if (material != null && preview.node.material != material) preview.node.material = material;
         }
         if (preview.icon != null)

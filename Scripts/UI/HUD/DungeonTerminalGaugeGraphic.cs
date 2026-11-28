@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using DG.Tweening;
 
 /// <summary>
 /// 7차(2026-11-26, DESIGN_V7 §1.6 V6) 현장 단말기 '계기판형' 정보 판의 생성 Mesh 그래픽. MaskableGraphic + OnPopulateMesh, 기본 UI 재질(정점 색 = 화면색 sRGB),
@@ -115,21 +116,8 @@ public sealed class DungeonTerminalGaugeGraphic : MaskableGraphic
     private int mapFrameMode = MapFrameHidden;
     private Color32 iconColor = new Color32(43, 200, 226, 255);
     private bool popupDanger;
-    private static readonly Color32 CyanBack = new Color32(8, 16, 22, 220);
-    private static readonly Color32 CyanHoverBack = new Color32(16, 56, 74, 240);
-    private static readonly Color32 CyanFocusBack = new Color32(22, 98, 126, 250);
-    private static readonly Color32 ButtonBack = new Color32(15, 13, 10, 220);
-    private static readonly Color32 ButtonHoverBack = new Color32(62, 42, 12, 240);
-    private static readonly Color32 ButtonFocusBack = new Color32(126, 78, 16, 250);
-    private static readonly Color32 ButtonHoverLine = new Color32(255, 231, 179, 255);
-    private static readonly Color32 DangerBack = new Color32(20, 10, 10, 220);
-    private static readonly Color32 DangerHoverBack = new Color32(76, 24, 18, 240);
-    private static readonly Color32 DangerFocusBack = new Color32(138, 32, 24, 250);
-    private static readonly Color32 DangerDim = new Color32(110, 42, 34, 255);
-    private static readonly Color32 DangerHoverLine = new Color32(255, 198, 186, 255);
-    private static readonly Color32 PopupBack = new Color32(7, 13, 21, 246);
-    private static readonly Color32 PopupHeaderAmber = new Color32(54, 36, 10, 235);
-    private static readonly Color32 PopupHeaderDanger = new Color32(68, 20, 16, 235);
+    private static readonly Color32 FocusFill = new Color32(17, 43, 53, 255);
+    private static readonly Color32 HoverFill = new Color32(13, 33, 43, 255);
 
     private int dirtyCount, lastVertexCount;
 
@@ -377,6 +365,14 @@ public sealed class DungeonTerminalGaugeGraphic : MaskableGraphic
         hover = enabled && hover;
         focused = enabled && focused;
         if (buttonEnabled == enabled && buttonHover == hover && buttonFocused == focused && buttonTone == tone && buttonIcon == icon) return;
+        if (Application.isPlaying && (buttonFocused || buttonHover) != (focused || hover))
+        {
+            float scale = focused || hover ? TrainingBoardStyle.FocusScale : 1f;
+            rectTransform.DOKill();
+            if (isActiveAndEnabled)
+                rectTransform.DOScale(scale, .16f).SetEase(Ease.OutCubic).SetUpdate(true).SetLink(gameObject);
+            else rectTransform.localScale = Vector3.one * scale;
+        }
         buttonEnabled = enabled;
         buttonHover = hover;
         buttonFocused = focused;
@@ -803,56 +799,24 @@ public sealed class DungeonTerminalGaugeGraphic : MaskableGraphic
         }
     }
 
-    // 상세 맵 배지·재시작·포기·팝업 예/아니오 단말기 동작 버튼(비선택은 차분하게 낮추고 선택 시 고대비 채움·2중 흰 테두리·양측 강조 막대·꺾쇠로 즉시 구분)
+    // 세이브 슬롯과 같은 절단 모서리와 왼쪽 선택선을 쓰고, 위험 행동은 아이콘 색으로 구분한다.
     private void WriteActionButton(VertexHelper vh, Rect r)
     {
         if (r.width <= 4f || r.height <= 4f) return;
         bool focused = buttonEnabled && buttonFocused;
         bool hovered = buttonEnabled && buttonHover;
-        Color32 baseBack, hoverBack, focusBack, baseLine, dimLine, hotLine;
-        switch (buttonTone)
-        {
-            case ToneCyan:
-                baseBack = CyanBack; hoverBack = CyanHoverBack; focusBack = CyanFocusBack; baseLine = Line; dimLine = LineDim; hotLine = LineBright;
-                break;
-            case ToneDanger:
-                baseBack = DangerBack; hoverBack = DangerHoverBack; focusBack = DangerFocusBack; baseLine = BossRed; dimLine = DangerDim; hotLine = DangerHoverLine;
-                break;
-            default:
-                baseBack = ButtonBack; hoverBack = ButtonHoverBack; focusBack = ButtonFocusBack; baseLine = Amber; dimLine = AmberDim; hotLine = ButtonHoverLine;
-                break;
-        }
-
-        Color32 back = !buttonEnabled ? Neutral : (focused ? focusBack : (hovered ? hoverBack : baseBack));
-        Color32 edge = !buttonEnabled ? LineDim : (focused ? Frame : (hovered ? hotLine : dimLine));
-        Color32 accent = !buttonEnabled ? dimLine : (focused ? Frame : (hovered ? hotLine : baseLine));
-        float cut = Mathf.Min(8f, r.height * .3f);
+        Color32 back = focused ? FocusFill : hovered ? HoverFill : (Color32)TrainingBoardStyle.SlotFill;
+        Color32 edge = focused ? LineBright : hovered ? Line : LineDim;
+        Color32 accent = !buttonEnabled ? LineDim : buttonTone == ToneDanger ? BossRed : focused ? LineBright : Line;
+        float cut = Mathf.Min(10f, r.height * .24f);
         Draw.Chamfer(vh, r, cut, back);
-
-        if (focused)
-        {
-            // 선택 버튼 내부 상단 광택 띠 + 좌·우측 굵은 강조 막대 + 2중 고대비 테두리
-            Color32 sheen = hotLine; sheen.a = 64;
-            Draw.Rect(vh, new Rect(r.xMin + cut + 1f, r.yMax - 6f, Mathf.Max(2f, r.width - cut - 4f), 3.5f), sheen);
-            Draw.Rect(vh, new Rect(r.xMin + 3f, r.yMin + 4f, 4.5f, Mathf.Max(2f, r.height - cut - 5f)), hotLine);
-            Draw.Rect(vh, new Rect(r.xMax - 7.5f, r.yMin + cut + 1f, 4.5f, Mathf.Max(2f, r.height - cut - 5f)), hotLine);
-            Draw.ChamferOutline(vh, r, cut, 3.2f, Frame);
-            var mid = Rect.MinMaxRect(r.xMin + 3.2f, r.yMin + 3.2f, r.xMax - 3.2f, r.yMax - 3.2f);
-            if (mid.width > 12f && mid.height > 10f)
-                Draw.ChamferOutline(vh, mid, Mathf.Max(2f, cut - 2.5f), 1.6f, hotLine);
-        }
-        else
-        {
-            Draw.ChamferOutline(vh, r, cut, hovered ? 2.2f : 1.2f, edge);
-        }
-
-        var inner = Rect.MinMaxRect(r.xMin + 5f, r.yMin + 4.5f, r.xMax - 5f, r.yMax - 4.5f);
-        if (inner.width > 12f && inner.height > 10f)
-            Draw.Brackets(vh, inner, focused ? 12f : (hovered ? 8f : 5f), focused ? 2.6f : (hovered ? 1.6f : 1.1f), focused ? Frame : (hovered ? hotLine : dimLine));
+        Draw.ChamferOutline(vh, r, cut, focused ? 2.4f : 1.2f, edge);
+        if (focused || hovered)
+            Draw.Rect(vh, new Rect(r.xMin + 7f, r.yMin + r.height * .23f, 2.8f, r.height * .54f), edge);
 
         if (buttonIcon == IconNone) return;
-        float radius = Mathf.Min(6.5f, inner.height * .32f);
-        var iconCenter = new Vector2(r.xMin + (focused ? 24f : 20f), r.center.y);
+        float radius = Mathf.Min(7.5f, r.height * .23f);
+        var iconCenter = new Vector2(r.xMin + 24f, r.center.y);
         if (iconCenter.x + radius >= r.xMax - 10f || radius < 3f) return;
 
         switch (buttonIcon)
@@ -1031,31 +995,12 @@ public sealed class DungeonTerminalGaugeGraphic : MaskableGraphic
         Draw.Diamond(vh, c, rad * .36f, Frame);
     }
 
-    // InfoPanel Sci-Fi 텔레메트리 장식 레이어(정적 — 코너 눈금·측면 틱·회로선)
+    // 계기판의 머리말과 동작 버튼만 얇은 선으로 나눈다.
     private void WriteSciFiFrame(VertexHelper vh, Rect r)
     {
-        if (r.width < 40f || r.height < 40f) return;
-        Color32 subtle = Line; subtle.a = 55;
-        Color32 accent = Line; accent.a = 140;
-        // 상단 헤더 하단 강조 회로선
-        Draw.Rect(vh, new Rect(r.xMin + 18f, r.yMax - 35f, 96f, 1.5f), accent);
-        Draw.Rect(vh, new Rect(r.xMin + 120f, r.yMax - 35f, r.width - 196f, 1f), subtle);
-        // 우측 미세 텔레메트리 눈금 띠
-        float tickX = r.xMax - 8f;
-        for (float y = r.yMin + 72f; y < r.yMax - 48f; y += 16f)
-        {
-            bool major = Mathf.RoundToInt((y - r.yMin) / 16f) % 4 == 0;
-            float w = major ? 5f : 2.5f;
-            Draw.Rect(vh, new Rect(tickX - w, y, w, 1f), major ? accent : subtle);
-        }
-        // 좌측 미세 텔레메트리 틱
-        float leftX = r.xMin + 6f;
-        for (float y = r.yMin + 72f; y < r.yMax - 48f; y += 32f)
-            Draw.Rect(vh, new Rect(leftX, y, 3.5f, 1f), subtle);
-        // 하단 버튼 영역 상단 분리 가이드
-        Draw.Rect(vh, new Rect(r.xMin + 20f, r.yMin + 64f, r.width - 40f, 1f), subtle);
-        Draw.Rect(vh, new Rect(r.xMin + 20f, r.yMin + 64f, 34f, 2f), accent);
-        Draw.Rect(vh, new Rect(r.xMax - 54f, r.yMin + 64f, 34f, 2f), accent);
+        if (r.width < 40f || r.height < 72f) return;
+        Draw.Rect(vh, new Rect(r.xMin + 20f, r.yMax - 35f, 72f, 1.5f), Line);
+        Draw.Rect(vh, new Rect(r.xMin + 20f, r.yMin + 68f, r.width - 40f, 1f), LineDim);
     }
 
     // 등급 칩 회전 Sci-Fi 홀로그램 조준 고리(분절 호 4개 + 십자 눈금)
@@ -1087,69 +1032,25 @@ public sealed class DungeonTerminalGaugeGraphic : MaskableGraphic
     private void WriteActiveFrame(VertexHelper vh, Rect r)
     {
         if (r.width < 20f || r.height < 20f || mapFrameMode == MapFrameHidden) return;
-        if (mapFrameMode == MapFrameSelected)
-        {
-            // 대형 구역 지도 버튼이 선택되었음을 한눈에 읽는 고대비 발광 테두리 + 내곽 글로우 띠 + 굵은 꺾쇠 + 4면 중앙 포인터
-            Color32 aura = LineBright; aura.a = 48;
-            float band = 12f;
-            Draw.Rect(vh, Rect.MinMaxRect(r.xMin + 4f, r.yMax - 4f - band, r.xMax - 4f, r.yMax - 4f), aura);
-            Draw.Rect(vh, Rect.MinMaxRect(r.xMin + 4f, r.yMin + 4f, r.xMax - 4f, r.yMin + 4f + band), aura);
-            Draw.Rect(vh, Rect.MinMaxRect(r.xMin + 4f, r.yMin + 4f + band, r.xMin + 4f + band, r.yMax - 4f - band), aura);
-            Draw.Rect(vh, Rect.MinMaxRect(r.xMax - 4f - band, r.yMin + 4f + band, r.xMax - 4f, r.yMax - 4f - band), aura);
-
-            // 바깥 4px 순백 테두리 + 안쪽 2px 밝은 청록 테두리
-            Draw.Outline(vh, r, 4f, Frame);
-            var mid = Rect.MinMaxRect(r.xMin + 4.5f, r.yMin + 4.5f, r.xMax - 4.5f, r.yMax - 4.5f);
-            Draw.Outline(vh, mid, 2f, LineBright);
-            // 굵은 네 귀퉁이 꺾쇠
-            var inset = Rect.MinMaxRect(r.xMin + 7f, r.yMin + 7f, r.xMax - 7f, r.yMax - 7f);
-            Draw.Brackets(vh, inset, 30f, 4.5f, Frame);
-            // 4면 중앙 전술 강조 바 + 안쪽 포인터 마름모
-            float midX = r.center.x, midY = r.center.y;
-            Draw.Rect(vh, new Rect(midX - 42f, r.yMax - 7.5f, 84f, 4f), Frame);
-            Draw.Rect(vh, new Rect(midX - 42f, r.yMin + 3.5f, 84f, 4f), Frame);
-            Draw.Rect(vh, new Rect(r.xMin + 3.5f, midY - 36f, 4f, 72f), Frame);
-            Draw.Rect(vh, new Rect(r.xMax - 7.5f, midY - 36f, 4f, 72f), Frame);
-            Draw.Diamond(vh, new Vector2(midX, r.yMax - 12f), 4.5f, Frame);
-            Draw.Diamond(vh, new Vector2(midX, r.yMin + 12f), 4.5f, Frame);
-            Draw.Diamond(vh, new Vector2(r.xMin + 12f, midY), 4.5f, Frame);
-            Draw.Diamond(vh, new Vector2(r.xMax - 12f, midY), 4.5f, Frame);
-            return;
-        }
-
-        // MapFrameDetail: 상세 맵 탐색 진입 상태(전술 청록 잠금 테두리 + 앰버 코너 강조)
-        Color32 detailAura = Line; detailAura.a = 28;
-        Draw.Rect(vh, Rect.MinMaxRect(r.xMin + 3f, r.yMax - 9f, r.xMax - 3f, r.yMax - 3f), detailAura);
-        Draw.Rect(vh, Rect.MinMaxRect(r.xMin + 3f, r.yMin + 3f, r.xMax - 3f, r.yMin + 9f), detailAura);
-        Draw.Outline(vh, r, 3f, Line);
-        var detailInset = Rect.MinMaxRect(r.xMin + 5f, r.yMin + 5f, r.xMax - 5f, r.yMax - 5f);
-        Draw.Brackets(vh, detailInset, 24f, 3.5f, LineBright);
-        float cx = r.center.x;
-        Draw.Rect(vh, new Rect(cx - 34f, r.yMax - 6f, 68f, 3f), Amber);
-        Draw.Rect(vh, new Rect(cx - 34f, r.yMin + 3f, 68f, 3f), Amber);
+        bool selected = mapFrameMode == MapFrameSelected;
+        Draw.ChamferOutline(vh, r, 12f, selected ? 2.4f : 1.6f, selected ? LineBright : Line);
+        Draw.Rect(vh, new Rect(r.xMin + 6f, r.yMax - 76f, 3f, 48f), selected ? LineBright : Line);
     }
 
     // 재시작·포기 확인 팝업 Sci-Fi 모달 프레임
     private void WritePopupFrame(VertexHelper vh, Rect r)
     {
         if (r.width < 40f || r.height < 40f) return;
-        Color32 edge = popupDanger ? BossRed : Amber;
-        Color32 bright = popupDanger ? DangerHoverLine : ButtonHoverLine;
-        Color32 headBg = popupDanger ? PopupHeaderDanger : PopupHeaderAmber;
-        float cut = 14f;
-        Draw.Chamfer(vh, r, cut, PopupBack);
-        // 상단 헤더 바
-        var head = Rect.MinMaxRect(r.xMin + 2f, r.yMax - 48f, r.xMax - 2f, r.yMax - 2f);
-        Draw.Chamfer(vh, head, cut - 2f, headBg);
-        Draw.Rect(vh, new Rect(r.xMin + 12f, r.yMax - 49f, r.width - 24f, 1.5f), edge);
-        // 외곽 + 안쪽 꺾쇠
-        Draw.ChamferOutline(vh, r, cut, 2.2f, edge);
-        var inner = Rect.MinMaxRect(r.xMin + 6f, r.yMin + 6f, r.xMax - 6f, r.yMax - 6f);
-        Draw.Brackets(vh, inner, 14f, 2f, bright);
-        // 헤더 좌측 경고 삼각형 마크
-        var iconRect = new Rect(r.xMin + 20f, r.yMax - 36f, 22f, 22f);
+        Color32 accent = popupDanger ? BossRed : Line;
+        Draw.Chamfer(vh, r, 18f, TrainingBoardStyle.Surface);
+        Draw.ChamferOutline(vh, r, 18f, 1.8f, Line);
+        var inner = Rect.MinMaxRect(r.xMin + 7f, r.yMin + 7f, r.xMax - 7f, r.yMax - 7f);
+        Draw.ChamferOutline(vh, inner, 14f, 1f, LineDim);
+        Draw.Rect(vh, new Rect(r.xMin + 24f, r.yMax - 66f, r.width - 48f, 1f), LineDim);
+        Draw.Rect(vh, new Rect(r.xMin + 24f, r.yMax - 66f, 78f, 2f), accent);
+        var iconRect = new Rect(r.xMin + 27f, r.yMax - 48f, 24f, 24f);
         var saved = iconColor;
-        iconColor = bright;
+        iconColor = accent;
         WriteIconThreat(vh, iconRect);
         iconColor = saved;
     }

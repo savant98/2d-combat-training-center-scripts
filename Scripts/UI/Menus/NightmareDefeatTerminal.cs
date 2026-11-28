@@ -9,6 +9,7 @@ public sealed class NightmareDefeatTerminal : MonoBehaviour, IUIInputReceiver
     [SerializeField] private CanvasGroup blackoutGroup;
     [SerializeField] private CanvasGroup terminalGroup;
     [SerializeField] private RectTransform terminalRoot;
+    [SerializeField] private TitlePanelMotion motion;
     [SerializeField] private UnityEngine.UI.Button continueButton;
     [SerializeField, Min(0f)] private float blackoutDuration = .65f;
     [SerializeField, Min(0f)] private float blackoutHold = .2f;
@@ -44,9 +45,10 @@ public sealed class NightmareDefeatTerminal : MonoBehaviour, IUIInputReceiver
         float elapsed = 0f;
         while (elapsed < blackoutHold && Current(current)) { elapsed += Time.unscaledDeltaTime; yield return null; }
         if (!Current(current)) yield break;
+        if (motion != null) motion.Open();
         yield return Fade(openDuration, t => {
             terminalGroup.alpha = t;
-            terminalRoot.localScale = Vector3.one * Mathf.Lerp(.94f, 1f, t);
+            if (motion == null) terminalRoot.localScale = TitlePanelMotion.UnfoldScale(t);
         }, current);
         if (!Current(current)) yield break;
         terminalGroup.blocksRaycasts = terminalGroup.interactable = true;
@@ -98,7 +100,8 @@ public sealed class NightmareDefeatTerminal : MonoBehaviour, IUIInputReceiver
     {
         if (blackoutGroup != null) { blackoutGroup.alpha = 0; blackoutGroup.blocksRaycasts = blackoutGroup.interactable = false; }
         if (terminalGroup != null) { terminalGroup.alpha = 0; terminalGroup.blocksRaycasts = terminalGroup.interactable = false; }
-        if (terminalRoot != null) terminalRoot.localScale = Vector3.one;
+        if (motion != null) motion.SnapHidden();
+        else if (terminalRoot != null) terminalRoot.localScale = Vector3.one;
         if (continueButton != null) continueButton.interactable = false;
     }
 

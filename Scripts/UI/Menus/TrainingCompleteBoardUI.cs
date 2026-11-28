@@ -512,9 +512,7 @@ public class TrainingCompleteBoardUI : MonoBehaviour, IUIInputReceiver
     // 결과 보드: 보드 시간 t의 모습(패배 화면은 조금 늦게, 조금 빠르게 흐른다).
     private void EvaluateBoard(float t)
     {
-        float sx = TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, 0f, 0.16f));
-        float sy = Mathf.Lerp(0.035f, 1f, TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, 0.12f, 0.32f)));
-        panel.localScale = new Vector3(sx, sy, 1f);
+        panel.localScale = TitlePanelMotion.UnfoldScale(t / TitlePanelMotion.OpenDuration);
         panelGroup.alpha = TrainingBoardMotion.Seg(t, 0f, 0.04f);
 
         float scan = TrainingBoardMotion.Seg(t, 0.3f, 0.8f);

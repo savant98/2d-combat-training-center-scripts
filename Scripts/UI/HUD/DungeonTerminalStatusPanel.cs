@@ -554,12 +554,7 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
             if (threatNext != null) threatNext.text = cur.nextAt < 0 ? "MAX" : "NEXT";
         }
 
-        // ③ 남은 피격(방패 아이콘이 '남은 피격' 문구 대체)
-        if (hitLabel != null)
-        {
-            if (hitIcon != null) { if (hitLabel.enabled) hitLabel.enabled = false; hitLabel.text = ""; }
-            else hitLabel.text = DungeonUiText.Static("남은 피격");
-        }
+        if (hitLabel != null) hitLabel.text = DungeonUiText.Static("남은 피격");
         if (hitValue != null)
         {
             builder.Clear();
@@ -589,12 +584,7 @@ public sealed class DungeonTerminalStatusPanel : MonoBehaviour
         }
         PlaceMarkLabels(hitMarkLabels, hitBar, cur.training && cur.hitLimit > 0, true);
 
-        // ④ 남은 시간(크로노미터 아이콘이 '남은 시간' 문구 대체)
-        if (timeLabel != null)
-        {
-            if (timeIcon != null) { if (timeLabel.enabled) timeLabel.enabled = false; timeLabel.text = ""; }
-            else timeLabel.text = DungeonUiText.Static(cur.timeLimit > 0f || !cur.training ? "남은 시간" : "경과 시간");
-        }
+        if (timeLabel != null) timeLabel.text = DungeonUiText.Static(cur.timeLimit > 0f || !cur.training ? "남은 시간" : "경과 시간");
         if (timeValue != null)
         {
             builder.Clear();

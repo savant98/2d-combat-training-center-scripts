@@ -115,8 +115,7 @@ public static class ArmamentUnlocks
         if (ArmamentUnlockCatalogSO.IsUnlocked(entry, PurchasedLookup)) { warning = "이미 사용할 수 있습니다."; return false; }
         var data = Application.isPlaying ? DataManager.Instance : null;
         if (data == null || !data.HasSelectedSlot) { warning = "세이브를 고른 뒤에 해금할 수 있습니다."; return false; }
-        if (data.TrainingCertificates < entry.price) { warning = ShortageMessage; return false; }
-        if (!data.TryPurchaseCertificateUnlock(entry.kind, entry.Key, entry.price)) { warning = ShortageMessage; return false; }
+        if (!data.TryPurchaseCertificateUnlock(entry.kind, entry.Key, entry.CertificateCost)) { warning = ShortageMessage; return false; }
         NotifyChanged();
         return true;
     }

@@ -23,6 +23,7 @@ public class OptionMenu : SelectableMenuUI
     [SerializeField] private GameObject rootObject;
     [SerializeField] private CanvasGroup optionCanvas;
     [SerializeField] private RectTransform frame;
+    [SerializeField] private TitlePanelMotion frameMotion;
     [SerializeField] private GameObject[] pages;
     [SerializeField] private UnityEngine.UI.Image[] tabFills;
     [SerializeField] private Row[] optionRows;
@@ -270,7 +271,9 @@ public class OptionMenu : SelectableMenuUI
         if (canvas == null) return;
         var size = ((RectTransform)canvas.rootCanvas.transform).rect.size;
         ((RectTransform)rootObject.transform).sizeDelta = size;
-        frame.localScale = Vector3.one * Mathf.Min(size.x * .95f / frame.rect.width, size.y * .95f / frame.rect.height);
+        float fit = Mathf.Min(size.x * .95f / frame.rect.width, size.y * .95f / frame.rect.height);
+        if (frameMotion != null) frameMotion.SetPlateFit(fit);
+        else frame.localScale = Vector3.one * fit;
     }
 
     private void Update()

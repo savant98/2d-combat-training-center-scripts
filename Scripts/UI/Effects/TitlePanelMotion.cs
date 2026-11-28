@@ -1,4 +1,6 @@
 using System;
+using System.Collections;
+using Unity.Cinemachine;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -35,6 +37,11 @@ public sealed class TitlePanelMotion : MonoBehaviour
     [SerializeField, Tooltip("일정 주기로 판을 훑는 가는 선")] private RectTransform sweep;
     [SerializeField, Min(1f)] private float sweepPeriod = 6f;
 
+    [SerializeField, Tooltip("단말기가 일시정지와 같은 시계로 연출을 진행한다")] private bool drivenByOwner;
+
+    [SerializeField, Tooltip("소유 메뉴가 판의 GameObject로 표시 여부를 정하면 활성화할 때 펼친다")] private bool openOnEnable;
+    private float plateFit = 1f;
+
     private enum State { Hidden, Opening, Closing }
 
     private State state = State.Hidden;
@@ -64,6 +71,19 @@ public sealed class TitlePanelMotion : MonoBehaviour
         InputBindingHint.Bind(plate, "Footer/Controls", "{MenuDirections} 선택   ·   {Confirm} 확인   ·   마우스 클릭");
         Cache();
         SnapHidden();
+    }
+
+    private void OnEnable()
+    {
+        if (openOnEnable) Open();
+    }
+
+    /// <summary>해상도가 바뀌어도 현재 펼침 단계와 화면 맞춤 배율을 함께 유지한다.</summary>
+    public void SetPlateFit(float fit)
+    {
+        if (Mathf.Approximately(plateFit, fit)) return;
+        plateFit = fit;
+        if (cached) Apply();
     }
 
     private void Cache()
@@ -143,8 +163,12 @@ public sealed class TitlePanelMotion : MonoBehaviour
 
     private void Update()
     {
+        if (!drivenByOwner) Advance(Time.unscaledDeltaTime);
+    }
+
+    public void Advance(float delta)
+    {
         if (state == State.Hidden) return;
-        float delta = Time.unscaledDeltaTime;
         time += delta;
         idleTime += delta;
         if (state == State.Closing && time >= CloseDuration)
@@ -158,6 +182,33 @@ public sealed class TitlePanelMotion : MonoBehaviour
             return;
         }
         Apply();
+    }
+
+    /// <summary>로비 카메라가 설비에 도착한 뒤 투사판을 펼친다.</summary>
+    public static IEnumerator WaitForCamera(CinemachineCamera camera, Func<bool> stillOpening = null)
+    {
+        yield return null;
+        if (camera == null) yield break;
+        var brain = CinemachineCore.FindPotentialTargetBrain(camera);
+        if (brain == null) yield break;
+        float acquireUntil = Time.unscaledTime + Mathf.Max(.25f, brain.DefaultBlend.Time);
+        while (brain != null && brain.isActiveAndEnabled && (stillOpening == null || stillOpening()))
+        {
+            bool live = brain.IsLiveChild(camera);
+            if (live && !brain.IsBlending) yield break;
+            bool paused = Time.timeScale == 0f && !brain.IgnoreTimeScale;
+            if (Time.unscaledTime >= acquireUntil && (!live || paused)) yield break;
+            yield return null;
+        }
+    }
+
+    // 세이브 판과 단말기가 공유하는 펼침 곡선. 진행률은 실제 시간 기준 0~1이다.
+    public static Vector3 UnfoldScale(float progress)
+    {
+        float t = Mathf.Clamp01(progress) * OpenDuration;
+        float x = TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, 0f, .16f));
+        float y = Mathf.Lerp(.02f, 1f, TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, .12f, OpenDuration)));
+        return new Vector3(x, y, 1f);
     }
 
     private void Apply()
@@ -179,19 +230,13 @@ public sealed class TitlePanelMotion : MonoBehaviour
         if (plate != null)
         {
             // 가로선이 먼저 그어지고 세로로 펼쳐진다. 닫을 때는 세로로 접힌 뒤 가로선이 사라진다.
-            float x, y;
-            if (hidden) { x = 0f; y = .02f; }
-            else if (closing)
+            if (closing)
             {
-                y = Mathf.Lerp(1f, .02f, TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, 0f, .16f)));
-                x = 1f - TrainingBoardMotion.Smooth(TrainingBoardMotion.Seg(t, .12f, CloseDuration));
+                float y = Mathf.Lerp(1f, .02f, TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, 0f, .16f)));
+                float x = 1f - TrainingBoardMotion.Smooth(TrainingBoardMotion.Seg(t, .12f, CloseDuration));
+                plate.localScale = new Vector3(x * plateFit, y * plateFit, 1f);
             }
-            else
-            {
-                x = TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, 0f, .16f));
-                y = Mathf.Lerp(.02f, 1f, TrainingBoardMotion.OutCubic(TrainingBoardMotion.Seg(t, .12f, OpenDuration)));
-            }
-            plate.localScale = new Vector3(x, y, 1f);
+            else plate.localScale = Vector3.Scale(new Vector3(plateFit, plateFit, 1f), UnfoldScale(hidden ? 0f : t / OpenDuration));
         }
         if (scanBeam != null)
         {
@@ -273,7 +318,7 @@ public sealed class TitlePanelMotion : MonoBehaviour
             if (blinkers[i] != null) blinkers[i].color = blinkerColors[i];
         for (int i = 0; i < chevrons.Length; i++)
             if (chevrons[i] != null) chevrons[i].color = chevronColors[i];
-        if (plate != null) plate.localScale = Vector3.one;
+        if (plate != null) plate.localScale = new Vector3(plateFit, plateFit, 1f);
         if (scanGroup != null) scanGroup.alpha = scanAlpha;
         if (sweepGroup != null) sweepGroup.alpha = sweepAlpha;
         state = State.Hidden;

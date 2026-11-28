@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using TMPro;
 using Unity.Cinemachine;
 using UnityEngine;
@@ -23,9 +24,10 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
     private bool open;
     private int selection;
     private float shownAt;
+    private Coroutine cameraReveal;
     private Vector3 restScale = Vector3.one;
     public bool IsActive => open && isActiveAndEnabled;
-    private const float OpeningDuration = .3f;
+    private const float OpeningDuration = TitlePanelMotion.OpenDuration;
     private bool IsReady => CanAct && Time.unscaledTime - shownAt >= OpeningDuration;
     private bool CanAct => IsActive && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked && UIManager.Instance.IsCurrentInputTarget(this);
 
@@ -54,9 +56,22 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
         enter = onEnter; player = interactor; open = true; selection = 1; shownAt = Time.unscaledTime;
         UIManager.Instance.PushInputTarget(this, UIInputLayer.Gameplay);
         UIManager.Instance.HUDVisible(false);
-        if (menuCamera != null) { menuCamera.enabled = true; menuCamera.Priority = 999; }
+        if (menuCamera != null)
+        {
+            menuCamera.enabled = true;
+            menuCamera.Priority = 999;
+            shownAt = float.PositiveInfinity;
+            cameraReveal = StartCoroutine(RevealAtEntrance());
+        }
         Highlight();
     }
+    private IEnumerator RevealAtEntrance()
+    {
+        yield return TitlePanelMotion.WaitForCamera(menuCamera);
+        shownAt = Time.unscaledTime;
+        cameraReveal = null;
+    }
+
     public void Hide()
     {
         bool wasOpen = open; open = false; enter = null;
@@ -67,6 +82,7 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
     }
     private void HideVisuals()
     {
+        if (cameraReveal != null) { StopCoroutine(cameraReveal); cameraReveal = null; }
         if (panelGroup != null) { panelGroup.alpha = 0f; panelGroup.interactable = panelGroup.blocksRaycasts = false; }
         if (beamGroup != null) { beamGroup.alpha = 0f; beamGroup.blocksRaycasts = beamGroup.interactable = false; }
         if (presentation != null) presentation.localScale = restScale;
@@ -78,7 +94,7 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
         float t = Mathf.Clamp01((Time.unscaledTime - shownAt) / OpeningDuration);
         if (panelGroup != null) { panelGroup.alpha = t; panelGroup.interactable = panelGroup.blocksRaycasts = CanAct && t >= 1f; }
         if (beamGroup != null) beamGroup.alpha = Mathf.Clamp01(t * 2f);
-        if (presentation != null) presentation.localScale = new Vector3(restScale.x, restScale.y * Mathf.Lerp(.03f, 1f, 1f-Mathf.Pow(1f-t,3f)), restScale.z);
+        if (presentation != null) presentation.localScale = Vector3.Scale(restScale, TitlePanelMotion.UnfoldScale(t));
     }
     public void OnMove(Vector2 direction)
     {
@@ -119,8 +135,14 @@ public sealed class SelfTrainingEntrancePanel : MonoBehaviour, IUIInputReceiver
             if(buttons[i] == null) continue;
             bool selected = i == selection;
             buttons[i].targetGraphic.color = selected ? selectedBackground : normalBackground;
+            buttons[i].transform.localScale = Vector3.one * (selected ? TrainingBoardStyle.FocusScale : 1f);
             if (buttonFrames != null && i < buttonFrames.Length && buttonFrames[i] != null)
-                buttonFrames[i].color = new Color(1f, 1f, 1f, selected ? 1f : .3f);
+            {
+                var shape = selected ? TrainingHologramGraphic.Shape.FocusFrame : TrainingHologramGraphic.Shape.Frame;
+                buttonFrames[i].Configure(shape, selected ? TrainingBoardStyle.LineBright : TrainingBoardStyle.LineDim,
+                    selected ? 1.7f : 1f, 7f, selected ? .07f : 0f);
+                buttonFrames[i].color = Color.white;
+            }
             foreach (var label in buttons[i].GetComponentsInChildren<TextMeshProUGUI>())
                 label.color = selected ? selectedText : new Color(.85f, .95f, 1f);
         }

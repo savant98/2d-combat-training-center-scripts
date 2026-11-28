@@ -60,6 +60,8 @@ public sealed class ArmamentTreeNode : MonoBehaviour
 
     public RectTransform Button => button;
     public Image Highlight => highlight;
+    public string Label => nameText != null ? nameText.text : string.Empty;
+    public string Status => statusText != null ? statusText.text : string.Empty;
     public Image Ring => ring;
     public Transform FeedbackPoint => icon != null ? icon.transform : button != null ? button : transform;
     public ArmamentLockOverlay LockOverlay => lockOverlay;

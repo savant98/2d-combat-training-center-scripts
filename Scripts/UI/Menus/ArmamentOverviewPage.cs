@@ -8,7 +8,7 @@ using UnityEngine.UI;
 /// <summary>
 /// 업그레이드 메뉴를 열면 처음 보이는 무장 개요 페이지(2026-11-18).
 /// 사용자 지시: "무기 교체 기능과 Upgrade를 한눈에 볼 수 있도록 … 무기 버튼을 누르면 상세 업그레이드 페이지 혹은 교체 페이지가 나오는 거지."
-/// - 왼쪽 열 = 근접 자리, 오른쪽 열 = 원거리 자리. 맨 아래 큰 원(장착 무장) → 교체 페이지, 위로 쌓인 Gear 1~3 원 → 그 무기의 상세 업그레이드 페이지.
+/// - 왼쪽 열 = 근접 자리, 오른쪽 열 = 원거리 자리. 주무기와 보조 노드는 교체 페이지, 세 갈래의 Gear 노드는 각 기술의 상세 페이지로 연결한다.
 /// - 2026-11-18 2차: 사용자 지시 "이제 이전 UpgradeMenu는 삭제해"로 옛 8칸 강화 격자와 '전체 업그레이드 목록' 버튼을 지웠다. 구매는 상세 페이지에서만 한다.
 /// - 이 페이지에서 X를 누르면 UpgradeMenu의 기존 닫기 처리(능력 중단·Animator·카메라·HUD)로 메뉴를 닫는다.
 /// UpgradeMenu와는 OpenFromMenu로 받은 콜백만 주고받는다(UpgradeMenu가 이 페이지를 알고, 이 페이지는 UpgradeMenu의 내부를 모른다).
@@ -21,6 +21,13 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
     [SerializeField] private ArmamentTreeColumn[] columns = Array.Empty<ArmamentTreeColumn>();
 
     [SerializeField] private ArmamentTreeNode[] secondaryNodes = Array.Empty<ArmamentTreeNode>();
+
+    [SerializeField] private RectTransform closeButton;
+    [SerializeField] private Image closeFocus;
+
+    [Header("Node Preview")]
+    [SerializeField] private TextMeshProUGUI previewTag, previewName, previewStatus, previewDescription;
+    private int previewIndex = -1;
 
     [Header("Child Pages")]
     [SerializeField] private ArmamentSwapPage swapPage;
@@ -67,6 +74,11 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
             var node = secondaryNodes[i];
             if (node == null || node.Button == null || node.Highlight == null) continue;
             rects.Add(node.Button); marks.Add(node.Highlight); targetColumns.Add(columns[i]); targetStages.Add(4);
+        }
+        if (closeButton != null && closeFocus != null)
+        {
+            rects.Add(closeButton);
+            marks.Add(closeFocus);
         }
         buttons = rects.ToArray();
         images = marks.ToArray();
@@ -136,27 +148,74 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
 
     protected override int FindDirectionalIndex(int from, Vector2 direction)
     {
-        if (from < 0 || from >= targetColumns.Count || targetColumns[from] == null)
-            return base.FindDirectionalIndex(from, direction);
-
-        // 좌우 키는 같은 단계의 반대쪽 무장으로 이동한다. 가운데에 놓인 보조 무기는 아래 키로도 접근할 수 있다.
-        if (Mathf.Abs(direction.x) > Mathf.Abs(direction.y))
+        // 주무기에서 세 기술과 보조 장착점으로 간다. 바깥 노드에서는 화면의 이웃과 반대 트리로 이동한다.
+        if (from >= 0 && from < targetColumns.Count)
         {
-            int slot = targetColumns[from].SetIndex;
             int stage = targetStages[from];
-            for (int i = 0; i < targetColumns.Count; i++)
+            bool horizontal = Mathf.Abs(direction.x) > Mathf.Abs(direction.y);
+            if (stage == 0 && direction.sqrMagnitude > .01f)
             {
-                var column = targetColumns[i];
-                if (column != null && (column.SetIndex - slot) * direction.x > 0f
-                    && targetStages[i] == stage && IsNavigable(i)) return i;
+                int next = horizontal ? (direction.x < 0f ? 1 : 3) : (direction.y > 0f ? 2 : 4);
+                for (int i = 0; i < targetColumns.Count; i++)
+                    if (targetColumns[i] == targetColumns[from] && targetStages[i] == next && IsNavigable(i)) return i;
             }
+            if (!horizontal && ((stage == 4 && direction.y > 0f) || (stage >= 1 && stage <= 3 && direction.y < 0f)))
+            {
+                for (int i = 0; i < targetColumns.Count; i++)
+                    if (targetColumns[i] == targetColumns[from] && targetStages[i] == 0 && IsNavigable(i)) return i;
+            }
+            if (stage == 4 && direction.y < 0f && !horizontal && closeButton != null && IsNavigable(targetColumns.Count))
+                return targetColumns.Count;
         }
         return base.FindDirectionalIndex(from, direction);
     }
 
+    protected override void LateUpdate()
+    {
+        base.LateUpdate();
+        if (IsActive && IsVisible && currentIndex != previewIndex) RefreshPreview();
+    }
+
+    private void RefreshPreview()
+    {
+        previewIndex = currentIndex;
+        bool hasNode = currentIndex >= 0 && currentIndex < targetColumns.Count;
+        var column = hasNode ? targetColumns[currentIndex] : null;
+        int stage = hasNode ? targetStages[currentIndex] : -1;
+        foreach (var item in columns)
+            if (item != null) item.HighlightBranch(item == column ? stage : -1);
+        if (previewName == null || previewTag == null || previewStatus == null || previewDescription == null) return;
+        if (column == null)
+        {
+            previewTag.text = "작업대"; previewName.text = "닫기"; previewStatus.text = string.Empty;
+            previewDescription.text = "무장 구성을 마치고 로비로 돌아갑니다.";
+            return;
+        }
+
+        var node = stage == 4 ? secondaryNodes[Array.IndexOf(columns, column)] : column.GetNode(stage);
+        previewTag.text = CategoryName(column.Category) + "  /  " + (stage == 4 ? "보조 무기" : stage == 0 ? "주무기" : "GEAR " + stage);
+        previewName.text = node.Label;
+        previewStatus.text = node.Status;
+        if (stage == 0) previewDescription.text = ArmamentMenuGuide.CardDescription(column.Armament);
+        else if (stage == 4) previewDescription.text = "이 자리의 보조 무기를 선택하거나 해금합니다.";
+        else
+        {
+            var weapon = column.GetGearWeapon(stage);
+            string summary = ArmamentMenuGuide.Gear(weapon).summary;
+            previewDescription.text = weapon == null ? "이 무장에는 해당 단계의 기술이 없습니다."
+                : string.IsNullOrWhiteSpace(summary) ? "기술 상세에서 효과와 해금 상태를 확인합니다." : summary;
+        }
+    }
+
     private void HandleSelected(int index)
     {
-        if (!CanReceiveInput || index < 0 || index >= targetColumns.Count) return;
+        if (!CanReceiveInput || index < 0) return;
+        if (closeButton != null && index < buttons.Length && buttons[index] == closeButton)
+        {
+            HandleCanceled();
+            return;
+        }
+        if (index >= targetColumns.Count) return;
         var column = targetColumns[index];
         int stage = targetStages[index];
         if (column == null) return;
@@ -215,6 +274,7 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
 
     private void Refresh()
     {
+        previewIndex = -1;
         var ability = FindWeaponAbility();
         foreach (var column in columns)
             if (column != null) column.Refresh(ability);
@@ -225,8 +285,8 @@ public sealed class ArmamentOverviewPage : UpgradeMenuPage
             var weapon = ability != null ? ability.GetWeaponSet(columns[i].SetIndex)?.secondary : null;
             // 빈 보조 무기 칸(해금 전, 2026-11-20 훈련 개편)도 그 상태를 그린다. 고르면 교체 페이지에서 해금·장착한다.
             // HUD와 같은 모습(회색 잠금 링 + 작은 자물쇠)으로 그린다(독립 검토: 원래 노드 재질은 dim = lit = HudSlotNormal이라 밝은 링 그대로였다).
-            if (weapon != null) secondaryNodes[i].Show(weapon.weaponSprite, weapon.DisplayName, "보조 무기 · Z 교체", true);
-            else secondaryNodes[i].ShowLockedEmpty("비어 있음", "보조 무기 · Z 교체",
+            if (weapon != null) secondaryNodes[i].Show(weapon.weaponSprite, weapon.DisplayName, "교체 가능", true);
+            else secondaryNodes[i].ShowLockedEmpty("미장착", "보조 무기 선택",
                 catalog != null ? catalog.lockedRingMaterial : null, catalog != null ? catalog.lockGlyph : null);
         }
     }

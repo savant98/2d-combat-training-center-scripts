@@ -1,5 +1,6 @@
 using DG.Tweening;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using Unity.Cinemachine;
@@ -29,6 +30,9 @@ public class TrainingMenuController : MonoBehaviour
     [SerializeField] private TextMeshProUGUI listTitleText;
     [SerializeField] private TextMeshProUGUI listSummaryText;
     [SerializeField] private TextMeshProUGUI listCompletionText;
+    [SerializeField] private TextMeshProUGUI listRecordText;
+    [SerializeField] private TextMeshProUGUI programCounter;
+    [SerializeField] private TextMeshProUGUI[] rowCodes = Array.Empty<TextMeshProUGUI>();
     [SerializeField, Tooltip("훈련 목록의 원본입니다. 비우면 Resources/Training/TrainingCatalog를 씁니다.")]
     private TrainingCatalogSO catalog;
 
@@ -41,6 +45,7 @@ public class TrainingMenuController : MonoBehaviour
     private TrainingCatalogSO Catalog => catalog != null ? catalog : TrainingCatalogSO.Load();
 
     [Header("Training Menu Animation")]
+    [SerializeField] private TitlePanelMotion projectionMotion;
     [SerializeField] private RectTransform listScroll;
     [SerializeField] private CanvasGroup listPanelGroup;
     [SerializeField] private CanvasGroup detailPanelGroup;
@@ -77,9 +82,9 @@ public class TrainingMenuController : MonoBehaviour
         CacheProjectorRays();
         CacheScreenLayout();
         InputBindingHint.Bind(listPanel != null ? listPanel.transform : null, "NavigationHint",
-            "<color=#FFFFFF>{Confirm}</color>   상세 확인          <color=#FFFFFF>{Cancel}</color>   닫기");
+            "{MenuDirections} 선택   ·   {Confirm} 상세 확인   ·   {Cancel} 닫기");
         InputBindingHint.Bind(detailPanel != null ? detailPanel.transform : null, "NavigationHint",
-            "<color=#FFFFFF>{Confirm}</color>   확인          <color=#FFFFFF>{Cancel}</color>   목록으로");
+            "{MenuDirections} 선택   ·   {Confirm} 확인   ·   {Cancel} 목록으로");
     }
 
     private void CacheScreenLayout()
@@ -162,7 +167,16 @@ public class TrainingMenuController : MonoBehaviour
             BuildList();
             ShowList();
         }
-        else menu.Open();
+        else
+        {
+            if (projectionMotion != null)
+            {
+                if (detailTitleText != null && currentTraining != null) detailTitleText.text = currentTraining.displayName;
+                if (programCounter != null) programCounter.text = string.Empty;
+                projectionMotion.Open();
+            }
+            menu.Open();
+        }
 
         RefreshUI();
     }
@@ -173,14 +187,22 @@ public class TrainingMenuController : MonoBehaviour
         if (gradeConditionsView != null) gradeConditionsView.SetTraining(currentTraining);
         else if (gradeConditionsText != null) gradeConditionsText.text = TrainingRecordView.FormatConditions(currentTraining);
         TrainingRoomSaveData best = DataManager.Instance.GetTrainingRoomRecord(currentTraining.trainingId);
+        if (HasList)
+        {
+            hitCountText.color = TrainingBoardStyle.Body;
+            timeTakenText.color = TrainingBoardStyle.Body;
+        }
         if (DataManager.IsCleared(best))
         {
-            hitCountText.text = best.bestHitCount == int.MaxValue ? "-" : best.bestHitCount.ToString();
-            timeTakenText.text = best.bestTimeSeconds == float.MaxValue ? "-" : TrainingScoreFormatHelper.FormatTime(best.bestTimeSeconds);
+            hitCountText.text = HasList ? $"{best.bestHitCount}회" : best.bestHitCount.ToString();
+            timeTakenText.text = TrainingScoreFormatHelper.FormatTime(best.bestTimeSeconds);
 
-            TrainingScoreFormatHelper.GradeToText(best.bestGrade, gradeText);
-            if (HasList && (best.bestHitCount == int.MaxValue || best.bestTimeSeconds == float.MaxValue))
-                gradeText.text = "-";
+            if (HasList)
+            {
+                gradeText.text = TrainingBoardStyle.GradeLabel(best.bestGrade);
+                gradeText.color = TrainingBoardStyle.GradeColor(best.bestGrade);
+            }
+            else TrainingScoreFormatHelper.GradeToText(best.bestGrade, gradeText);
         }
         else
         {
@@ -217,12 +239,16 @@ public class TrainingMenuController : MonoBehaviour
 
     private void ShowList()
     {
+        if (projectionMotion != null && detailTitleText != null) detailTitleText.text = "훈련 프로그램";
         if (!HasPresentation)
         {
-            if (menu.IsActive) menu.Close();
+            if (projectionMotion != null) projectionMotion.Open();
+            bool returning = menu.IsActive;
+            if (returning) menu.Close();
             detailPanel.SetActive(false);
             listPanel.SetActive(true);
-            listMenu.Open();
+            if (returning) listMenu.ReopenSelection();
+            else listMenu.Open();
             return;
         }
 
@@ -237,22 +263,34 @@ public class TrainingMenuController : MonoBehaviour
         listPanel.SetActive(true);
         detailPanel.SetActive(false);
         var pageMotion = listPanel.GetComponent<TrainingMenuPageMotion>();
-        if (pageMotion != null) pageMotion.Replay();
         listPanelGroup.alpha = 0f;
-        listScreen.localScale = new Vector3(listScreenScale.x, listScreenScale.y * .015f, listScreenScale.z);
-        listScreen.anchoredPosition = listHome + Vector2.down * 12f;
         listMenu.Open();
         listMenu.InputSuppressed = true;
         SetProjectorStart(projectorRayLeft, leftRayScale);
         SetProjectorStart(projectorRayRight, rightRayScale);
-        presentation = DOTween.Sequence().SetUpdate(true);
+        presentation = DOTween.Sequence().SetUpdate(true).Pause();
         AddProjectorTween(presentation, projectorRayLeft, leftRayAlpha, leftRayScale, true);
         AddProjectorTween(presentation, projectorRayRight, rightRayAlpha, rightRayScale, true);
-        // 빔이 먼저 연결되고 그 위에서 화면 전체가 얇은 선부터 펼쳐진다.
-        presentation.Insert(.18f, listPanelGroup.DOFade(1f, .2f));
-        presentation.Insert(.18f, listScreen.DOScaleY(listScreenScale.y, .42f).SetEase(Ease.OutCubic));
-        presentation.Insert(.18f, listScreen.DOAnchorPosY(listHome.y, .42f).SetEase(Ease.OutCubic));
-        presentation.OnComplete(() => { isTransitioning = false; listMenu.InputSuppressed = false; });
+        // 빔 위에서 세이브 선택과 같은 판을 펼치고 목록을 차례로 드러낸다.
+        presentation.InsertCallback(.12f, () =>
+        {
+            if (projectionMotion != null) projectionMotion.Open();
+            if (pageMotion != null) pageMotion.Replay();
+        });
+        presentation.Insert(.24f, listPanelGroup.DOFade(1f, .26f));
+        presentation.OnComplete(() =>
+        {
+            listMenu.EnsureSelectionVisible();
+            isTransitioning = false;
+            listMenu.InputSuppressed = false;
+        });
+        StartCoroutine(PlayAfterCameraBlend(presentation));
+    }
+
+    private IEnumerator PlayAfterCameraBlend(DG.Tweening.Sequence opening)
+    {
+        yield return TitlePanelMotion.WaitForCamera(virtualCamera, () => presentation == opening);
+        if (presentation == opening) opening.Play();
     }
 
     private void HandleListSelect(int index)
@@ -310,7 +348,7 @@ public class TrainingMenuController : MonoBehaviour
             menu.Close();
             if (menu is TrainingMenu detailMenu) detailMenu.InputSuppressed = false;
             detailPanel.SetActive(false); detailScreen.anchoredPosition = detailHome;
-            listMenu.Open(); isTransitioning = false;
+            listMenu.ReopenSelection(); isTransitioning = false;
         });
     }
 
@@ -347,11 +385,17 @@ public class TrainingMenuController : MonoBehaviour
             Debug.LogWarning($"[{name}] 훈련 {shownEntries.Count}개 가운데 목록 줄 {listMenu.RowCount}개만 표시합니다. Prefab의 줄을 늘려야 합니다.", this);
             shownEntries.RemoveRange(listMenu.RowCount, shownEntries.Count - listMenu.RowCount);
         }
-        foreach (var entry in shownEntries)
+        for (int i = 0; i < shownEntries.Count; i++)
         {
-            // 번호는 진행 순서의 번호라서 테스트 훈련이 섞여도 바뀌지 않는다.
+            var entry = shownEntries[i];
             int number = source.ProgressionNumber(entry);
-            rowLabels.Add((number > 0 ? number.ToString("00") : TestRowMark) + "  " + entry.Title);
+            string code = number > 0 ? number.ToString("00") : TestRowMark;
+            if (i < rowCodes.Length && rowCodes[i] != null)
+            {
+                rowCodes[i].text = code;
+                rowLabels.Add(entry.Title);
+            }
+            else rowLabels.Add(code + "  " + entry.Title);
         }
         listMenu.SetRows(rowLabels);
     }
@@ -361,18 +405,31 @@ public class TrainingMenuController : MonoBehaviour
     private void RefreshList(int index)
     {
         var entry = EntryAt(index);
+        if (programCounter != null)
+            programCounter.text = $"훈련  {(entry == null ? 0 : index + 1):00} / {shownEntries.Count:00}";
         if (entry == null)
         {
             // 훈련 목록 에셋이 없거나 비어 있을 때만 여기에 온다(첫 훈련은 처음부터 열려 있다).
             if (listTitleText != null) listTitleText.text = "TRAINING";
             if (listSummaryText != null) listSummaryText.text = "지금 받을 수 있는 훈련이 없습니다.";
             if (listCompletionText != null) listCompletionText.text = "";
+            if (listRecordText != null) listRecordText.text = "기록 없음";
             return;
         }
 
         if (listTitleText != null) listTitleText.text = entry.Title;
         if (listSummaryText != null) SetSummary(listSummaryText, entry.summary);
-        if (listCompletionText != null) listCompletionText.text = IsCompleted(entry.definition) ? "COMPLETED" : "NOT CLEARED";
+        var record = DataManager.Instance.GetTrainingRoomRecord(entry.TrainingId);
+        bool cleared = DataManager.IsCleared(record);
+        if (listCompletionText != null)
+        {
+            listCompletionText.text = cleared ? "수료" : "미수료";
+            listCompletionText.color = cleared ? TrainingBoardStyle.LineBright : TrainingBoardStyle.SecondaryText;
+        }
+        if (listRecordText != null)
+            listRecordText.text = cleared
+                ? $"{TrainingBoardStyle.GradeLabel(record.bestGrade)}   ·   {TrainingScoreFormatHelper.FormatTime(record.bestTimeSeconds)}"
+                : "기록 없음";
     }
 
     private static void SetSummary(TextMeshProUGUI field, string summary)
@@ -383,10 +440,6 @@ public class TrainingMenuController : MonoBehaviour
         field.textWrappingMode = TextWrappingModes.Normal;
         field.overflowMode = TextOverflowModes.Ellipsis;
     }
-
-    // 수료 판정은 훈련 목록의 열림 판정과 같은 기준(DataManager.IsCleared)을 쓴다.
-    private static bool IsCompleted(TrainingDefinitionSO training) =>
-        DataManager.IsCleared(DataManager.Instance.GetTrainingRoomRecord(training.trainingId));
 
     private void Cleanup()
     {
@@ -403,11 +456,9 @@ public class TrainingMenuController : MonoBehaviour
         if (menu is TrainingMenu detailMenu && menu.IsActive) detailMenu.InputSuppressed = true;
         animator.SetBool("Open", false);
         presentation = DOTween.Sequence().SetUpdate(true);
-        var screen = listPanel.activeSelf ? listScreen : detailScreen;
         var group = listPanel.activeSelf ? listPanelGroup : detailPanelGroup;
-        float height = listPanel.activeSelf ? listScreenScale.y : detailScreenScale.y;
-        presentation.Insert(0f, group.DOFade(0f, .18f));
-        presentation.Insert(0f, screen.DOScaleY(height * .015f, .2f).SetEase(Ease.InCubic));
+        if (projectionMotion != null) projectionMotion.Close();
+        presentation.Insert(0f, group.DOFade(0f, .16f));
         // 화면을 먼저 거둔 뒤 단말로 연결되는 빔을 끈다.
         AddProjectorTween(presentation, projectorRayLeft, leftRayAlpha, leftRayScale, false, .16f);
         AddProjectorTween(presentation, projectorRayRight, rightRayAlpha, rightRayScale, false, .16f);
@@ -418,6 +469,7 @@ public class TrainingMenuController : MonoBehaviour
     {
         presentation?.Kill();
         presentation = null;
+        if (projectionMotion != null) projectionMotion.SnapHidden();
         isOpen = false;
         isTransitioning = false;
         if (listMenu != null) listMenu.InputSuppressed = false;

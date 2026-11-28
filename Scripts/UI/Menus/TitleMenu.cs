@@ -1,4 +1,3 @@
-using DG.Tweening;
 using System;
 using System.Collections;
 using UnityEngine;
@@ -22,39 +21,6 @@ public class TitleMenu : SelectableMenuUI
     [SerializeField] private TitleSaveSelectUI saveSelect;
     [SerializeField] private TitlePanelMotion panelMotion;
     [SerializeField] private TitleSaveStatusView saveStatus;
-
-    protected override void ProcessMove(Vector2 direction)
-    {
-        int previous = currentIndex;
-        base.ProcessMove(direction);
-        if (previous != currentIndex) SettleHighlight();
-    }
-
-    protected override void OnPointerEnter(int index)
-    {
-        int previous = currentIndex;
-        base.OnPointerEnter(index);
-        if (previous != currentIndex) SettleHighlight();
-    }
-
-    protected override void OnPointerClick(int index)
-    {
-        if (!IsActive || (UIManager.Instance != null && UIManager.Instance.IsUIInputBlocked)) return;
-        int previous = currentIndex;
-        ChangeIndex(index);
-        if (previous != currentIndex) SettleHighlight();
-        base.OnPointerClick(index);
-    }
-
-    private void SettleHighlight()
-    {
-        for (int i = 0; i < buttons.Length; i++)
-        {
-            buttons[i].DOKill();
-            buttons[i].DOScale(i == currentIndex ? 1.15f : 1f, .16f)
-                .SetEase(Ease.OutCubic).SetUpdate(true);
-        }
-    }
 
     private bool isTransitioning;
     private UIManager exitInputOwner;

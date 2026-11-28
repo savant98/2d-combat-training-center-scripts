@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using DG.Tweening;
 using TMPro;
 using UnityEngine;
 
@@ -10,6 +11,10 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     [SerializeField] private SelfTrainingController controller;
     [SerializeField] private CanvasGroup boardGroup;
     [SerializeField] private RectTransform boardPresentation;
+    [SerializeField] private TitlePanelMotion boardMotion;
+    [SerializeField] private UnityEngine.UI.Graphic[] choiceFocus = Array.Empty<UnityEngine.UI.Graphic>();
+    [SerializeField] private UnityEngine.UI.Graphic[] settingMarks = Array.Empty<UnityEngine.UI.Graphic>();
+    [SerializeField] private TextMeshProUGUI shieldStateText, sourceCountText;
     [SerializeField] private TextMeshProUGUI stateText, totalText, currentDpsText, maximumText, summaryText;
     [SerializeField] private TextMeshProUGUI dpsCaption;
     [SerializeField] private TextMeshProUGUI startLabel, hintText, emptyText;
@@ -35,13 +40,12 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     private readonly List<SelfTrainingDamageRowUI> rows = new List<SelfTrainingDamageRowUI>();
     private readonly List<SelfTrainingDamageRowUI> hudRows = new List<SelfTrainingDamageRowUI>();
     private readonly List<UnityEngine.Events.UnityAction> handlers = new List<UnityEngine.Events.UnityAction>();
-    private readonly Color normal = new Color(.045f, .13f, .21f, 1f);
-    private readonly Color selected = new Color(.14f, .56f, .82f, 1f);
-    private readonly Color enabledChoice = new Color(.07f, .31f, .43f, 1f);
+    private static readonly Color Configured = Color.Lerp(TrainingBoardStyle.SlotFill, TrainingBoardStyle.LineDim, .7f);
+    private int focusedChoice = -1;
     private bool controlsOpen, listenersReady;
     private int selection, previousCount = -1, previousHudCount = -1;
     private SelfTrainingPhase previousPhase;
-    private float lastRefresh, presentationStarted, presentationFrom, presentationTarget;
+    private float lastRefresh;
     private bool playerNearby;
     private Canvas promptCanvas;
     private int scrollDirection;
@@ -96,17 +100,12 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     private void Update()
     {
         if (controller == null) return;
-        bool available = controlsOpen && !HasOtherInput;
+        if (boardMotion != null) boardMotion.Advance(Time.unscaledDeltaTime);
+        bool available = controlsOpen && !HasOtherInput && (boardMotion == null || boardMotion.IsReady);
         if (boardGroup != null)
         {
             boardGroup.interactable = available;
             boardGroup.blocksRaycasts = available;
-            float progress = Mathf.Clamp01((Time.unscaledTime - presentationStarted) / .3f);
-            boardGroup.alpha = Mathf.Lerp(presentationFrom, presentationTarget, 1f - Mathf.Pow(1f - progress, 3f));
-        }
-        if (boardPresentation != null)
-        {
-            boardPresentation.localScale = new Vector3(1f, Mathf.Lerp(.03f, 1f, boardGroup != null ? boardGroup.alpha : 0f), 1f);
         }
         if (projectionGroup != null) projectionGroup.alpha = boardGroup != null ? boardGroup.alpha : 0f;
         UpdateOverlays();
@@ -147,7 +146,7 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
 
     public void OnMove(Vector2 direction)
     {
-        if (!CanNavigate) return;
+        if (!CanNavigate || (boardMotion != null && !boardMotion.IsReady)) return;
         int next = FindClosestChoice(selection, direction);
         if (next == selection) return;
         selection = next;
@@ -198,12 +197,21 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
         return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
     }
 
+    public void HoverChoice(int index)
+    {
+        if (!CanNavigate || (boardMotion != null && !boardMotion.IsReady) || index == selection
+            || index < 0 || index >= choices.Length || choices[index] == null || !choices[index].IsInteractable()) return;
+        selection = index;
+        Play(moveFeedback);
+        RefreshChoiceFocus();
+    }
+
     public void OnConfirm() { if (CanNavigate) ClickChoice(selection); }
     public void OnCancel() { if (CanNavigate) CloseControls(); }
 
     public void ClickChoice(int index)
     {
-        if (!controlsOpen || controller == null || HasOtherInput || index < 0 || index >= choices.Length) return;
+        if (!CanNavigate || (boardMotion != null && !boardMotion.IsReady) || index < 0 || index >= choices.Length) return;
         if (choices[index] == null || !choices[index].interactable) return;
         selection = index;
         Play(confirmFeedback);
@@ -245,13 +253,14 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
         if (currentDpsText != null) currentDpsText.text = Number(controller.Phase == SelfTrainingPhase.Results ? stats.Dps : stats.CurrentDps);
         if (dpsCaption != null) dpsCaption.text = controller.Phase == SelfTrainingPhase.Results ? "분석 평균 DPS" : "최근 1초 DPS";
         if (maximumText != null) maximumText.text = Number(stats.MaximumHit);
-        if (summaryText != null) summaryText.text = "평균 DPS  " + Number(stats.Dps) + "     최고 DPS  " + Number(stats.PeakDps) + "     적중  " + stats.HitCount;
+        if (summaryText != null) summaryText.text = "측정 시간  " + Number(stats.Duration) + "초     최고 DPS  " + Number(stats.PeakDps) + "     적중  " + stats.HitCount + "회";
         if (startLabel != null) startLabel.text = busy ? "측정 취소" : controller.Phase == SelfTrainingPhase.Results ? "다시 분석 시작" : "전투 분석 시작";
         if (timeFill != null) timeFill.fillAmount = controller.Phase == SelfTrainingPhase.Measuring ? Mathf.Clamp01(controller.Elapsed / 10f)
             : controller.Phase == SelfTrainingPhase.Results ? 1f : 0f;
         if (shieldToggle != null)
         {
             shieldToggle.SetIsOnWithoutNotify(controller.UseShield);
+            if (shieldStateText != null) shieldStateText.text = controller.UseShield ? "켜짐" : "꺼짐";
             shieldToggle.interactable = !busy;
         }
         for (int i = 0; i < choices.Length; i++)
@@ -262,10 +271,38 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
                 || i == 4 && controller.UseShield
                 || i >= 5 && i <= 8 && controller.ShieldCapacity == ShieldValues[i - 5];
             if (choices[i].targetGraphic != null)
-                choices[i].targetGraphic.color = controlsOpen && selection == i ? selected : configured ? enabledChoice : normal;
+            {
+                Color face = configured ? Configured : TrainingBoardStyle.SlotFill;
+                if (controlsOpen && selection == i && (i >= choiceFocus.Length || choiceFocus[i] == null))
+                    face = TrainingBoardStyle.LineDim;
+                choices[i].targetGraphic.color = face;
+            }
+            if (i < settingMarks.Length && settingMarks[i] != null) settingMarks[i].enabled = configured;
         }
+        RefreshChoiceFocus();
         UpdateRows();
         UpdateHudRows();
+    }
+
+    private void RefreshChoiceFocus()
+    {
+        int next = controlsOpen && selection >= 0 && selection < choices.Length && choices[selection] != null
+            && choices[selection].interactable ? selection : -1;
+        if (next == focusedChoice) return;
+        SetChoiceFocus(focusedChoice, false);
+        focusedChoice = next;
+        SetChoiceFocus(next, true);
+    }
+
+    private void SetChoiceFocus(int index, bool focused)
+    {
+        if (index < 0 || index >= choiceFocus.Length || choiceFocus[index] == null) return;
+        choiceFocus[index].color = focused ? Color.white : Color.clear;
+        var rect = (RectTransform)choices[index].transform;
+        float scale = focused ? TrainingBoardStyle.FocusScale : 1f;
+        rect.DOKill();
+        if (controlsOpen && isActiveAndEnabled) rect.DOScale(scale, .16f).SetEase(Ease.OutCubic).SetUpdate(true);
+        else rect.localScale = Vector3.one * scale;
     }
 
     private void UpdateRows()
@@ -290,6 +327,7 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
             UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(sourceContent);
             if (sources.Count == 0 && sourceScroll != null) sourceScroll.verticalNormalizedPosition = 1f;
             previousCount = sources.Count;
+            if (sourceCountText != null) sourceCountText.text = $"{sources.Count}개 항목";
         }
     }
 
@@ -383,13 +421,15 @@ public sealed class SelfTrainingAnalyzerUI : MonoBehaviour, IUIInputReceiver, II
     }
     private void SetBoardVisibility(bool visible, bool immediate = false)
     {
-        presentationStarted = Time.unscaledTime;
-        presentationFrom = boardGroup != null ? boardGroup.alpha : 0f;
-        presentationTarget = visible ? 1f : 0f;
-        if (boardGroup == null) return;
-        boardGroup.interactable = boardGroup.blocksRaycasts = visible && !HasOtherInput;
-        if (immediate) boardGroup.alpha = presentationFrom = presentationTarget;
-        if (immediate && projectionGroup != null) projectionGroup.alpha = presentationTarget;
+        if (boardMotion != null)
+        {
+            if (immediate) boardMotion.SnapHidden();
+            else if (visible) boardMotion.Open();
+            else boardMotion.Close();
+        }
+        else if (boardGroup != null) boardGroup.alpha = visible ? 1f : 0f;
+        if (boardGroup != null) boardGroup.interactable = boardGroup.blocksRaycasts = false;
+        if (immediate && projectionGroup != null) projectionGroup.alpha = 0f;
     }
     private void SetNearby(bool nearby)
     {

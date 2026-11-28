@@ -58,7 +58,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     [SerializeField] private GameObject rootObject;
     [SerializeField] private RectTransform fitRect;
     [SerializeField] private RectTransform terminalRoot;
-    [SerializeField] private RectTransform wristRoot;
+    [SerializeField] private TitlePanelMotion panelMotion;
     [SerializeField] private CanvasGroup terminalGroup;
     [SerializeField] private CanvasGroup screenGroup;
     [SerializeField] private CanvasGroup backdropGroup;
@@ -101,12 +101,6 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     [SerializeField] private UnityEngine.UI.Image[] tabHighlights;
     [SerializeField] private SectionBinding[] sections;
 
-    [Header("버튼 선택 색상")]
-    [SerializeField, Tooltip("훈련 목표·적 도감·장비·수신함 순서의 불투명 선택 배경입니다.")]
-    private Color[] selectionColors = { new Color32(248, 212, 106, 255), new Color32(155, 232, 188, 255),
-        new Color32(158, 217, 255, 255), new Color32(245, 184, 217, 255) };
-    [SerializeField] private Color selectionInk = new Color32(9, 14, 20, 255);
-
     [Header("Preview Notice")]
     [SerializeField] private GameObject noticeRoot;
     [SerializeField] private TextMeshProUGUI noticeText;
@@ -120,8 +114,8 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     [SerializeField] private UnityEngine.UI.Graphic popupDimmer;
     [SerializeField, Min(.5f)] private float inlinePopupScale = 1.5f;
 
-    private const float OpenDuration = .38f;
-    private const float CloseDuration = .24f;
+    private const float OpenDuration = TitlePanelMotion.OpenDuration;
+    private const float CloseDuration = TitlePanelMotion.CloseDuration;
     private const float PageDuration = .52f;
     private const float TabInputInterval = .2f;
     private const int EquipmentTab = 2;
@@ -134,7 +128,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private readonly Dictionary<RectTransform, Vector3> pageScales = new Dictionary<RectTransform, Vector3>();
     private readonly Dictionary<RectTransform, Quaternion> pageRotations = new Dictionary<RectTransform, Quaternion>();
     private readonly Dictionary<RectTransform, CanvasGroup> pageGroups = new Dictionary<RectTransform, CanvasGroup>();
-    private readonly Dictionary<UnityEngine.UI.Button, ButtonVisual> buttonVisuals = new Dictionary<UnityEngine.UI.Button, ButtonVisual>();
+    private readonly Dictionary<UnityEngine.UI.Button, UnityEngine.UI.Graphic> buttonFocus = new Dictionary<UnityEngine.UI.Button, UnityEngine.UI.Graphic>();
     private readonly Dictionary<GameObject, GameObject> inlinePopupSources = new Dictionary<GameObject, GameObject>();
     private float popupVisibility;
     private UnityEngine.UI.Button hoveredButton;
@@ -152,8 +146,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private EventSystem inputEventSystem;
     private bool previousNavigationEvents;
     private GameTimeController pauseOwner;
-    private Vector2 terminalHome, wristHome, lastFitSize;
-    private Quaternion terminalRotation, wristRotation;
+    private Vector2 lastFitSize;
     private float presentationProgress;
     private float nextTabInputAt;
     private int selectedTab;
@@ -164,16 +157,6 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private bool detailOpen, isPageTransitioning, isCategoryTransitioning, contentInteractable, contentRaycasts;
     private int equipmentLesson = -1, equipmentFocus = -1;
     private int DetailIndex => selectedTab == EquipmentTab && equipmentLesson >= 0 ? equipmentLesson : SelectedEntry;
-
-    private sealed class ButtonVisual
-    {
-        public UnityEngine.UI.Graphic fill;
-        public UnityEngine.UI.Graphic face;
-        public Color faceColor;
-        public UnityEngine.UI.Graphic[] foreground;
-        public Color[] foregroundColors;
-        public bool inverted;
-    }
 
     /// <summary>단말기에서 하는 조작. 안내가 받을 조작을 가릴 때 쓴다(ActionGuard).</summary>
     public enum GuardedAction { Open, Move, OpenCategory, SelectTab, ReturnHome, SelectEntry, ShowDetails, Back, Close }
@@ -189,6 +172,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     /// <summary>열었을 때 첫 화면에서 먼저 고를 항목(비우면 0번). Lobby 안내가 메시지 수신함을 가리킬 때 쓴다.</summary>
     public Func<int> OpeningHomeIndex;
     public bool IsTransitioning => isTransitioning || isPageTransitioning || isHomeTransitioning;
+    internal RectTransform Viewport => fitRect;
     public bool IsHomeVisible => IsActive && homeVisible;
     public bool IsHomeTransitioning => isHomeTransitioning;
     public int SelectedHomeIndex => selectedHomeIndex;
@@ -226,8 +210,6 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         InputBindingHint.Bind(screen, "Footer/InputHint", "{MenuDirections} 이동 · {Confirm} 선택 · {Cancel} 뒤로 · {Inventory} 닫기");
         InputBindingHint.Bind(transform, "Onboarding/TerminalIcon/KeyHint/Key", "{Inventory}");
         InputBindingHint.Bind(transform, "Onboarding/OpenPrompt/KeyGroup/Key", "{Inventory}");
-        terminalHome = terminalRoot.anchoredPosition;
-        terminalRotation = terminalRoot.localRotation;
         contentInputGroup = contentViewport.GetComponent<CanvasGroup>();
         if (contentInputGroup == null) contentInputGroup = contentViewport.gameObject.AddComponent<CanvasGroup>();
         contentInteractable = contentInputGroup.interactable;
@@ -251,11 +233,6 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
                 var page = detail.GetComponent<RectTransform>();
                 CachePage(page);
             }
-        }
-        if (wristRoot != null)
-        {
-            wristHome = wristRoot.anchoredPosition;
-            wristRotation = wristRoot.localRotation;
         }
 
         // 표준 Button을 직접 연결한다. 기반 클래스의 EventTrigger와 중복 등록하지 않는다.
@@ -315,7 +292,11 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         if (popupDimmer != null) BindPointerClick(popupDimmer.gameObject, HandlePopupBackdropClick);
         foreach (var button in GetComponentsInChildren<UnityEngine.UI.Button>(true))
         {
-            CacheButtonVisual(button);
+            if (button.GetComponent<TerminalPlaybackButton>() == null)
+            {
+                var focus = button.transform.Find("SelectionFill");
+                if (focus != null) buttonFocus[button] = focus.GetComponent<UnityEngine.UI.Graphic>();
+            }
             BindHover(button, () =>
             {
                 if (!CanHighlight(button)) return;
@@ -391,35 +372,6 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         var group = page.GetComponent<CanvasGroup>();
         if (group == null) group = page.gameObject.AddComponent<CanvasGroup>();
         pageGroups[page] = group;
-    }
-
-    private void CacheButtonVisual(UnityEngine.UI.Button button)
-    {
-        var foreground = new List<UnityEngine.UI.Graphic>();
-        var statusMark = button.transform.Find("OnboardingMark");
-        foreach (var graphic in button.GetComponentsInChildren<UnityEngine.UI.Graphic>(true))
-        {
-            // 장식 테두리와 상태 배지를 제외하고 글자·아이콘만 배경색으로 바꾼다.
-            if (statusMark != null && graphic.transform.IsChildOf(statusMark)) continue;
-            if (graphic is TMP_Text || graphic is TerminalEquipmentGlyph
-                || IsButtonGlyph(graphic.transform, button.transform)) foreground.Add(graphic);
-        }
-        buttonVisuals[button] = new ButtonVisual
-        {
-            fill = button.transform.Find("SelectionFill")?.GetComponent<UnityEngine.UI.Graphic>(),
-            face = button.targetGraphic, faceColor = button.targetGraphic != null ? button.targetGraphic.color : new Color(.06f, .14f, .2f),
-            foreground = foreground.ToArray(), foregroundColors = new Color[foreground.Count]
-        };
-    }
-
-    private static bool IsButtonGlyph(Transform graphic, Transform button)
-    {
-        if (graphic.name.StartsWith("CloseStroke", StringComparison.Ordinal)
-            || graphic.name.StartsWith("ConfirmStroke", StringComparison.Ordinal)
-            || graphic.name.StartsWith("Knurl", StringComparison.Ordinal)) return true;
-        for (var parent = graphic; parent != null && parent != button; parent = parent.parent)
-            if (parent.name == "Emblem" || parent.name == "CategoryGlyph") return true;
-        return false;
     }
 
     private bool CanHighlight(UnityEngine.UI.Button button)
@@ -917,6 +869,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         CancelSlide();
         noticeRoot.SetActive(false);
         rootObject.SetActive(true);
+        if (panelMotion != null) panelMotion.Open();
         base.Open();
         inputEventSystem = EventSystem.current;
         if (inputEventSystem != null)
@@ -956,6 +909,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         noticeRoot.SetActive(false);
         RefreshInteractable();
         RefreshButtonFaces();
+        if (panelMotion != null) panelMotion.Close();
         BeginTransition(0f, CloseDuration);
     }
     private void CloseImmediately()
@@ -975,6 +929,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         ReleasePause();
         if (!initialized) return;
         noticeRoot.SetActive(false);
+        if (panelMotion != null) panelMotion.SnapHidden();
         ApplyPresentation(0f);
         rootObject.SetActive(false);
         RefreshInteractable();
@@ -1421,45 +1376,15 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     private void RefreshButtonFaces()
     {
         if (hoveredButton != null && (!hoveredButton.gameObject.activeInHierarchy || !hoveredButton.interactable)) hoveredButton = null;
-        foreach (var pair in buttonVisuals)
+        foreach (var pair in buttonFocus)
         {
             var button = pair.Key;
-            var visual = pair.Value;
-            if (button == null || button.GetComponent<TerminalPlaybackButton>() != null) continue;
-            bool selected = button.gameObject.activeInHierarchy && IsActive && !isClosing &&
-                (button == hoveredButton || IsSelectedButton(button));
+            if (button == null || pair.Value == null) continue;
+            bool selected = IsActive && !isClosing && button.gameObject.activeInHierarchy
+                && (button == hoveredButton || IsSelectedButton(button));
             if (button.TryGetComponent<TerminalButtonMotion>(out var motion)) motion.Select(selected);
-            // 분류별 밝은 선택면과 짙은 전경으로 대비를 유지한다. 상세·안내 버튼도 현재 분류를 따른다.
-            var selectionColor = SelectionColor(button);
-            if (visual.fill != null) visual.fill.color = selected ? selectionColor : new Color(1f, 1f, 1f, 0f);
-            else if (visual.face != null) visual.face.color = selected ? selectionColor : visual.faceColor;
-            for (int i = 0; i < visual.foreground.Length; i++)
-            {
-                var graphic = visual.foreground[i];
-                if (graphic == null) continue;
-                if (selected && !visual.inverted) visual.foregroundColors[i] = graphic.color;
-                if (selected)
-                {
-                    var ink = selectionInk;
-                    ink.a = visual.foregroundColors[i].a;
-                    // 아이콘 뒤의 기계식 받침은 비워 흰 선택면 위에 아이콘이 보이게 한다.
-                    if (graphic is TerminalChassisGraphic) ink.a = 0f;
-                    graphic.color = ink;
-                }
-                else if (visual.inverted) graphic.color = visual.foregroundColors[i];
-            }
-            visual.inverted = selected;
+            pair.Value.color = selected ? Color.white : Color.clear;
         }
-    }
-
-    private Color SelectionColor(UnityEngine.UI.Button button)
-    {
-        int category = homeVisible ? selectedHomeIndex : selectedTab;
-        for (int i = 0; i < sections.Length; i++)
-            if (button == homeButtons[i] || button == tabButtons[i]
-                || (sections[i].root != null && button.transform.IsChildOf(sections[i].root.transform)))
-            { category = i; break; }
-        return selectionColors != null && selectionColors.Length > category ? selectionColors[category] : Color.white;
     }
 
     private bool IsSelectedButton(UnityEngine.UI.Button button)
@@ -1553,7 +1478,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
                 if (visible)
                 {
                     var page = (RectTransform)detail.transform;
-                    page.localScale = pageScales[page] * .96f;
+                    page.localScale = pageScales[page];
                 }
             }
         }
@@ -1606,8 +1531,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             next.gameObject.SetActive(true);
             next.SetAsLastSibling();
             next.anchoredPosition = pageHomes[next];
-            next.localScale = Vector3.Scale(pageScales[next], PopupStartScale(selectedTab, DetailIndex));
-            next.localRotation = pageRotations[next] * Quaternion.Euler(0f, 0f, PopupStartAngle(selectedTab, DetailIndex));
+            next.localScale = Vector3.Scale(pageScales[next], TitlePanelMotion.UnfoldScale(0f));
             pageGroups[next].alpha = 0f;
         }
         contentInputGroup.interactable = contentInputGroup.blocksRaycasts = false;
@@ -1615,40 +1539,13 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         pageRoutine = StartCoroutine(AnimatePopup(list, next, outgoing));
     }
 
-    private static Vector3 PopupStartScale(int tab, int entry)
-    {
-        // 명령서·식별 스캔·장비 장착창·수신 문서를 서로 다른 펼침 축으로 구분한다.
-        switch (tab)
-        {
-            case 0:
-                if (entry == 1) return new Vector3(.68f, .68f, 1f);
-                if (entry == 2) return new Vector3(.42f, .42f, 1f);
-                if (entry == 3) return new Vector3(.2f, .91f, 1f);
-                return new Vector3(.91f, .22f, 1f);
-            case 1: return new Vector3(.12f, .93f, 1f);
-            case 2:
-                if (entry == 0) return new Vector3(.92f, .28f, 1f);
-                if (entry == 1) return new Vector3(.18f, .92f, 1f);
-                return entry == 2 ? new Vector3(.26f, .26f, 1f) : new Vector3(.68f, .68f, 1f);
-            default: return new Vector3(.74f, .14f, 1f);
-        }
-    }
-
-    private static float PopupStartAngle(int tab, int entry)
-    {
-        if (tab == 2) return entry == 2 ? -7f : entry % 2 == 0 ? -3f : 3f;
-        return tab == 3 ? -2.5f : 0f;
-    }
-
     private IEnumerator AnimatePopup(RectTransform list, RectTransform next, List<RectTransform> outgoing)
     {
         Vector3 listStart = list.localScale;
         float listAlpha = pageGroups[list].alpha;
-        Vector3 nextScale = next != null ? next.localScale : Vector3.one;
-        Quaternion nextRotation = next != null ? next.localRotation : Quaternion.identity;
         var oldScales = outgoing.ConvertAll(page => page.localScale);
         var oldAlphas = outgoing.ConvertAll(page => pageGroups[page].alpha);
-        float duration = next == null ? .22f : selectedTab == 1 ? .34f : selectedTab == 3 ? .38f : .3f;
+        float duration = next == null ? CloseDuration : OpenDuration;
         float visibilityStart = popupVisibility, visibilityTarget = next != null || NoticeVisible ? 1f : 0f;
         float age = 0f;
         while (age < duration)
@@ -1668,8 +1565,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
             }
             if (next != null)
             {
-                next.localScale = Vector3.LerpUnclamped(nextScale, pageScales[next] * .96f, eased);
-                next.localRotation = Quaternion.SlerpUnclamped(nextRotation, pageRotations[next], eased);
+                next.localScale = Vector3.Scale(pageScales[next], TitlePanelMotion.UnfoldScale(t));
                 pageGroups[next].alpha = Mathf.InverseLerp(0f, .65f, t);
             }
             yield return null;
@@ -1790,7 +1686,7 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
         {
             age += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(age / duration);
-            ApplyPresentation(Mathf.Lerp(start, target, 1f - Mathf.Pow(1f - t, 3f)));
+            ApplyPresentation(Mathf.Lerp(start, target, t));
             yield return null;
         }
         ApplyPresentation(target);
@@ -1815,22 +1711,21 @@ public sealed class InventoryTerminalMenu : SelectableMenuUI
     {
         presentationProgress = progress;
         lastFitSize = fitRect.rect.size;
-        float scale = Mathf.Min(lastFitSize.x / Mathf.Max(1f, terminalRoot.rect.width),
-            lastFitSize.y / Mathf.Max(1f, terminalRoot.rect.height));
-        terminalRoot.localScale = Vector3.one * (scale * Mathf.Lerp(.45f, 1f, progress));
-        // 팝업 무대는 연출 중 크기 변화 없이 단말기의 최종 배율로 화면 중앙에 맞춘다.
-        if (popupStage != null) popupStage.localScale = Vector3.one * scale;
+        float scale = PortableTerminalLayout.Fit(terminalRoot, lastFitSize);
+        terminalRoot.localScale = (panelMotion != null ? Vector3.one : TitlePanelMotion.UnfoldScale(progress)) * scale;
+        // 장비 영상과 문서는 각자 만든 무대 안에서 표시하고, 네 변에 닫기 버튼 여백을 남긴다.
+        if (popupStage != null && lastFitSize.x > 0f && lastFitSize.y > 0f)
+        {
+            Vector2 stage = popupStage.rect.size;
+            float popupScale = Mathf.Min(lastFitSize.x / Mathf.Max(1f, stage.x), lastFitSize.y / Mathf.Max(1f, stage.y));
+            popupStage.localScale = Vector3.one * (popupScale * .96f);
+        }
         ApplyPopupLayer();
-        terminalRoot.anchoredPosition = terminalHome + new Vector2(lastFitSize.x * .62f, -lastFitSize.y * .7f) * (1f - progress);
-        terminalRoot.localRotation = terminalRotation * Quaternion.Euler(0f, 0f, Mathf.Lerp(-14f, 0f, progress));
-        terminalGroup.alpha = Mathf.Clamp01(progress * 2f);
-        screenGroup.alpha = Mathf.InverseLerp(.25f, .85f, progress);
+        terminalGroup.alpha = Mathf.Clamp01(progress * 5f);
+        screenGroup.alpha = 1f;
         backdropGroup.alpha = progress;
         terminalGroup.interactable = terminalGroup.blocksRaycasts = progress > .99f;
         screenGroup.interactable = screenGroup.blocksRaycasts = progress > .99f;
         backdropGroup.interactable = backdropGroup.blocksRaycasts = progress > 0f;
-        if (wristRoot == null) return;
-        wristRoot.anchoredPosition = wristHome + new Vector2(20f, -45f) * (1f - progress);
-        wristRoot.localRotation = wristRotation * Quaternion.Euler(0f, 0f, Mathf.Lerp(-8f, 0f, progress));
     }
 }

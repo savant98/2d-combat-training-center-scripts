@@ -65,8 +65,6 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
     [SerializeField] private FeedbackDataSO deniedFeedback;
     [SerializeField] private FeedbackDataSO deleteFeedback;
 
-    private static readonly Color Body = new Color32(0xD3, 0xEB, 0xF2, 0xFF);
-    private static readonly Color Sub = new Color32(0x7E, 0xA7, 0xB5, 0xFF);
     private const string ListHint = "{MenuVertical} 선택   ·   {Confirm} 시작   ·   {MenuRight} 삭제   ·   {Cancel} 뒤로";
     private const string EmptyHint = "{MenuVertical} 선택   ·   {Confirm} 새 세이브로 시작   ·   {Cancel} 뒤로";
     private const string DeleteHint = "{Confirm} 이 세이브 삭제   ·   {MenuLeft} 돌아가기   ·   {Cancel} 뒤로";
@@ -426,7 +424,7 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
             if (badge.gradeLabel != null)
             {
                 badge.gradeLabel.text = record != null ? TrainingBoardStyle.GradeLabel(record.bestGrade) : "미수료";
-                badge.gradeLabel.color = record != null ? color : Sub;
+                badge.gradeLabel.color = record != null ? color : TrainingBoardStyle.SecondaryText;
             }
             if (badge.bar != null) badge.bar.color = color;
         }
@@ -438,14 +436,14 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
         if (view.focus != null) view.focus.color = new Color(1f, 1f, 1f, body ? 1f : deleteFocused ? .35f : 0f);
         if (view.ordinal != null)
             view.ordinal.color = isSelected ? TrainingBoardStyle.LineBright : summary.exists ? TrainingBoardStyle.Line : TrainingBoardStyle.LineDim;
-        if (view.title != null) view.title.color = isSelected ? Color.white : summary.exists ? Body : Sub;
-        if (view.detail != null) view.detail.color = Sub;
+        if (view.title != null) view.title.color = isSelected ? Color.white : summary.exists ? TrainingBoardStyle.Body : TrainingBoardStyle.SecondaryText;
+        if (view.detail != null) view.detail.color = TrainingBoardStyle.SecondaryText;
         if (view.deleteFocus != null) view.deleteFocus.color = new Color(1f, 1f, 1f, deleteFocused ? 1f : 0f);
         if (view.deleteLabel != null) view.deleteLabel.color = deleteFocused ? Color.white : TrainingBoardStyle.Warning;
         if (view.root != null)
         {
-            // 넓은 칸이라 조금만 키운다(버튼의 1.15배를 그대로 쓰면 판 밖으로 넘친다).
-            float scale = isSelected ? 1.012f : 1f;
+            // 긴 행의 간격을 유지하면서 선택한 칸만 살짝 키운다.
+            float scale = isSelected ? TrainingBoardStyle.FocusScale : 1f;
             view.root.DOKill();
             if (instant) view.root.localScale = Vector3.one * scale;
             else view.root.DOScale(scale, .16f).SetEase(Ease.OutCubic).SetUpdate(true);
@@ -456,7 +454,7 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
     {
         if (dialogCancelFocus != null) dialogCancelFocus.color = new Color(1f, 1f, 1f, dialogIndex == 0 ? 1f : 0f);
         if (dialogDeleteFocus != null) dialogDeleteFocus.color = new Color(1f, 1f, 1f, dialogIndex == 1 ? 1f : 0f);
-        if (dialogCancelLabel != null) dialogCancelLabel.color = dialogIndex == 0 ? Color.white : Body;
+        if (dialogCancelLabel != null) dialogCancelLabel.color = dialogIndex == 0 ? Color.white : TrainingBoardStyle.Body;
         if (dialogDeleteLabel != null) dialogDeleteLabel.color = dialogIndex == 1 ? Color.white : TrainingBoardStyle.Warning;
         Scale(dialogCancel, dialogIndex == 0, instant);
         Scale(dialogDelete, dialogIndex == 1, instant);
@@ -476,7 +474,7 @@ public sealed class TitleSaveSelectUI : MonoBehaviour, IUIInputReceiver
     {
         if (hint == null) return;
         bool denied = deniedUntil > 0f;
-        hint.color = denied ? TrainingBoardStyle.Warning : Sub;
+        hint.color = denied ? TrainingBoardStyle.Warning : TrainingBoardStyle.SecondaryText;
         string template = denied ? "읽을 수 없는 세이브입니다.  {MenuRight}로 삭제 버튼을 골라 지운 뒤 사용하세요."
             : mode == Mode.Dialog ? DialogHint : onDelete ? DeleteHint
             : summaries.Length > selected && summaries[selected].exists ? ListHint : EmptyHint;

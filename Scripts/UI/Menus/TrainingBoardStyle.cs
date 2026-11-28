@@ -10,6 +10,12 @@ public static class TrainingBoardStyle
     public static readonly Color LineDim = new Color32(0x17, 0x4b, 0x5c, 0xff);
     public static readonly Color LineBright = new Color32(0x8f, 0xf4, 0xff, 0xff);
     public static readonly Color SlotFill = new Color32(0x0b, 0x17, 0x26, 0xff);
+    // 세이브 파일 선택 화면의 표면·본문·보조 글자와 행 선택 배율.
+    public static readonly Color Surface = new Color(.012f, .022f, .036f, 1f);
+    public static readonly Color Body = new Color32(0xD3, 0xEB, 0xF2, 0xFF);
+    public static readonly Color SecondaryText = new Color32(0x7E, 0xA7, 0xB5, 0xFF);
+    public const float FocusScale = 1.012f;
+
     public static readonly Color Warning = new Color32(0xff, 0x5a, 0x3c, 0xff);
     public static readonly Color Gold = new Color32(0xff, 0xd1, 0x66, 0xff);
 

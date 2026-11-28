@@ -18,6 +18,16 @@ public static class ArmamentMenuGuide
         _ => armament != null ? armament.description : string.Empty
     };
 
+    public static string SecondaryDescription(WeaponBaseSO weapon) => weapon switch
+    {
+        HealingWeaponSO heal => $"준비가 끝나면 체력을 {heal.damageInfo.damage:0.##} 회복합니다.",
+        DroneSpawnWeaponSO drone when drone.dronePrefab is AutoBreakDrone =>
+            $"{drone.droneLifeTime:0.##}초 동안 적에게 돌진하는 드론을 소환합니다.",
+        DroneSpawnWeaponSO drone when drone.dronePrefab is AutoAttackDrone =>
+            $"{drone.droneLifeTime:0.##}초 동안 적을 향해 사격하는 드론을 소환합니다.",
+        _ => weapon != null ? weapon.unlockInfo.description : string.Empty
+    };
+
     public static (string summary, string synergy) Gear(WeaponBaseSO weapon) => weapon switch
     {
         CounterWeaponSO => ("방어 자세에서 타격을 받아내고 충격파로 반격합니다.",

@@ -315,6 +315,8 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
             var group = icon.GetComponent<CanvasGroup>();
             if (group != null) groups.Add(group);
         }
+        foreach (var button in new[] { signButton, refuseButton })
+            if (button != null && button.transform is RectTransform rect) rects.Add(rect);
         var poses = new System.Collections.Generic.List<UiRectState>();
         foreach (var rect in rects) poses.Add(new UiRectState {
             Rect = rect, Position = rect.anchoredPosition, Scale = rect.localScale, Rotation = rect.localRotation
@@ -623,7 +625,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         if (outgoing != null) { outgoing.alpha = 1f; outgoing.interactable = outgoing.blocksRaycasts = false; }
         if (incoming != null) { incoming.alpha = 0f; incoming.interactable = incoming.blocksRaycasts = false; }
         SetScreenScale(outgoing, 1f);
-        SetScreenScale(incoming, .88f);
+        SetScreenReveal(incoming, 0f);
     }
 
     private void BlendScreens(CanvasGroup outgoing, CanvasGroup incoming, float progress)
@@ -631,7 +633,7 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         if (outgoing != null) outgoing.alpha = 1f - progress;
         if (incoming != null) incoming.alpha = progress;
         SetScreenScale(outgoing, Mathf.Lerp(1f, .94f, progress));
-        SetScreenScale(incoming, Mathf.Lerp(.88f, 1f, progress));
+        SetScreenReveal(incoming, progress);
     }
 
     private void FinishScreenBlend(CanvasGroup outgoing, CanvasGroup incoming)
@@ -640,6 +642,12 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         if (incoming != null) incoming.alpha = 1f;
         SetScreenScale(outgoing, 1f);
         SetScreenScale(incoming, 1f);
+    }
+
+    private void SetScreenReveal(CanvasGroup group, float progress)
+    {
+        if (group != null && group.transform is RectTransform rect)
+            rect.localScale = Vector3.Scale(RestScale(rect), TitlePanelMotion.UnfoldScale(progress));
     }
 
     private void SetScreenScale(CanvasGroup group, float multiplier)
@@ -1021,12 +1029,15 @@ public sealed class TitleTrainingNoticeIntro : MonoBehaviour, IUIInputReceiver
         Highlight(signButton, selectedSignatureIndex == 0);
         Highlight(refuseButton, selectedSignatureIndex == 1);
     }
-    private static void Highlight(UnityEngine.UI.Button button, bool selected)
+    private void Highlight(UnityEngine.UI.Button button, bool selected)
     {
         if (button == null || button.targetGraphic == null) return;
-        button.targetGraphic.color = selected ? new Color(.12f, .43f, .61f, 1f) : new Color(.76f, .79f, .8f, 1f);
+        bool focused = selected && button.interactable;
+        button.targetGraphic.color = focused ? Color.Lerp(TrainingBoardStyle.SlotFill, TrainingBoardStyle.Line, .44f) : TrainingBoardStyle.SlotFill;
+        if (ownedRectStates != null && button.transform is RectTransform rect)
+            rect.localScale = RestScale(rect) * (focused ? TrainingBoardStyle.FocusScale : 1f);
         foreach (var text in button.GetComponentsInChildren<TextMeshProUGUI>(true))
-            text.color = selected ? Color.white : new Color(.13f, .16f, .19f, 1f);
+            text.color = focused ? Color.white : button.interactable ? TrainingBoardStyle.Body : TrainingBoardStyle.SecondaryText;
     }
     private void SetSignatureFraction(float t)
     {

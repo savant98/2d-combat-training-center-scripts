@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using DG.Tweening;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -54,11 +53,15 @@ public class TrainingMenu : SelectableMenuUI
         if (data is PointerEventData pointer) scrollRect.OnScroll(pointer);
     }
 
-    public override void Open()
+    public override void Open() => OpenAt(defaultIndex);
+
+    // 상세를 닫을 때는 직전에 읽던 훈련과 스크롤 위치로 돌아간다.
+    public void ReopenSelection() => OpenAt(currentIndex);
+
+    private void OpenAt(int index)
     {
         base.Open();
-        // 처음 선택은 지정한 줄이고, 그 줄이 꺼져 있으면 켜진 첫 줄이다.
-        int start = IsSelectable(defaultIndex) ? defaultIndex : FirstSelectable();
+        int start = IsSelectable(index) ? index : FirstSelectable();
         if (start >= 0 && start != currentIndex)
         {
             currentIndex = start;
@@ -82,7 +85,7 @@ public class TrainingMenu : SelectableMenuUI
         int forward = step > 0 ? 1 : -1;
         while (next >= 0 && next < buttons.Length && !IsSelectable(next)) next += forward;
         ChangeIndex(next);
-        if (previous != currentIndex) NotifySelection(true);
+        if (previous != currentIndex) NotifySelection();
     }
 
     protected override void OnPointerEnter(int index)
@@ -90,7 +93,7 @@ public class TrainingMenu : SelectableMenuUI
         if (InputSuppressed) return;
         int previous = currentIndex;
         base.OnPointerEnter(index);
-        if (previous != currentIndex) NotifySelection(true);
+        if (previous != currentIndex) NotifySelection();
     }
 
     protected override void OnPointerClick(int index)
@@ -99,7 +102,7 @@ public class TrainingMenu : SelectableMenuUI
         if (!IsActive || (UIManager.Instance != null && UIManager.Instance.IsUIInputBlocked)) return;
         int previous = currentIndex;
         ChangeIndex(index);
-        if (previous != currentIndex) NotifySelection(true);
+        if (previous != currentIndex) NotifySelection();
         base.OnPointerClick(index);
     }
 
@@ -113,33 +116,31 @@ public class TrainingMenu : SelectableMenuUI
         if (!InputSuppressed) base.OnCancel();
     }
 
-    private void NotifySelection(bool animate = false)
+    private void NotifySelection()
     {
-        if (animate)
-        {
-            // 같은 Transform에 확대와 Punch가 겹쳐 최종 배율이 덮이지 않도록 한 Tween으로 정착한다.
-            for (int i = 0; i < buttons.Length; i++)
-            {
-                if (!buttons[i].gameObject.activeSelf) continue;   // 꺼진 줄은 그대로 둔다
-                buttons[i].DOKill();
-                buttons[i].DOScale(i == currentIndex ? 1.15f : 1f, .16f).SetEase(Ease.OutCubic).SetUpdate(true);
-            }
-        }
         OnSelectionChanged?.Invoke(currentIndex);
+        EnsureSelectionVisible();
+    }
+
+    public void EnsureSelectionVisible()
+    {
         if (scrollRect == null || scrollRect.content == null || scrollRect.viewport == null ||
             !IsSelectable(currentIndex)) return;
 
+        // 투사판이 선으로 접혀 있으면 상대 좌표를 구할 수 없다. 펼침이 끝나면 다시 맞춘다.
+        if (Mathf.Approximately(scrollRect.viewport.lossyScale.x, 0f)) return;
         Canvas.ForceUpdateCanvases();
         // 자식 Content까지 포함한 Bounds 대신 실제 마스크 사각형을 사용한다.
         Rect viewport = scrollRect.viewport.rect;
         Bounds item = RectTransformUtility.CalculateRelativeRectTransformBounds(scrollRect.viewport, buttons[currentIndex]);
         float scale = Mathf.Abs(buttons[currentIndex].localScale.y);
-        item.extents *= 1.15f / Mathf.Max(.001f, scale);
+        item.extents *= TrainingBoardStyle.FocusScale / Mathf.Max(.001f, scale);
         float offset = item.max.y > viewport.yMax ? viewport.yMax - item.max.y :
             item.min.y < viewport.yMin ? viewport.yMin - item.min.y : 0f;
         if (Mathf.Approximately(offset, 0f)) return;
-        Vector3 worldOffset = scrollRect.viewport.TransformVector(new Vector3(0f, offset, 0f));
-        scrollRect.content.position += worldOffset;
+        Vector3 worldOffset = scrollRect.viewport.TransformVector(Vector3.up * offset);
+        float localOffset = scrollRect.content.parent.InverseTransformVector(worldOffset).y;
+        scrollRect.content.anchoredPosition += Vector2.up * localOffset;
         scrollRect.StopMovement();
     }
 

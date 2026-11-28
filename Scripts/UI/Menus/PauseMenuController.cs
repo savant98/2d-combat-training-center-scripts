@@ -1,4 +1,3 @@
-using DG.Tweening;
 using System;
 using UnityEngine;
 
@@ -6,8 +5,7 @@ public class PauseMenuController : MonoBehaviour
 {
     public static event Action OnOptionSelected;
 
-    [SerializeField] private SelectableMenuUI menu;
-    [SerializeField] private CanvasGroup canvasGroup;
+    [SerializeField] private PauseMenu menu;
     [SerializeField] private GameObject root;
 
     private bool isOpen;
@@ -33,10 +31,6 @@ public class PauseMenuController : MonoBehaviour
         menu.OnSelected += HandleSelect;
         menu.OnCanceled += HandleCancel;
         menu.Open();
-
-        canvasGroup.DOKill();
-        canvasGroup.alpha = 0f;
-        canvasGroup.DOFade(1f, 0.15f).SetUpdate(true);
     }
 
     public void Hide()
@@ -44,12 +38,10 @@ public class PauseMenuController : MonoBehaviour
         if (!isOpen)
             return;
 
-        Cleanup();
-
-        canvasGroup.DOKill();
-        canvasGroup.DOFade(0f, 0.12f)
-            .SetUpdate(true)
-            .OnComplete(() => root.SetActive(false));
+        isOpen = false;
+        menu.OnSelected -= HandleSelect;
+        menu.OnCanceled -= HandleCancel;
+        menu.Close(() => root.SetActive(false));
 
         if (GameTimeController.Instance != null)
             GameTimeController.Instance.PopPause();
@@ -108,12 +100,4 @@ public class PauseMenuController : MonoBehaviour
         pauseCanvas.sortingOrder = Mathf.Max(190, parentCanvas.sortingOrder + 1);
     }
 
-    private void Cleanup()
-    {
-        isOpen = false;
-
-        menu.OnSelected -= HandleSelect;
-        menu.OnCanceled -= HandleCancel;
-        menu.Close();
-    }
 }

@@ -6,14 +6,14 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// 던전 현장 단말기(3차, 2026-11-24, DESIGN_V3 '현장 단말기'). 던전 진행 중 Tab으로 여는 손목 단말기 화면이다.
+/// 던전 현장 단말기(3차, 2026-11-24, DESIGN_V3 '현장 단말기'). 일반 Wave와 던전 전투 중 Tab으로 여는 훈련 단말기다.
 /// - 입력: 코드에서 만든 InputAction(Tab, InputBindingDisplay.InventoryPath — 기존 Lobby 단말기와 같은 키)을 던전 진행 중에만 켠다. 입력 설정 에셋·ProjectSettings 무수정.
 ///   Lobby 단말기(InventoryTerminalMenu)는 Lobby에서만 열리므로 같은 키가 겹치지 않는다. Alt+Tab은 무시한다. 닫기 = Tab 또는 Esc(UIManager가 OnCancel로 보낸다).
 /// - 열 수 있을 때: 던전 진행 중 · 다른 입력 UI·UI 입력 차단·게임 입력 차단 없음 · 일시정지 아님 · Player 살아 있음 · 구속(관 통과·크레인) 아님 ·
 ///   패배 화면·결과 보드 아님 · Wave 진행 정지(패배) 아님. 열려 있는 동안 던전이 끝나거나 Player가 죽거나 가리는 화면이 열리면 바로 닫는다.
 /// - 일시정지: 열면 GameTimeController.PushPause, 닫기 연출이 끝나면 자기 몫만 PopPause(기존 단말기와 같은 방식 — 다른 일시정지와 섞이지 않는다).
-/// - 외형: InventoryTerminal.prefab의 손목 단말기 외형(Wrist·WatchCase·MechanicalFrame·ScreenClip 머리말·바닥줄)을 생성 도구가 복사한 사본(원본 무수정).
-///   여는 연출도 기존 단말기와 같다(오른쪽 아래에서 −14° 기울어진 채 0.45배 → 1배로 밀려 올라옴, 손목은 아래에서 올라옴, 0.38초 열림·0.24초 닫힘, OutCubic, 실제 시간).
+///   TitleSaveSelect의 프레임·머리말·스캔선을 사용하고 TitlePanelMotion이 일시정지 중에도 중앙에서 판을 펼친다.
+///   일반 Wave는 브리핑과 계기판을, 던전은 지도와 계기판을 화면 가득 나란히 표시한다.
 /// - 화면: 큰 지도(알게 된 방 실루엣을 실제 비율로 단위 칸 블록 안에 배치·출입구끼리 꺾인 선·Player 위치·텔레포트 연결·레버 표식, 방향키로 이동·확인으로 가운데) +
 ///   훈련 상황(TrainingRunTracker.Instance: 예상 등급·경과 시간·피격·등급 유지까지 남은 양·등급 기준표) + 목표 진행(IDungeonObjectiveSource).
 /// - 접점: 게임플레이가 내주는 계약 인터페이스만 읽는다(IDungeonMapSource·IDungeonDetailSource·IDungeonObjectiveSource, 읽기 전용). DungeonManager를 직접 참조하지 않는다.
@@ -41,8 +41,8 @@ using UnityEngine.InputSystem;
 public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDungeonDetailView, IDungeonObjectiveView, IDungeonThreatView, IWaveTerminalView, IUIInputReceiver
 {
     public const string ResourcePath = "UI/DungeonFieldTerminal";
-    public const float OpenDuration = .38f;
-    public const float CloseDuration = .24f;
+    public const float OpenDuration = TitlePanelMotion.OpenDuration;
+    public const float CloseDuration = TitlePanelMotion.CloseDuration;
 
     /// <summary>단말기 상호작용 깊이 상태(메뉴 선택 → 상세 맵 탐색 / 재시작·포기 확인 팝업).</summary>
     public enum TerminalState
@@ -68,12 +68,16 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         GiveUp = 2,
     }
 
-    [Header("Presentation (InventoryTerminal 외형 사본)")]
+    [Header("세이브 선택 화면과 공유하는 단말기 외형")]
     [Tooltip("열려 있는 동안만 켜는 표시 루트(배경 막 + 단말기)")]
     [SerializeField] private GameObject presentation;
     [SerializeField] private RectTransform fitRect;
     [SerializeField] private RectTransform terminalRoot;
-    [SerializeField] private RectTransform wristRoot;
+    [SerializeField] private TitlePanelMotion panelMotion;
+    [SerializeField] private TitlePanelMotion confirmMotion;
+    [SerializeField] private RectTransform waveBriefing;
+    [SerializeField] private TMP_Text waveTrainingTitle, waveSummary;
+    [SerializeField] private TrainingGradeConditionsView waveGrades;
     [SerializeField] private CanvasGroup terminalGroup;
     [SerializeField] private CanvasGroup screenGroup;
     [SerializeField] private CanvasGroup backdropGroup;
@@ -176,16 +180,8 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     [SerializeField] private FeedbackDataSO confirmFeedback;
     [SerializeField] private FeedbackDataSO cancelFeedback;
 
-    private static readonly Color Dim = new Color32(120, 160, 172, 255);
-    private static readonly Color Bright = new Color32(143, 244, 255, 255);
-    private static readonly Color FocusWhite = new Color32(255, 255, 255, 255);
-    private static readonly Color MapCyan = new Color32(43, 200, 226, 255);
-    private static readonly Color RestartMuted = new Color32(172, 130, 62, 255);
-    private static readonly Color RestartAmber = new Color32(255, 176, 33, 255);
-    private static readonly Color RestartBright = new Color32(255, 231, 179, 255);
-    private static readonly Color GiveUpMuted = new Color32(176, 84, 72, 255);
-    private static readonly Color GiveUpRed = new Color32(255, 90, 60, 255);
-    private static readonly Color GiveUpBright = new Color32(255, 198, 186, 255);
+    private static readonly Color Dim = TrainingBoardStyle.SecondaryText;
+    private static readonly Color Bright = TrainingBoardStyle.LineBright;
 
     private IDungeonMapSource source;
     private IDungeonDetailSource detailSource;
@@ -201,8 +197,8 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     private bool initialized;
     private bool isOpen, isClosing, transitioning, live;
     private float progress, transitionFrom, transitionTo, transitionTime, transitionDuration;
-    private Vector2 terminalHome, wristHome, infoHome;
-    private Quaternion terminalRotation = Quaternion.identity, wristRotation = Quaternion.identity;
+    private TrainingDefinitionSO briefingTraining;
+    private bool briefingReady;
     private Vector2 lastFitSize;
     private GameTimeController pauseOwner;
     private bool ownsPause;
@@ -336,19 +332,8 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
     {
         if (initialized) return;
         initialized = true;
-        if (terminalRoot != null)
-        {
-            terminalHome = terminalRoot.anchoredPosition;
-            terminalRotation = terminalRoot.localRotation;
-        }
-        if (wristRoot != null)
-        {
-            wristHome = wristRoot.anchoredPosition;
-            wristRotation = wristRoot.localRotation;
-        }
         if (mapPanelRoot == null && mapGraphic != null) mapPanelRoot = mapGraphic.transform.parent as RectTransform;
         if (infoPanelRoot == null && statusPanel != null) infoPanelRoot = statusPanel.transform as RectTransform;
-        if (infoPanelRoot != null) infoHome = infoPanelRoot.anchoredPosition;
         if (mapButtonRoot == null && mapButtonGraphic != null) mapButtonRoot = mapButtonGraphic.rectTransform;
         if (restartButtonRoot == null && restartButtonGraphic != null) restartButtonRoot = restartButtonGraphic.rectTransform;
         if (giveUpButtonRoot == null && giveUpButtonGraphic != null) giveUpButtonRoot = giveUpButtonGraphic.rectTransform;
@@ -696,6 +681,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         confirmYesHover = false;
         confirmNoHover = false;
         if (confirmPopupRoot != null && !confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(true);
+        if (confirmMotion != null) confirmMotion.Open();
         UpdateConfirmPopup();
         UpdateActionButtons();
         UpdateControls();
@@ -715,12 +701,18 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         confirmYes = false;
         confirmYesHover = false;
         confirmNoHover = false;
-        if (confirmPopupRoot != null && confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(false);
+        if (confirmMotion != null) confirmMotion.Close(HideConfirmPopup);
+        else HideConfirmPopup();
         UpdateActionButtons();
         UpdateControls();
         UpdateFooterText();
         if (playFeedback) PlayUiFeedback(cancelFeedback);
         return true;
+    }
+
+    private void HideConfirmPopup()
+    {
+        if (confirmPopupRoot != null && state != TerminalState.ConfirmPopup) confirmPopupRoot.SetActive(false);
     }
 
     /// <summary>확인 팝업에서 '예'를 확정해 재시작 또는 포기를 실행한다.</summary>
@@ -1006,7 +998,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         {
             string tag = mapDetail ? (mapLabel + " 이동") : (mapSelected || mapHovered ? (mapLabel + " [Z]") : mapLabel);
             mapButtonLabel.text = DungeonUiText.Static(tag);
-            mapButtonLabel.color = mapReady ? (mapFocused ? FocusWhite : (mapHovered ? Bright : Dim)) : Dim;
+            mapButtonLabel.color = ActionLabelColor(mapReady, mapFocused || mapHovered);
         }
 
         bool restartReady = CanRestart;
@@ -1015,7 +1007,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (restartButtonGraphic != null)
             restartButtonGraphic.SetButtonStyle(restartReady, restartHovered, restartFocused, DungeonTerminalGaugeGraphic.ToneAmber, DungeonTerminalGaugeGraphic.IconRestart);
         if (restartButtonLabel != null)
-            restartButtonLabel.color = restartReady ? (restartFocused ? FocusWhite : (restartHovered ? RestartBright : RestartMuted)) : Dim;
+            restartButtonLabel.color = ActionLabelColor(restartReady, restartFocused || restartHovered);
 
         bool giveUpReady = CanGiveUp;
         bool giveUpHovered = giveUpReady && giveUpHover && state != TerminalState.ConfirmPopup;
@@ -1023,8 +1015,11 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (giveUpButtonGraphic != null)
             giveUpButtonGraphic.SetButtonStyle(giveUpReady, giveUpHovered, giveUpFocused, DungeonTerminalGaugeGraphic.ToneDanger, DungeonTerminalGaugeGraphic.IconGiveUp);
         if (giveUpButtonLabel != null)
-            giveUpButtonLabel.color = giveUpReady ? (giveUpFocused ? FocusWhite : (giveUpHovered ? GiveUpBright : GiveUpMuted)) : Dim;
+            giveUpButtonLabel.color = ActionLabelColor(giveUpReady, giveUpFocused || giveUpHovered);
     }
+
+    private static Color ActionLabelColor(bool ready, bool highlighted) =>
+        ready ? (highlighted ? Bright : TrainingBoardStyle.Body) : Dim;
 
     private void UpdateConfirmPopup()
     {
@@ -1034,7 +1029,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (confirmTitleText != null)
         {
             confirmTitleText.text = DungeonUiText.Static(danger ? giveUpLabel : restartLabel);
-            confirmTitleText.color = danger ? GiveUpBright : RestartBright;
+            confirmTitleText.color = TrainingBoardStyle.Body;
         }
         if (confirmBodyText != null)
             confirmBodyText.text = DungeonUiText.Static(danger ? giveUpConfirmBody : restartConfirmBody);
@@ -1044,11 +1039,11 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (confirmYesGraphic != null)
             confirmYesGraphic.SetButtonStyle(open, open && confirmYesHover, open && confirmYes, yesTone, DungeonTerminalGaugeGraphic.IconCheck);
         if (confirmYesLabel != null)
-            confirmYesLabel.color = open && confirmYes ? FocusWhite : (danger ? (yesHot ? GiveUpBright : GiveUpMuted) : (yesHot ? RestartBright : RestartMuted));
+            confirmYesLabel.color = ActionLabelColor(open, yesHot);
         if (confirmNoGraphic != null)
             confirmNoGraphic.SetButtonStyle(open, open && confirmNoHover, open && !confirmYes, DungeonTerminalGaugeGraphic.ToneCyan, DungeonTerminalGaugeGraphic.IconCancel);
         if (confirmNoLabel != null)
-            confirmNoLabel.color = open && !confirmYes ? FocusWhite : (noHot ? Bright : Dim);
+            confirmNoLabel.color = ActionLabelColor(open, noHot);
     }
 
     private void UpdateFooterText()
@@ -1132,6 +1127,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         EnsureInit();
         if (isOpen) CloseImmediately();
         Open(false);
+        if (panelMotion != null) panelMotion.Advance(1f);
         transitioning = false;
         ApplyPresentation(1f);
         ApplyRaycast();
@@ -1159,6 +1155,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         if (confirmPopupRoot != null && confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(false);
         if (presentation != null) presentation.SetActive(true);
         RebuildAll();
+        if (panelMotion != null) panelMotion.Open();
         if (statusPanel != null) statusPanel.PlayIntro();
         if (live)
         {
@@ -1187,6 +1184,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         confirmTarget = ConfirmTarget.None;
         confirmYes = false;
         if (confirmPopupRoot != null && confirmPopupRoot.activeSelf) confirmPopupRoot.SetActive(false);
+        if (panelMotion != null) panelMotion.Close();
         BeginTransition(0f, CloseDuration);
         UpdateControls();
         UpdateActionButtons();
@@ -1203,6 +1201,7 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
 
     private void FinishClose(bool hide = true)
     {
+        if (panelMotion != null) panelMotion.SnapHidden();
         bool wasLive = live;
         isOpen = false;
         isClosing = false;
@@ -1245,25 +1244,24 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         ApplyRaycast();
     }
 
-    // 기존 단말기(InventoryTerminalMenu.ApplyPresentation)와 같은 연출: 오른쪽 아래에서 기울어진 채 작게 → 제자리, 손목은 아래에서 올라온다.
+    // 바깥 루트는 화면에 맞추고 안쪽 판의 펼침·스캔은 타이틀과 같은 시계로 재생한다.
     private void ApplyPresentation(float value)
     {
         progress = value;
         if (terminalRoot == null || fitRect == null) return;
-        lastFitSize = fitRect.rect.size;
-        float scale = Mathf.Min(lastFitSize.x / Mathf.Max(1f, terminalRoot.rect.width), lastFitSize.y / Mathf.Max(1f, terminalRoot.rect.height));
-        if (scale <= 0f) scale = 1f;
-        terminalRoot.localScale = Vector3.one * (scale * Mathf.Lerp(.45f, 1f, value));
-        terminalRoot.anchoredPosition = terminalHome + new Vector2(lastFitSize.x * .62f, -lastFitSize.y * .7f) * (1f - value);
-        terminalRoot.localRotation = terminalRotation * Quaternion.Euler(0f, 0f, Mathf.Lerp(-14f, 0f, value));
-        if (terminalGroup != null) terminalGroup.alpha = Mathf.Clamp01(value * 2f);
-        if (screenGroup != null) screenGroup.alpha = Mathf.InverseLerp(.25f, .85f, value);
-        if (backdropGroup != null) backdropGroup.alpha = value;
-        if (wristRoot != null)
+        Vector2 available = fitRect.rect.size;
+        bool resized = lastFitSize != available;
+        lastFitSize = available;
+        float scale = PortableTerminalLayout.Fit(terminalRoot, available);
+        if (resized)
         {
-            wristRoot.anchoredPosition = wristHome + new Vector2(20f, -45f) * (1f - value);
-            wristRoot.localRotation = wristRotation * Quaternion.Euler(0f, 0f, Mathf.Lerp(-8f, 0f, value));
+            FitContent(IsWaveMode);
+            if (model != null) RefitView();
         }
+        terminalRoot.localScale = (panelMotion != null ? Vector3.one : TitlePanelMotion.UnfoldScale(value)) * scale;
+        if (terminalGroup != null) terminalGroup.alpha = Mathf.Clamp01(value * 5f);
+        if (screenGroup != null) screenGroup.alpha = 1f;
+        if (backdropGroup != null) backdropGroup.alpha = value;
     }
 
     // ===== 진행 =====
@@ -1313,11 +1311,13 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         EnsureInit();
         deltaTime = Mathf.Max(0f, deltaTime);
         clock += deltaTime;
+        if (isOpen && panelMotion != null) panelMotion.Advance(deltaTime);
+        if (isOpen && confirmMotion != null && confirmMotion.IsVisible) confirmMotion.Advance(deltaTime);
         if (transitioning)
         {
             transitionTime += deltaTime;
             float t = Mathf.Clamp01(transitionTime / transitionDuration);
-            ApplyPresentation(Mathf.Lerp(transitionFrom, transitionTo, 1f - Mathf.Pow(1f - t, 3f)));
+            ApplyPresentation(Mathf.Lerp(transitionFrom, transitionTo, t));
             if (t >= 1f)
             {
                 transitioning = false;
@@ -1368,12 +1368,9 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
         }
         if (mapPanelRoot != null && mapPanelRoot.gameObject.activeSelf == waveMode)
             mapPanelRoot.gameObject.SetActive(!waveMode);
-        if (infoPanelRoot != null)
-        {
-            Vector2 targetPos = waveMode ? new Vector2(0f, infoHome.y) : infoHome;
-            if ((infoPanelRoot.anchoredPosition - targetPos).sqrMagnitude > 1e-4f)
-                infoPanelRoot.anchoredPosition = targetPos;
-        }
+        if (waveBriefing != null) waveBriefing.gameObject.SetActive(waveMode);
+        FitContent(waveMode);
+        if (waveMode) RefreshBriefing();
         if (mapButtonRoot != null && mapButtonRoot.gameObject.activeSelf == waveMode)
             mapButtonRoot.gameObject.SetActive(!waveMode);
         if (restartButtonRoot != null)
@@ -1393,6 +1390,41 @@ public sealed class DungeonFieldTerminal : MonoBehaviour, IDungeonMapView, IDung
                 giveUpButtonRoot.sizeDelta = new Vector2(gw, giveUpButtonRoot.sizeDelta.y);
         }
         UpdateFooterText();
+    }
+
+    private void FitContent(bool waveMode)
+    {
+        if (infoPanelRoot == null || !(infoPanelRoot.parent is RectTransform content)) return;
+        Vector2 size = content.rect.size;
+        if (size.x <= 0f || size.y <= 0f) return;
+
+        const float gap = 24f, gaugeWidth = 512f;
+        float gaugeHeight = waveMode ? 397f : 560f;
+        float scale = Mathf.Min((size.x - gap) * (waveMode ? .47f : .39f) / gaugeWidth, size.y / gaugeHeight);
+        if (scale <= 0f) return;
+        float rightWidth = gaugeWidth * scale;
+        infoPanelRoot.sizeDelta = new Vector2(gaugeWidth, gaugeHeight);
+        infoPanelRoot.localScale = Vector3.one * scale;
+        infoPanelRoot.anchoredPosition = new Vector2((size.x - rightWidth) * .5f, 0f);
+
+        var left = waveMode ? waveBriefing : mapPanelRoot;
+        if (left == null) return;
+        left.sizeDelta = new Vector2(size.x - rightWidth - gap, gaugeHeight * scale);
+        left.anchoredPosition = new Vector2(-(rightWidth + gap) * .5f, 0f);
+    }
+
+    private void RefreshBriefing()
+    {
+        if (waveBriefing == null) return;
+        var tracker = TrainingRunTracker.Instance;
+        var training = tracker != null ? tracker.TrainingDefinition : null;
+        if (briefingReady && briefingTraining == training) return;
+        briefingReady = true;
+        briefingTraining = training;
+        var entry = training != null ? TrainingCatalogSO.Load()?.Find(training.trainingId) : null;
+        waveTrainingTitle.text = entry?.Title ?? (training != null ? training.displayName : "전투 훈련");
+        waveSummary.text = entry?.summary ?? "";
+        waveGrades.SetTraining(training);
     }
 
     // 7차 V4: 모델 재생성(원본이 바뀔 때만 — BuildFloorModel은 할당한다)과 화면 맞춤(이동·배율·끌기 — 할당 없음)을 나눈다.

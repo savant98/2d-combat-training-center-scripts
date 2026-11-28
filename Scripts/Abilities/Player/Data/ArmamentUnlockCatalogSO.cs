@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 /// <summary>훈련 필증 해금 항목의 종류. 세이브 키는 Weapon = weaponName, Armament = armamentId다.</summary>
 public enum ArmamentUnlockKind
@@ -34,8 +35,8 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
         public WeaponBaseSO includedWeapon;
         [Tooltip("kind가 Armament일 때의 대상 무장. 사면 그 무장의 기본 공격과 Gear 기술이 함께 열린다")]
         public PlayerArmamentSO armament;
-        [Tooltip("훈련 필증 수")]
-        [Min(0)] public int price = 1;
+        [Tooltip("기술 하나 또는 무장 한 벌의 훈련 필증 수")]
+        [FormerlySerializedAs("price"), Min(0)] public int unitPrice = 1;
         [Tooltip("처음부터 쓸 수 있다(구매 대상이 아니다)")]
         public bool unlockedByDefault;
         [Tooltip("화면 이름. 비우면 무기 이름 / 무장 이름 + ' 무장'")]
@@ -47,6 +48,12 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
         public string Key => kind == ArmamentUnlockKind.Weapon
             ? (weapon != null ? weapon.weaponName ?? string.Empty : string.Empty)
             : (armament != null ? armament.armamentId ?? string.Empty : string.Empty);
+
+        public bool HasIncludedSkill => kind == ArmamentUnlockKind.Weapon && weapon != null && includedWeapon != null
+            && !string.IsNullOrEmpty(includedWeapon.weaponName) && includedWeapon.weaponName != weapon.weaponName;
+
+        /// <summary>무장은 한 벌로 계산하고, 기술은 함께 해금되는 고유 기술마다 필증 단가를 적용한다.</summary>
+        public int CertificateCost => unlockedByDefault ? 0 : unitPrice * (HasIncludedSkill ? 2 : 1);
 
         public string Title
         {
@@ -174,7 +181,7 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
         return first;
     }
 
-    /// <summary>구매 대상(기본 해금이 아닌 항목)의 가격 합. 기대값 7(각개 전투 전까지 받는 필증 수).</summary>
+    /// <summary>구매 가능한 무장과 기술 묶음을 각각 한 번씩 샀을 때의 총 필증 수.</summary>
     public int TotalPurchasablePrice
     {
         get
@@ -182,7 +189,7 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
             int total = 0;
             if (entries != null)
                 foreach (var entry in entries)
-                    if (entry != null && !entry.unlockedByDefault) total += Mathf.Max(0, entry.price);
+                    if (entry != null && !entry.unlockedByDefault) total += entry.CertificateCost;
             return total;
         }
     }
@@ -211,7 +218,7 @@ public sealed class ArmamentUnlockCatalogSO : ScriptableObject
             if (entry.kind == ArmamentUnlockKind.Armament && entry.armament == null) Debug.LogWarning(label + ": 무장 항목인데 무장이 비어 있습니다.", this);
             if (entry.kind == ArmamentUnlockKind.Weapon && entry.armament != null) Debug.LogWarning(label + ": 무기 항목에 무장이 들어 있습니다(무시됨).", this);
             if (entry.kind == ArmamentUnlockKind.Armament && entry.weapon != null) Debug.LogWarning(label + ": 무장 항목에 무기가 들어 있습니다(무시됨).", this);
-            if (entry.price < 0) Debug.LogWarning(label + ": 가격이 음수입니다.", this);
+            if (entry.unitPrice < 0) Debug.LogWarning(label + ": 가격이 음수입니다.", this);
             string key = entry.kind + ":" + entry.Key;
             if (!string.IsNullOrEmpty(entry.Key) && !keys.Add(key)) Debug.LogWarning(label + ": 키가 중복됩니다(" + key + ").", this);
             if (entry.kind == ArmamentUnlockKind.Weapon && entry.includedWeapon != null)

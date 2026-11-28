@@ -29,6 +29,8 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
 
     public bool IsActive { get; private set; }
 
+    protected virtual bool CanSelect => IsActive;
+
     protected virtual void Awake()
     {
         BindMouseEvents();
@@ -42,13 +44,20 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
 
         UIManager.Instance.SetInputTarget(this, inputLayer);
 
+        foreach (var button in buttons)
+        {
+            button.DOKill();
+            button.localScale = Vector3.one;
+        }
         foreach (var t in texts)
         {
-            t.color = Color.white;
+            t.DOKill();
+            t.color = TrainingBoardStyle.Body;
         }
 
         foreach (var i in images)
         {
+            i.DOKill();
             i.color = new Color(1f, 1f, 1f, 0f);
         }
 
@@ -67,10 +76,7 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
 
     public void OnMove(Vector2 dir)
     {
-        if (!IsActive)
-            return;
-
-        ProcessMove(dir);
+        if (CanSelect) ProcessMove(dir);
     }
     protected virtual void ProcessMove(Vector2 dir)
     {
@@ -100,8 +106,7 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
     }
     public virtual void OnConfirm()
     {
-        if (!IsActive)
-            return;
+        if (!CanSelect) return;
 
         PlayFeedback(confirmFeedback);
         OnSelected?.Invoke(currentIndex);
@@ -129,115 +134,29 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
         prevIndex = currentIndex;
     }
 
-    protected void HighlightButton(int index, bool instant)
-    {
-        HighlightText(index, instant);
-        HighlightBackgroundImage(index, instant);
+    protected void HighlightButton(int index, bool instant) => SetFocus(index, true, instant);
 
+    protected void ResetButton(int index, bool instant) => SetFocus(index, false, instant);
+
+    private void SetFocus(int index, bool selected, bool instant)
+    {
         var button = buttons[index];
         button.DOKill();
+        float scale = selected ? TrainingBoardStyle.FocusScale : 1f;
+        if (instant) button.localScale = Vector3.one * scale;
+        else button.DOScale(scale, .16f).SetEase(Ease.OutCubic).SetUpdate(true);
 
-        if (instant)
-        {
-            button.localScale = Vector3.one * 1.15f;
-
-        }
-        else
-        {
-            button.DOScale(1.15f, 0.15f)
-                .SetEase(Ease.OutBack)
-                .SetUpdate(true);
-
-        }
-    }
-    private void HighlightText(int index, bool instant)
-    {
-        if (texts.Length - 1 < index)
-            return;
-
-        var text = texts[index];
-
-        text.DOKill();
-
-        if (instant)
-        {
-            text.color = Color.cyan;
-        }
-        else
-        {
-            text.DOColor(Color.cyan, 0.1f)
-                .SetUpdate(true);
-        }
-    }
-    private void HighlightBackgroundImage(int index, bool instant)
-    {
-        if (images.Length - 1 < index)
-            return;
-
-        var image = images[index];
-
-        image.DOKill();
-
-        if (instant)
-        {
-            image.color = Color.white;
-        }
-        else
-        {
-            image.DOColor(Color.white, 0.1f).SetUpdate(true);
-        }
+        if (index < texts.Length)
+            Tint(texts[index], selected ? Color.white : TrainingBoardStyle.Body, instant);
+        if (index < images.Length)
+            Tint(images[index], selected ? Color.white : new Color(1f, 1f, 1f, 0f), instant);
     }
 
-    protected void ResetButton(int index, bool instant)
+    private static void Tint(Graphic graphic, Color target, bool instant)
     {
-        ResetText(index, instant);
-        ResetBackgroundImage(index, instant);
-
-        var button = buttons[index];
-
-        if (instant)
-        {
-            button.localScale = Vector3.one;
-        }
-        else
-        {
-            button.DOScale(1f, 0.12f)
-                .SetEase(Ease.OutQuad)
-                .SetUpdate(true);
-        }
-    }
-    private void ResetText(int index, bool instant)
-    {
-        if (texts.Length - 1 < index)
-            return;
-
-        var text = texts[index];
-
-        if (instant)
-        {
-            text.color = Color.white;
-        }
-        else
-        {
-            text.DOColor(Color.white, 0.12f)
-                .SetUpdate(true);
-        }
-    }
-    private void ResetBackgroundImage(int index, bool instant)
-    {
-        if (images.Length - 1 < index)
-            return;
-
-        var image = images[index];
-
-        if (instant)
-        {
-            image.color = new Color(1f, 1f, 1f, 0f);
-        }
-        else
-        {
-            image.DOColor(new Color(1f, 1f, 1f, 0f), 0.12f).SetUpdate(true);
-        }
+        graphic.DOKill();
+        if (instant) graphic.color = target;
+        else graphic.DOColor(target, .12f).SetUpdate(true);
     }
     #endregion
 
@@ -271,11 +190,11 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
 
     protected virtual void OnPointerEnter(int index)
     {
-        if (!IsActive)
+        if (!CanSelect)
             return;
 
         // UIManager에서 UI 입력이 막혀있다면 마우스 호버(Hover) 완벽 무시!
-        if (UIManager.Instance != null && UIManager.Instance.IsUIInputBlocked)
+        if (UIManager.Instance != null && (UIManager.Instance.IsUIInputBlocked || !UIManager.Instance.IsCurrentInputTarget(this)))
             return;
 
         ChangeIndex(index);
@@ -283,13 +202,14 @@ public abstract class SelectableMenuUI : MonoBehaviour, IUIInputReceiver
 
     protected virtual void OnPointerClick(int index)
     {
-        if (!IsActive)
+        if (!CanSelect)
             return;
 
         // UIManager에서 UI 입력이 막혀있다면 마우스 호버(Hover) 완벽 무시!
-        if (UIManager.Instance != null && UIManager.Instance.IsUIInputBlocked)
+        if (UIManager.Instance != null && (UIManager.Instance.IsUIInputBlocked || !UIManager.Instance.IsCurrentInputTarget(this)))
             return;
 
+        ChangeIndex(index);
         OnConfirm();
     }
 

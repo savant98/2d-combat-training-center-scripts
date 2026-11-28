@@ -39,6 +39,7 @@ public abstract class UpgradeMenuPage : SelectableMenuUI
     [SerializeField] protected float spinSpeed = 25f;
     [Tooltip("페이지·보드 투명도를 곱한 값이 이보다 크면 발광 원을 켠다")]
     [SerializeField, Range(0f, 1f)] protected float glowVisibleAlpha = .98f;
+    private UpgradeMenu ownerMenu;
     private CanvasGroup[] alphaChain;
     private int glowState = -1;   // -1 = 아직 적용 전, 0 = 꺼짐, 1 = 켜짐
 
@@ -47,7 +48,7 @@ public abstract class UpgradeMenuPage : SelectableMenuUI
     // 장착·구매 연출처럼 이 페이지가 직접 입력을 막아 둔 동안 true
     protected bool InputSuppressed { get; set; }
 
-    protected bool CanReceiveInput => IsActive && isActiveAndEnabled && !InputSuppressed
+    protected bool CanReceiveInput => IsActive && isActiveAndEnabled && !InputSuppressed && (ownerMenu == null || ownerMenu.BoardReady)
         && UIManager.Instance != null && !UIManager.Instance.IsUIInputBlocked
         && UIManager.Instance.IsCurrentInputTarget(this);
 
@@ -55,6 +56,7 @@ public abstract class UpgradeMenuPage : SelectableMenuUI
 
     protected override void Awake()
     {
+        ownerMenu = GetComponentInParent<UpgradeMenu>();
         buttons ??= Array.Empty<RectTransform>();
         images ??= Array.Empty<Image>();
         texts ??= Array.Empty<TextMeshProUGUI>();
@@ -275,7 +277,7 @@ public abstract class UpgradeMenuPage : SelectableMenuUI
     public static string LockedLabel(WeaponBaseSO weapon)
     {
         var entry = ArmamentUnlocks.PurchasableEntry(weapon);
-        return entry != null ? "잠김 · " + ArmamentUnlocks.PriceLabel(entry.price) : "잠김";
+        return entry != null ? "잠김 · " + ArmamentUnlocks.PriceLabel(entry.CertificateCost) : "잠김";
     }
 
     // 이 기술을 지금 쓸 수 있는지(훈련 필증 해금 판정, ArmamentUnlocks). Gear 원의 밝은/어두운 재질을 고를 때 쓴다.
